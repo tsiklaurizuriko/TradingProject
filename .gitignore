@@ -1,0 +1,94 @@
+## Build output
+**/bin/
+**/obj/
+**/[Bb]uild/
+**/[Dd]ebug/
+**/[Rr]elease/
+**/artifacts/
+**/publish/
+**/out/
+**/TestResults/
+**/TestResult.xml
+coverage/
+coverage.xml
+*.lcov
+
+## Compiled / packages
+*.dll
+*.exe
+*.pdb
+*.cache
+*.ilk
+*.meta
+*.obj
+*.nupkg
+*.snupkg
+project.lock.json
+project.fragment.lock.json
+packages/
+*.nuget.props
+*.nuget.targets
+
+## Visual Studio / Rider / VS Code
+.vs/
+*.user
+*.userosscache
+*.suo
+*.sln.docstates
+*.rsuser
+*.DotSettings.user
+*.userprefs
+_ReSharper*/
+*.ReSharper
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+
+## Node / Angular
+**/node_modules/
+**/dist/
+**/.angular/
+**/.cache/
+**/out-tsc/
+**/.sass-cache/
+*.ngtypecheck
+npm-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+playwright-report/
+test-results/
+__screenshots__/
+
+## Environment and secrets
+.env
+.env.local
+.env.*.local
+appsettings.Development.json
+appsettings.Local.json
+secrets.json
+*.pfx
+*.key
+*.pem
+
+## Logs / temp
+[Ll]ogs/
+*.log
+*.tmp
+*.temp
+*~
+*.swp
+
+## OS
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+
+## Docker / local data
+data/postgres/
+data/redis/
+
+## Cursor / local tooling
+.cursor/

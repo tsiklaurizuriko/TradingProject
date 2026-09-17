@@ -1,0 +1,171 @@
+<div class="dash">
+  @if (trading.error(); as err) {
+    <section class="panel dash-alert" style="border-color:rgba(255,61,87,.45)">
+      <h2>BINANCE CONNECTION LOST</h2>
+      <p class="muted">{{ err }}</p>
+      <button class="btn sm" type="button" (click)="trading.refresh()">Reconnect</button>
+    </section>
+  }
+  <div class="dash-kpi">
+    <app-metric-card
+      icon="wallet"
+      label="Total Equity"
+      [loading]="trading.loading() && !trading.overview()"
+      [value]="formatUsd(equity())"
+      [sub]="isLive() ? liveWalletSub() : 'Paper · ' + signedMoney(todaysPnL()) + ' today'"
+      [subClass]="pnlClass(todaysPnL())"
+    />
+  </div>
+  <div class="dash-kpi">
+    <app-metric-card
+      icon="briefcase"
+      label="Available Balance"
+      [loading]="trading.loading() && !trading.overview()"
+      [value]="formatUsd(available())"
+      [sub]="isLive() ? 'Free USD-M USDT' : 'Free paper USDT'"
+    />
+  </div>
+  <div class="dash-kpi">
+    <app-metric-card
+      icon="trend"
+      label="Today's PnL"
+      [loading]="trading.loading() && !trading.overview()"
+      [value]="signedMoney(todaysPnL())"
+      [valueClass]="pnlClass(todaysPnL())"
+      [sub]="pct((todaysPnL() / Math.max(equity() || 1, 1)) * 100) + ' of equity'"
+      [subClass]="pnlClass(todaysPnL())"
+    />
+  </div>
+  <div class="dash-kpi">
+    <app-metric-card
+      icon="chart"
+      label="Unrealized PnL"
+      [loading]="trading.loading() && !trading.overview()"
+      [value]="signedMoney(unrealized())"
+      [valueClass]="pnlClass(unrealized())"
+      [sub]="modePositions().length + ' open position' + (modePositions().length === 1 ? '' : 's')"
+    />
+  </div>
+  <div class="dash-kpi">
+    <app-goal-progress
+      [current]="monthlyPnL()"
+      [target]="ui.goalTarget()"
+    />
+  </div>
+  <article class="card dash-kpi status-kpi">
+    <div class="status-kpi-head">
+      <span class="metric-label">System Status</span>
+      <span class="badge" [class]="systemHealth().cls">
+        <span class="status-dot" [class.ok]="systemHealth().tone === 'ok'" [class.warn]="systemHealth().tone === 'warn'" [class.bad]="systemHealth().tone === 'bad'" [class.pulse]="systemHealth().tone === 'ok'"></span>
+        {{ systemHealth().label }}
+      </span>
+    </div>
+    <ul class="status-grid">
+      @for (item of systems(); track item.label) {
+        <li>
+          <span class="status-dot" [class.ok]="item.tone === 'ok'" [class.warn]="item.tone === 'warn'" [class.bad]="item.tone === 'bad'"></span>
+          <span>{{ item.label }}</span>
+        </li>
+      }
+    </ul>
+  </article>
+
+  <article class="panel panel-fill chart-panel dash-chart">
+    <div class="chart-head">
+      <div class="chart-id">
+        <strong>{{ ui.selectedSymbol() }}</strong>
+        <span class="tiny">{{ displayName() }}</span>
+      </div>
+      <div class="price-line">
+        <strong>{{ price(selectedQuote()?.price) }}</strong>
+        <span [class]="pnlClass(change24h())">{{ change24h() === null ? '—' : pct(change24h()) }}</span>
+      </div>
+      <div class="tf-group" role="group" aria-label="Chart timeframe">
+        @for (tf of timeframes; track tf) {
+          <button type="button" [class.is-on]="ui.timeframe() === tf" (click)="setTimeframe(tf)">{{ tf }}</button>
+        }
+      </div>
+    </div>
+    @if (trading.chartLoading() && trading.klines().length === 0) {
+      <div class="skel" style="flex:1"></div>
+    } @else if (trading.klines().length === 0) {
+      <p class="empty-state">Candles are unavailable. Confirm the API is running and Binance public data is reachable.</p>
+    } @else {
+      <app-trading-chart
+        [bars]="trading.klines()"
+        [positions]="modePositions()"
+        [trades]="modeTrades()"
+        [signals]="trading.workspaceSignals()"
+        [symbol]="ui.selectedSymbol()"
+      />
+    }
+  </article>
+
+  <div class="dash-watch">
+    <app-market-watchlist
+      [quotes]="trading.markets()"
+      [tickers]="trading.tickers()"
+      [watchlist]="ui.watchlist()"
+      [signalSymbols]="trading.signals().map(s => s.symbol)"
+      [selected]="ui.selectedSymbol()"
+      (select)="selectSymbol($event)"
+    />
+  </div>
+
+  <section class="panel dash-controls">
+    <div class="cluster">
+      <button class="btn success" type="button" routerLink="/bots">Start a Bot</button>
+      <button
+        class="btn accent"
+        type="button"
+        [disabled]="busy || !trading.idleWorkspaceBots().length"
+        (click)="requestStartAll()"
+      >Start All Bots</button>
+      <button class="btn danger" type="button" [disabled]="busy || !trading.runningWorkspaceBots().length" (click)="stopAll()">Stop All Bots</button>
+    </div>
+    <div class="cluster">
+      <button class="btn secondary" type="button" disabled title="Pause is not implemented; use Stop">Pause</button>
+      <button class="btn secondary" type="button" disabled title="Restart does not auto-start coins">Restart</button>
+    </div>
+    <div class="cluster">
+      <a class="btn ghost" routerLink="/risk">Configure</a>
+    </div>
+  </section>
+
+  <div class="dash-bots">
+    <app-bot-table [title]="isLive() ? 'Live Bots' : 'Paper Bots'" [bots]="modeBots()" [positions]="modePositions()" [signals]="trading.workspaceSignals()" (start)="startBot($event)" (stop)="stopBot($event)" />
+  </div>
+  <div class="dash-positions">
+    <app-position-table [positions]="modePositions()" />
+  </div>
+  <div class="dash-trades">
+    <app-trade-table [trades]="modeTrades()" />
+  </div>
+  <div class="dash-quick">
+    <app-quick-actions />
+  </div>
+  <div class="dash-account">
+    <app-allocation-chart [availableAbs]="available()" [usedAbs]="usedMargin()" [pnlAbs]="unrealized()" />
+  </div>
+  <div class="dash-pnl">
+    <app-pnl-chart [trades]="modeTrades()" />
+  </div>
+  <div class="dash-risk">
+    <app-risk-overview
+      [risk]="trading.risk()"
+      [equity]="equity()"
+      [todaysPnL]="todaysPnL()"
+      [openPositions]="modePositions().length"
+    />
+  </div>
+</div>
+<app-confirm-modal
+  [open]="confirmStartAll()"
+  title="Start All Bots"
+  message="This starts every stopped bot in this LIVE workspace."
+  warning="Real Binance USD-M futures orders can fire as soon as a strategy signals."
+  confirmLabel="Start All Bots"
+  [danger]="true"
+  (cancel)="confirmStartAll.set(false)"
+  (confirm)="startAll()"
+/>

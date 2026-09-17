@@ -1,0 +1,180 @@
+<div class="perf">
+  <section class="perf-kpis">
+    <app-metric-card
+      icon="wallet"
+      label="Equity"
+      [loading]="trading.loading() && !trading.overview()"
+      [value]="money(equity())"
+      [sub]="equitySub()"
+      [subClass]="pnlClass(netPnl())"
+    />
+    <app-metric-card
+      icon="trend"
+      label="Today's PnL"
+      [loading]="trading.loading() && !trading.overview()"
+      [value]="signedMoney(todaysPnl())"
+      [valueClass]="pnlClass(todaysPnl())"
+      [sub]="closedCount() ? weekClosed() + ' closed in 7 days' : 'Includes open mark-to-market'"
+      [subClass]="pnlClass(todaysPnl())"
+    />
+    <app-metric-card
+      icon="chart"
+      label="Unrealized"
+      [value]="signedMoney(unrealized())"
+      [valueClass]="pnlClass(unrealized())"
+      [sub]="openPositions() + ' open · ' + openTrades() + ' in trade'"
+    />
+    <app-metric-card
+      icon="trades"
+      label="Realized PnL"
+      [value]="signedMoney(realized())"
+      [valueClass]="pnlClass(realized())"
+      [sub]="'Fees ' + money(fees())"
+    />
+  </section>
+
+  <section class="perf-kpis">
+    <app-metric-card
+      icon="chart"
+      label="Win rate"
+      [value]="winRate()"
+      [sub]="closedCount() ? wins() + ' won / ' + losses() + ' lost' : 'Waiting for closed fills'"
+    />
+    <app-metric-card
+      icon="trend"
+      label="Profit factor"
+      [value]="profitFactor()"
+      [sub]="closedCount() ? 'Expectancy ' + expectancy() : 'No closed sample yet'"
+    />
+    <app-metric-card
+      icon="briefcase"
+      label="Max drawdown"
+      [value]="closedCount() ? money(drawdown()) : '—'"
+      [valueClass]="drawdown() > 0 ? 'pnl-neg' : ''"
+      [sub]="'Avg hold ' + hold()"
+    />
+    <app-metric-card
+      icon="trades"
+      label="Closed trades"
+      [value]="'' + closedCount()"
+      [sub]="streakSub()"
+    />
+  </section>
+
+  <section class="perf-body">
+    <div class="perf-chart">
+      <app-pnl-chart
+        [trades]="trading.workspaceTrades()"
+        [days]="chartDays()"
+        [extraToday]="chartDays() ? 0 : unrealized()"
+      />
+    </div>
+    <section class="panel perf-strategy">
+      <div class="section-head">
+        <h2>Closed stats</h2>
+        <span class="tiny">{{ ui.workspace() }}</span>
+      </div>
+      <div class="perf-stats">
+        <div>
+          <div class="metric-label">Expectancy</div>
+          <div class="metric-value">{{ expectancy() }}</div>
+        </div>
+        <div>
+          <div class="metric-label">Avg win</div>
+          <div class="metric-value pnl-pos">{{ avgWin() }}</div>
+        </div>
+        <div>
+          <div class="metric-label">Avg loss</div>
+          <div class="metric-value pnl-neg">{{ avgLoss() }}</div>
+        </div>
+        <div>
+          <div class="metric-label">Best / worst</div>
+          <div class="metric-value">
+            <span [class]="pnlClass(best())">{{ closedCount() ? signedMoney(best()) : '—' }}</span>
+            <span class="tiny muted"> / </span>
+            <span [class]="pnlClass(worst())">{{ closedCount() ? signedMoney(worst()) : '—' }}</span>
+          </div>
+        </div>
+      </div>
+      <div class="perf-wl">
+        <span class="tiny">Win / loss mix</span>
+        <div class="progress">
+          <span class="is-win" [style.width.%]="winShare()"></span>
+        </div>
+      </div>
+    </section>
+  </section>
+
+  <section class="perf-splits">
+    <section class="panel compact">
+      <div class="section-head">
+        <h2>By strategy</h2>
+        <span class="tiny">{{ visibleStrategyRows().length }}</span>
+      </div>
+      @if (strategyRows().length === 0) {
+        <p class="muted tiny">No bots in this workspace yet.</p>
+      } @else {
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th><app-sort-btn column="name" [query]="strategyQuery">Strategy</app-sort-btn></th>
+                <th class="num"><app-sort-btn column="bots" [query]="strategyQuery" align="end">Bots</app-sort-btn></th>
+                <th class="num"><app-sort-btn column="closed" [query]="strategyQuery" align="end">Closed</app-sort-btn></th>
+                <th class="num"><app-sort-btn column="win" [query]="strategyQuery" align="end">Win</app-sort-btn></th>
+                <th class="num"><app-sort-btn column="pnl" [query]="strategyQuery" align="end">PnL</app-sort-btn></th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (row of visibleStrategyRows(); track row.name) {
+                <tr>
+                  <td>{{ row.name }}</td>
+                  <td class="num">{{ row.bots || '—' }}</td>
+                  <td class="num">{{ row.closed }}</td>
+                  <td class="num">{{ row.closed ? rate(row.winRate) : '—' }}</td>
+                  <td class="num" [class]="pnlClass(row.realized)">{{ row.closed ? signedMoney(row.realized) : '—' }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </section>
+    <section class="panel compact">
+      <div class="section-head">
+        <h2>By coin</h2>
+        <span class="tiny">Closed fills</span>
+      </div>
+      @if (coinRows().length === 0) {
+        <p class="muted tiny">No closed trades to split yet. Open positions still show in Unrealized.</p>
+      } @else {
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th><app-sort-btn column="name" [query]="coinQuery">Coin</app-sort-btn></th>
+                <th class="num"><app-sort-btn column="closed" [query]="coinQuery" align="end">Closed</app-sort-btn></th>
+                <th class="num"><app-sort-btn column="win" [query]="coinQuery" align="end">Win</app-sort-btn></th>
+                <th class="num"><app-sort-btn column="expectancy" [query]="coinQuery" align="end">Expectancy</app-sort-btn></th>
+                <th class="num"><app-sort-btn column="pnl" [query]="coinQuery" align="end">PnL</app-sort-btn></th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (row of visibleCoinRows(); track row.name) {
+                <tr>
+                  <td>{{ row.name }}</td>
+                  <td class="num">{{ row.closed }}</td>
+                  <td class="num">{{ rate(row.winRate) }}</td>
+                  <td class="num">{{ money(row.expectancy) }}</td>
+                  <td class="num" [class]="pnlClass(row.realized)">{{ signedMoney(row.realized) }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </section>
+  </section>
+
+  <app-trade-table [trades]="recentTrades()" />
+</div>

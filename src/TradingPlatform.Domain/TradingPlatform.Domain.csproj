@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>TradingPlatform.Domain</RootNamespace>
+    <AssemblyName>TradingPlatform.Domain</AssemblyName>
+  </PropertyGroup>
+</Project>

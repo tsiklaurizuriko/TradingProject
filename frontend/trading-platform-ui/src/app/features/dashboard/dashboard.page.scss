@@ -1,0 +1,150 @@
+:host { display: block; }
+
+.dash {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  column-gap: 12px;
+  row-gap: 12px;
+  width: 100%;
+}
+
+.dash > * { min-width: 0; }
+
+.dash-kpi {
+  grid-column: span 4;
+  min-width: 0;
+  min-height: 118px;
+  height: auto;
+  overflow: hidden;
+}
+
+.dash-chart { grid-column: span 9; height: 390px; }
+.dash-watch { grid-column: span 3; height: 390px; }
+
+.dash-controls {
+  grid-column: 1 / -1;
+  min-height: 52px;
+  height: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px;
+}
+
+.dash-controls .cluster {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dash-bots { grid-column: 1 / -1; height: 420px; }
+.dash-bots:has(.is-collapsed) { height: auto; }
+.dash-positions { grid-column: 1 / -1; height: 360px; }
+.dash-positions:has(.is-collapsed) { height: auto; }
+.dash-trades { grid-column: span 8; height: 260px; }
+.dash-trades:has(.is-collapsed) { height: auto; }
+.dash-quick { grid-column: span 4; height: 260px; }
+.dash-account { grid-column: span 4; min-height: 240px; height: 240px; min-width: 0; }
+.dash-pnl { grid-column: span 5; height: 240px; }
+.dash-risk {
+  grid-column: span 3;
+  min-height: 240px;
+  height: auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.goal-kpi .metric-value {
+  font-size: 20px;
+  white-space: nowrap;
+}
+.goal-kpi .progress { margin-top: 8px; flex-shrink: 0; }
+
+.status-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  height: 100%;
+  overflow: hidden;
+}
+
+.status-kpi-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.status-kpi-head .metric-label {
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status-kpi-head .badge {
+  flex-shrink: 0;
+}
+
+.status-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  flex: 1;
+  align-content: center;
+  min-height: 0;
+}
+
+.status-grid li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.status-grid li span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 1399px) and (min-width: 1200px) {
+  .dash-chart { grid-column: span 8; }
+  .dash-watch { grid-column: span 4; }
+  .dash-trades { grid-column: span 7; }
+  .dash-quick { grid-column: span 5; }
+}
+
+@media (max-width: 1199px) and (min-width: 900px) {
+  .dash-kpi { grid-column: span 4; }
+  .dash-chart { grid-column: span 8; }
+  .dash-watch { grid-column: span 4; }
+  .dash-trades { grid-column: span 8; }
+  .dash-quick { grid-column: span 4; }
+}
+
+@media (max-width: 899px) and (min-width: 600px) {
+  .dash-kpi { grid-column: span 6; }
+  .dash-chart, .dash-watch, .dash-controls, .dash-bots, .dash-positions, .dash-trades, .dash-quick, .dash-account, .dash-pnl, .dash-risk {
+    grid-column: span 12;
+  }
+  .dash-chart, .dash-watch { height: 360px; }
+}
+
+@media (max-width: 599px) {
+  .dash-kpi, .dash-chart, .dash-watch, .dash-controls, .dash-bots, .dash-positions, .dash-trades, .dash-quick, .dash-account, .dash-pnl, .dash-risk {
+    grid-column: span 12;
+  }
+  .dash-kpi { height: auto; }
+  .dash-chart, .dash-watch { height: 340px; }
+  .dash-controls { height: auto; flex-wrap: wrap; }
+}

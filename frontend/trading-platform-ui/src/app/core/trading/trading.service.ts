@@ -1,0 +1,381 @@
+import { Injectable, computed, inject, signal } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { firstValueFrom } from 'rxjs';
+import { environment } from '../../../environments/environment';
+import { UiStateService, WorkspaceMode } from '../ui/ui-state.service';
+import {
+  BotDto,
+  CreateBotsResult,
+  DeleteBotsResult,
+  StartBotsResult,
+  ExchangeConnectionDto,
+  KlineBarDto,
+  MarketQuoteDto,
+  OrderDto,
+  PortfolioDto,
+  PositionDto,
+  RiskProfileDto,
+  RunBacktestRequest,
+  BacktestResultDto,
+  SaveRiskProfileRequest,
+  SaveStrategyRequest,
+  StrategyDto,
+  SystemHealthDto,
+  TradeDto,
+  PerformanceDto,
+} from './trading.models';
+
+@Injectable({ providedIn: 'root' })
+export class TradingService {
+  private readonly http = inject(HttpClient);
+  private readonly ui = inject(UiStateService);
+  readonly overview = signal<PortfolioDto | null>(null);
+  readonly markets = signal<MarketQuoteDto[]>([]);
+  readonly klines = signal<KlineBarDto[]>([]);
+  readonly risk = signal<RiskProfileDto | null>(null);
+  readonly strategies = signal<StrategyDto[]>([]);
+  readonly riskProfiles = signal<RiskProfileDto[]>([]);
+  readonly health = signal<SystemHealthDto | null>(null);
+  readonly exchange = signal<ExchangeConnectionDto | null>(null);
+  readonly loading = signal(false);
+  readonly chartLoading = signal(false);
+  readonly error = signal<string | null>(null);
+  readonly restLatencyMs = signal<number | null>(null);
+  readonly lastRestAt = signal<Date | null>(null);
+  readonly performance = signal<PerformanceDto | null>(null);
+
+  readonly tickers = computed(() => this.overview()?.tickers ?? []);
+  readonly bots = computed(() => this.overview()?.bots ?? []);
+  readonly positions = computed(() => this.overview()?.positions ?? []);
+  readonly trades = computed(() => this.overview()?.trades ?? []);
+  readonly orders = computed(() => this.overview()?.orders ?? []);
+  readonly signals = computed(() => this.overview()?.signals ?? []);
+  readonly workspace = computed<WorkspaceMode>(() => this.ui.workspace());
+  readonly workspaceBots = computed(() => {
+    const live = this.ui.isLive();
+    return this.bots().filter((bot) => (bot.mode === 'Live') === live);
+  });
+  readonly workspaceBotIds = computed(() => new Set(this.workspaceBots().map((bot) => bot.id)));
+  readonly runningWorkspaceBots = computed(() =>
+    this.workspaceBots().filter((bot) => bot.status === 'Running'),
+  );
+  readonly idleWorkspaceBots = computed(() =>
+    this.workspaceBots().filter((bot) => bot.status !== 'Running'),
+  );
+  readonly workspacePositions = computed(() => {
+    const ids = this.workspaceBotIds();
+    const live = this.ui.isLive();
+    return this.positions().filter((row) => ids.has(row.botId) || (live && row.source === 'Binance'));
+  });
+  readonly workspaceTrades = computed(() => {
+    const ids = this.workspaceBotIds();
+    const live = this.ui.isLive();
+    const snap = this.performance();
+    const extra =
+      snap && snap.mode === this.ui.workspace()
+        ? snap.recentTrades.filter((row) => !this.trades().some((existing) => existing.id === row.id))
+        : [];
+    const merged = extra.length ? [...this.trades(), ...extra] : this.trades();
+    return merged.filter((row) => {
+      if (row.mode) {
+        return (row.mode === 'Live') === live;
+      }
+      return ids.has(row.botId);
+    });
+  });
+  readonly workspaceOrders = computed(() => {
+    const ids = this.workspaceBotIds();
+    const live = this.ui.isLive();
+    return this.orders().filter((row) => ids.has(row.botId) || (live && row.source === 'Binance'));
+  });
+  readonly workspaceSignals = computed(() => {
+    const ids = this.workspaceBotIds();
+    return this.signals().filter((row) => ids.has(row.botId));
+  });
+
+  belongsToWorkspace(bot: BotDto): boolean {
+    return (bot.mode === 'Live') === this.ui.isLive();
+  }
+
+  workspaceMismatchMessage(bot: BotDto): string {
+    return `This bot is ${bot.mode}. Switch the header to ${bot.mode.toUpperCase()} first.`;
+  }
+
+  startWorkspaceSymbol(symbol: string, strategyId?: string, riskProfileId?: string): Promise<BotDto> {
+    return this.startSymbol(symbol, this.ui.workspace(), strategyId, riskProfileId);
+  }
+
+  createWorkspaceBots(strategyId: string, riskProfileId: string, symbols: string[]): Promise<CreateBotsResult> {
+    return firstValueFrom(
+      this.http.post<CreateBotsResult>(`${environment.apiBaseUrl}/trading/bots/create`, {
+        mode: this.ui.workspace(),
+        strategyId,
+        riskProfileId,
+        symbols,
+      }),
+    );
+  }
+
+  startWorkspaceBot(bot: BotDto): Promise<BotDto> {
+    if (!this.belongsToWorkspace(bot)) {
+      return Promise.reject(new Error(this.workspaceMismatchMessage(bot)));
+    }
+    return this.startBot(bot.id);
+  }
+
+  stopWorkspaceBot(bot: BotDto): Promise<BotDto> {
+    if (!this.belongsToWorkspace(bot)) {
+      return Promise.reject(new Error(this.workspaceMismatchMessage(bot)));
+    }
+    return this.stopBot(bot.id);
+  }
+
+  deleteWorkspaceBots(bots: BotDto[]): Promise<DeleteBotsResult> {
+    const ids = bots.filter((bot) => this.belongsToWorkspace(bot)).map((bot) => bot.id);
+    if (!ids.length) {
+      return Promise.reject(new Error('Switch the header to this bot’s workspace first.'));
+    }
+    return firstValueFrom(
+      this.http.post<DeleteBotsResult>(`${environment.apiBaseUrl}/trading/bots/delete`, {
+        mode: this.ui.workspace(),
+        ids,
+      }),
+    );
+  }
+
+  deleteWorkspaceBot(bot: BotDto): Promise<DeleteBotsResult> {
+    return this.deleteWorkspaceBots([bot]);
+  }
+
+  stopWorkspaceAll(): Promise<BotDto[]> {
+    return Promise.all(this.runningWorkspaceBots().map((bot) => this.stopBot(bot.id)));
+  }
+
+  startWorkspaceAll(): Promise<StartBotsResult> {
+    return firstValueFrom(
+      this.http.post<StartBotsResult>(`${environment.apiBaseUrl}/trading/bots/start-all`, {
+        mode: this.workspace(),
+      }),
+    );
+  }
+
+  async refresh(): Promise<void> {
+    this.loading.set(true);
+    this.error.set(null);
+    const started = performance.now();
+    try {
+      const overview = await firstValueFrom(this.http.get<PortfolioDto>(`${environment.apiBaseUrl}/trading/overview`));
+      this.overview.set({ ...overview, tickers: overview.tickers ?? [] });
+      this.restLatencyMs.set(Math.round(performance.now() - started));
+      this.lastRestAt.set(new Date());
+    } catch {
+      this.error.set('Binance connection lost. Market data is temporarily unavailable.');
+    } finally {
+      this.loading.set(false);
+    }
+  }
+
+  async refreshMarkets(): Promise<void> {
+    try {
+      const markets = await firstValueFrom(this.http.get<MarketQuoteDto[]>(`${environment.apiBaseUrl}/trading/markets`));
+      this.markets.set(markets ?? []);
+    } catch {
+      this.markets.set([]);
+    }
+  }
+
+  async refreshHealth(): Promise<void> {
+    try {
+      this.health.set(await firstValueFrom(this.http.get<SystemHealthDto>(`${environment.apiBaseUrl}/system/health`)));
+    } catch {
+      this.health.set(null);
+    }
+  }
+
+  async refreshRisk(): Promise<void> {
+    try {
+      this.risk.set(await firstValueFrom(this.http.get<RiskProfileDto>(`${environment.apiBaseUrl}/trading/risk-profile`)));
+    } catch {
+      this.risk.set(null);
+    }
+  }
+
+  async refreshCatalog(): Promise<void> {
+    try {
+      const [strategies, profiles] = await Promise.all([
+        firstValueFrom(this.http.get<StrategyDto[]>(`${environment.apiBaseUrl}/trading/strategies`)),
+        firstValueFrom(this.http.get<RiskProfileDto[]>(`${environment.apiBaseUrl}/trading/risk-profiles`)),
+      ]);
+      this.strategies.set(strategies ?? []);
+      this.riskProfiles.set(profiles ?? []);
+    } catch {
+      this.strategies.set([]);
+      this.riskProfiles.set([]);
+    }
+  }
+
+  createStrategy(body: SaveStrategyRequest): Promise<StrategyDto> {
+    return firstValueFrom(this.http.post<StrategyDto>(`${environment.apiBaseUrl}/trading/strategies`, body));
+  }
+
+  updateStrategy(id: string, body: SaveStrategyRequest): Promise<StrategyDto> {
+    return firstValueFrom(this.http.put<StrategyDto>(`${environment.apiBaseUrl}/trading/strategies/${id}`, body));
+  }
+
+  createRiskProfile(body: SaveRiskProfileRequest): Promise<RiskProfileDto> {
+    return firstValueFrom(this.http.post<RiskProfileDto>(`${environment.apiBaseUrl}/trading/risk-profiles`, body));
+  }
+
+  updateRiskProfile(id: string, body: SaveRiskProfileRequest): Promise<RiskProfileDto> {
+    return firstValueFrom(this.http.put<RiskProfileDto>(`${environment.apiBaseUrl}/trading/risk-profiles/${id}`, body));
+  }
+
+  async loadKlines(symbol: string, interval: string): Promise<void> {
+    this.chartLoading.set(true);
+    try {
+      const bars = await firstValueFrom(
+        this.http.get<KlineBarDto[]>(`${environment.apiBaseUrl}/trading/klines`, {
+          params: { symbol, interval, limit: 240 },
+        }),
+      );
+      this.klines.set(bars ?? []);
+    } catch {
+      this.klines.set([]);
+    } finally {
+      this.chartLoading.set(false);
+    }
+  }
+
+  applyOverview(overview: PortfolioDto): void {
+    this.overview.set({ ...overview, tickers: overview.tickers ?? [] });
+  }
+
+  applyTicker(symbol: string, price: number, timestamp: string): void {
+    const current = this.overview();
+    if (current) {
+      const tickers = [...(current.tickers ?? [])];
+      const existing = tickers.find((item) => item.symbol === symbol);
+      const next = {
+        symbol,
+        displayName: existing?.displayName ?? symbol,
+        marketCapRank: existing?.marketCapRank ?? 999,
+        price,
+        timestamp,
+      };
+      const index = tickers.findIndex((item) => item.symbol === symbol);
+      if (index >= 0) {
+        tickers[index] = next;
+      } else {
+        tickers.push(next);
+      }
+      tickers.sort((a, b) => a.marketCapRank - b.marketCapRank);
+      this.overview.set({
+        ...current,
+        ticker: symbol === current.ticker?.symbol ? next : (current.ticker ?? next),
+        tickers,
+        health: 'Healthy',
+      });
+    }
+    this.markets.update((rows) =>
+      rows.map((row) => (row.symbol === symbol ? { ...row, price, timestamp } : row)),
+    );
+  }
+
+  startSamplePaper(): Promise<BotDto[]> {
+    return firstValueFrom(this.http.post<BotDto[]>(`${environment.apiBaseUrl}/trading/bots/top-volume-paper/start`, {}));
+  }
+
+  startSymbol(symbol: string, mode: 'Paper' | 'Live', strategyId?: string, riskProfileId?: string): Promise<BotDto> {
+    return firstValueFrom(
+      this.http.post<BotDto>(`${environment.apiBaseUrl}/trading/bots/start-symbol`, {
+        symbol,
+        mode,
+        strategyId: strategyId || null,
+        riskProfileId: riskProfileId || null,
+      }),
+    );
+  }
+
+  async exchangeStatus(): Promise<ExchangeConnectionDto> {
+    const status = await firstValueFrom(this.http.get<ExchangeConnectionDto>(`${environment.apiBaseUrl}/trading/exchange/status`));
+    this.exchange.set(status);
+    return status;
+  }
+
+  async saveExchangeKeys(apiKey: string, apiSecret: string): Promise<ExchangeConnectionDto> {
+    const status = await firstValueFrom(
+      this.http.post<ExchangeConnectionDto>(`${environment.apiBaseUrl}/trading/exchange/credentials`, { apiKey, apiSecret }),
+    );
+    this.exchange.set(status);
+    return status;
+  }
+
+  startBot(botId: string): Promise<BotDto> {
+    return firstValueFrom(this.http.post<BotDto>(`${environment.apiBaseUrl}/trading/bots/${botId}/start`, {}));
+  }
+
+  stopBot(botId: string): Promise<BotDto> {
+    return firstValueFrom(this.http.post<BotDto>(`${environment.apiBaseUrl}/trading/bots/${botId}/stop`, {}));
+  }
+
+  emergencyStop(): Promise<void> {
+    return firstValueFrom(this.http.post<void>(`${environment.apiBaseUrl}/trading/emergency-stop`, {}));
+  }
+
+  listBots(): Promise<BotDto[]> {
+    return firstValueFrom(this.http.get<BotDto[]>(`${environment.apiBaseUrl}/trading/bots`));
+  }
+
+  listOrders(): Promise<OrderDto[]> {
+    return firstValueFrom(this.http.get<OrderDto[]>(`${environment.apiBaseUrl}/trading/orders`));
+  }
+
+  listPositions(): Promise<PositionDto[]> {
+    return firstValueFrom(this.http.get<PositionDto[]>(`${environment.apiBaseUrl}/trading/positions`));
+  }
+
+  async closePosition(positionId: string): Promise<void> {
+    try {
+      await firstValueFrom(this.http.post<void>(`${environment.apiBaseUrl}/trading/positions/${positionId}/close`, {}));
+    } catch (error) {
+      throw new Error(readApiMessage(error));
+    }
+  }
+
+  listTrades(): Promise<TradeDto[]> {
+    return firstValueFrom(this.http.get<TradeDto[]>(`${environment.apiBaseUrl}/trading/trades`));
+  }
+
+  runBacktest(body: RunBacktestRequest): Promise<BacktestResultDto> {
+    return firstValueFrom(this.http.post<BacktestResultDto>(`${environment.apiBaseUrl}/trading/backtests`, body));
+  }
+
+  async refreshPerformance(mode: WorkspaceMode = this.ui.workspace()): Promise<void> {
+    try {
+      const row = await firstValueFrom(
+        this.http.get<PerformanceDto>(`${environment.apiBaseUrl}/trading/performance`, { params: { mode } }),
+      );
+      if (this.ui.workspace() === mode) {
+        this.performance.set(row);
+      }
+    } catch {
+      if (this.ui.workspace() === mode) {
+        this.performance.set(null);
+      }
+    }
+  }
+}
+
+function readApiMessage(error: unknown): string {
+  const http = error as { status?: number; error?: { message?: string } | string };
+  if (http.status === 0 || http.status === 502 || http.status === 504) {
+    return 'API is not running. Restart the backend, then try again.';
+  }
+  if (typeof http.error === 'string' && http.error.trim() && !http.error.trim().startsWith('<')) {
+    return http.error.trim();
+  }
+  if (http.error && typeof http.error === 'object' && http.error.message) {
+    return http.error.message;
+  }
+  return error instanceof Error ? error.message : 'Could not close this position.';
+}

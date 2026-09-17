@@ -1,0 +1,31 @@
+:host { display: block; }
+
+.settings {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-panel .form {
+  margin-top: 4px;
+}
+
+.settings-stat {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+
+.settings-stat strong {
+  font-size: 20px;
+  letter-spacing: -0.03em;
+}
+
+.settings-check {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.settings .btn-row {
+  margin-top: 8px;
+}

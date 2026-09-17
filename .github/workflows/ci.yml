@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/trading-platform-ui/package-lock.json
+
+      - name: Restore and build backend
+        run: |
+          dotnet restore TradingPlatform.slnx
+          dotnet build TradingPlatform.slnx --no-restore -c Release
+
+      - name: Test backend
+        run: dotnet test TradingPlatform.slnx --no-build -c Release --verbosity normal
+
+      - name: Build frontend
+        working-directory: frontend/trading-platform-ui
+        run: |
+          npm ci
+          npm run build -- --configuration=production
+
+  docker:
+    needs: build-test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build images
+        run: |
+          docker build -f deploy/docker/api.Dockerfile -t trading-platform-api:${{ github.sha }} .
+          docker build -f deploy/docker/workers.Dockerfile -t trading-platform-workers:${{ github.sha }} .
+          docker build -f deploy/docker/web.Dockerfile -t trading-platform-web:${{ github.sha }} .
+
+  production:
+    needs: docker
+    runs-on: ubuntu-latest
+    environment: production
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - name: Deployment approval required
+        run: echo "Production deployment is gated on GitHub Environment approval. Wire deploy commands here."

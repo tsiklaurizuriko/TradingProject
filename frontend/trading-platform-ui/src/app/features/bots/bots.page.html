@@ -1,0 +1,151 @@
+<div class="bots-page">
+  <div class="bots-toolbar">
+    <div class="list-sorts">
+      <app-sort-btn column="symbol" [query]="list">Coin</app-sort-btn>
+      <app-sort-btn column="status" [query]="list">Status</app-sort-btn>
+      <app-sort-btn column="pnl" [query]="list">PnL</app-sort-btn>
+    </div>
+    <div class="bots-toolbar-actions">
+      @if (ui.isLive()) {
+        <a class="tiny" routerLink="/exchanges">API keys →</a>
+      }
+      @if (createOpen()) {
+        <button class="btn ghost" type="button" (click)="closeCreate()">Cancel</button>
+      } @else {
+        <button class="btn accent" type="button" (click)="openCreate()">
+          <app-icon name="plus" />
+          Create bots
+        </button>
+      }
+    </div>
+  </div>
+
+  @if (createOpen()) {
+    <section class="create-composer">
+      <div class="create-composer-head">
+        <strong>New bots</strong>
+      </div>
+      <div class="btn-row" style="align-items:flex-end">
+        <label class="field">
+          Strategy
+          <select [ngModel]="selectedStrategy()?.id ?? ''" (ngModelChange)="strategyId.set($event)">
+            @for (row of trading.strategies(); track row.id) {
+              <option [value]="row.id">{{ row.name }} · {{ row.appliesToAllSymbols ? 'All coins' : row.allowedSymbols.length + ' coins' }}</option>
+            }
+          </select>
+        </label>
+        <label class="field">
+          Risk
+          <select [ngModel]="selectedRisk()?.id ?? ''" (ngModelChange)="riskId.set($event)">
+            @for (row of trading.riskProfiles(); track row.id ?? row.name) {
+              <option [value]="row.id">{{ row.name }}</option>
+            }
+          </select>
+        </label>
+        <label class="field">
+          Filter
+          <input type="search" [ngModel]="coinQuery()" (ngModelChange)="coinQuery.set($event)" placeholder="BTC, PEPE, SOL…" />
+        </label>
+      </div>
+      <div class="coin-toolbar">
+        <label class="tiny" style="display:flex;gap:8px;align-items:center">
+          <input type="checkbox" [checked]="allVisibleSelected()" (change)="toggleAllVisible($any($event.target).checked)" />
+          All shown ({{ creatableVisible().length }})
+        </label>
+        <span class="tiny">{{ selectedCount() }} selected · already created combinations are skipped</span>
+      </div>
+      <div class="coin-pick">
+        @for (row of coins(); track row.symbol) {
+          <label [class.is-used]="alreadyCreated(row.symbol)">
+            <input
+              type="checkbox"
+              [disabled]="alreadyCreated(row.symbol)"
+              [ngModel]="isSelected(row.symbol)"
+              (ngModelChange)="toggle(row.symbol, $event)"
+            />
+            <span>{{ row.symbol }} <em>{{ row.displayName }}</em></span>
+            @if (alreadyCreated(row.symbol)) {
+              <span class="tiny">exists</span>
+            }
+          </label>
+        }
+      </div>
+      <div class="btn-row" style="margin-top:12px">
+        <button class="btn accent" type="button" [disabled]="busy || !selectedCount()" (click)="createBots()">
+          Create {{ selectedCount() }} bot{{ selectedCount() === 1 ? '' : 's' }}
+        </button>
+      </div>
+    </section>
+  }
+
+  @if (bots().length === 0) {
+    <section class="panel">
+      <div class="empty-state">
+        <strong>No {{ ui.workspace() }} bot yet</strong>
+        <p>Use Create bots to pick coins. The engine will not trade until you press Start on a bot.</p>
+      </div>
+    </section>
+  } @else {
+    <div class="strategy-blocks">
+    @for (group of visibleGroups(); track group.key) {
+      <section class="panel bot-strategy" [class.is-collapsed]="ui.isCollapsed(groupKey(group.key))">
+        <div class="section-head">
+          <button type="button" class="section-fold" (click)="ui.toggleCollapsed(groupKey(group.key))" [attr.aria-expanded]="!ui.isCollapsed(groupKey(group.key))">
+            <app-icon name="chevron" [class.is-closed]="ui.isCollapsed(groupKey(group.key))" />
+            <h2>{{ group.name }} ({{ group.bots.length }})</h2>
+          </button>
+          <div class="section-head-meta">
+            <span class="tiny">{{ runningCount(group.bots) }} running</span>
+            <button class="btn ghost sm" type="button" [disabled]="busy" (click)="askDeleteGroup(group.bots)">Delete group</button>
+          </div>
+        </div>
+        @if (!ui.isCollapsed(groupKey(group.key))) {
+          <div class="bot-list bot-list-scroll">
+            @for (bot of group.bots; track bot.id) {
+              <article class="card bot-card" [routerLink]="['/bots', bot.id]">
+                <div class="section-head">
+                  <div>
+                    <strong>{{ bot.symbol }}</strong>
+                    <div class="tiny">{{ bot.displayName }} · {{ bot.timeframe }} · {{ bot.riskProfileName }}</div>
+                  </div>
+                  <div class="section-head-meta">
+                    <app-status-badge [label]="botStatus(bot.status).label" [cls]="botStatus(bot.status).cls" />
+                  </div>
+                </div>
+                <div class="tiny" style="display:flex;gap:8px;margin-bottom:10px">
+                  <span class="badge" [class]="modeBadge(bot.mode)">{{ bot.mode }}</span>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:12px">
+                  <div>PnL <div [class]="pnl(bot.id) ? (pnl(bot.id) > 0 ? 'pnl-pos' : 'pnl-neg') : ''"><strong>{{ signedMoney(pnl(bot.id)) }}</strong></div></div>
+                  <div>Today <div><strong>{{ tradesToday(bot.id) }}</strong></div></div>
+                  <div>Win rate <div><strong>{{ winRate(bot.id) }}</strong></div></div>
+                </div>
+                <p class="tiny" style="margin:10px 0 0">{{ bot.lastError || 'Idle until you start this coin' }}</p>
+                <div class="bot-actions" (click)="$event.preventDefault(); $event.stopPropagation()">
+                  @if (bot.status === 'Running') {
+                    <button class="btn danger" type="button" [disabled]="busyId === bot.id" (click)="stop(bot)">Stop</button>
+                  } @else {
+                    <button class="btn" type="button" [class.danger]="ui.isLive()" [disabled]="busyId === bot.id" (click)="start(bot)">Start</button>
+                  }
+                  <a class="btn secondary" [routerLink]="['/bots', bot.id]">Details</a>
+                  <button class="btn ghost" type="button" [disabled]="busy" (click)="askDeleteOne(bot)">Delete</button>
+                </div>
+              </article>
+            }
+          </div>
+        }
+      </section>
+    }
+  </div>
+}
+</div>
+<app-confirm-modal
+  [open]="!!confirmDelete()"
+  [title]="deleteTitle()"
+  [message]="deleteMessage()"
+  [warning]="deleteWarning()"
+  confirmLabel="Delete"
+  [danger]="true"
+  (cancel)="cancelDelete()"
+  (confirm)="confirmDeleteBots()"
+/>

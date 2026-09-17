@@ -1,0 +1,22 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/TradingPlatform.Domain/TradingPlatform.Domain.csproj" />
+    <Project Path="src/TradingPlatform.Application/TradingPlatform.Application.csproj" />
+    <Project Path="src/TradingPlatform.Infrastructure/TradingPlatform.Infrastructure.csproj" />
+    <Project Path="src/TradingPlatform.Strategies/TradingPlatform.Strategies.csproj" />
+    <Project Path="src/TradingPlatform.Risk/TradingPlatform.Risk.csproj" />
+    <Project Path="src/TradingPlatform.Execution/TradingPlatform.Execution.csproj" />
+    <Project Path="src/TradingPlatform.MarketData/TradingPlatform.MarketData.csproj" />
+    <Project Path="src/TradingPlatform.Trading/TradingPlatform.Trading.csproj" />
+    <Project Path="src/TradingPlatform.Backtesting/TradingPlatform.Backtesting.csproj" />
+    <Project Path="src/TradingPlatform.Binance/TradingPlatform.Binance.csproj" />
+    <Project Path="src/TradingPlatform.Workers/TradingPlatform.Workers.csproj" />
+    <Project Path="src/TradingPlatform.Api/TradingPlatform.Api.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/TradingPlatform.UnitTests/TradingPlatform.UnitTests.csproj" />
+    <Project Path="tests/TradingPlatform.IntegrationTests/TradingPlatform.IntegrationTests.csproj" />
+    <Project Path="tests/TradingPlatform.TradingTests/TradingPlatform.TradingTests.csproj" />
+    <Project Path="tests/TradingPlatform.BacktestingTests/TradingPlatform.BacktestingTests.csproj" />
+  </Folder>
+</Solution>

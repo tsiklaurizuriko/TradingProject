@@ -1,0 +1,120 @@
+<div class="watch">
+  <section class="watch-kpis">
+    <app-metric-card icon="star" label="Watching" [value]="'' + allRows().length" [sub]="gainers() + ' up · ' + losers() + ' down'" />
+    <app-metric-card
+      icon="trend"
+      label="Watchlist 24h"
+      [value]="avgChange()"
+      [valueClass]="pnlClass(avgChangeRaw())"
+      [sub]="'Vol ' + compact(totalVolume())"
+      [subClass]="pnlClass(avgChangeRaw())"
+    />
+    <app-metric-card
+      icon="bot"
+      label="Bots on list"
+      [value]="'' + botsOnList()"
+      [sub]="runningOnList() + ' running in ' + ui.workspace()"
+    />
+    <app-metric-card
+      icon="positions"
+      label="Open on list"
+      [value]="signedMoney(openPnl())"
+      [valueClass]="pnlClass(openPnl())"
+      [sub]="openCount() + ' position' + (openCount() === 1 ? '' : 's')"
+    />
+  </section>
+
+  <section class="panel compact watch-panel">
+    <div class="section-head">
+      <h2>Coins</h2>
+      <a class="btn sm" routerLink="/scanner">+ Add coins</a>
+    </div>
+    @if (allRows().length === 0) {
+      <app-empty-state
+        title="Nothing on this list yet"
+        message="Add coins from Market Scanner. This list stays on this browser."
+        actionLabel="Open Market Scanner"
+        actionLink="/scanner"
+      />
+    } @else {
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th><app-sort-btn column="symbol" [query]="list">Coin</app-sort-btn></th>
+              <th class="num"><app-sort-btn column="price" [query]="list" align="end">Price</app-sort-btn></th>
+              <th class="num"><app-sort-btn column="change" [query]="list" align="end">24h</app-sort-btn></th>
+              <th><app-sort-btn column="range" [query]="list">24h range</app-sort-btn></th>
+              <th class="num"><app-sort-btn column="volume" [query]="list" align="end">Volume</app-sort-btn></th>
+              <th><app-sort-btn column="bot" [query]="list">Bot</app-sort-btn></th>
+              <th class="num"><app-sort-btn column="position" [query]="list" align="end">Position</app-sort-btn></th>
+              <th><app-sort-btn column="signal" [query]="list">Signal</app-sort-btn></th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of rows(); track row.symbol) {
+              <tr class="clickable" (click)="openChart(row.symbol)">
+                <td>
+                  <strong>{{ row.symbol }}</strong>
+                  <div class="tiny">{{ row.displayName }}@if (row.marketCapRank && row.marketCapRank < 999) { · #{{ row.marketCapRank }} }</div>
+                </td>
+                <td class="num">{{ price(row.price) }}</td>
+                <td class="num" [class]="pnlClass(row.changePercent24h)">{{ row.price ? pct(row.changePercent24h) : '—' }}</td>
+                <td>
+                  @if (row.lowPrice24h && row.highPrice24h) {
+                    <div class="watch-range">
+                      <span class="tiny">{{ price(row.lowPrice24h) }}</span>
+                      <div class="watch-range-track">
+                        <span [style.left.%]="rangePos(row)"></span>
+                      </div>
+                      <span class="tiny">{{ price(row.highPrice24h) }}</span>
+                    </div>
+                  } @else {
+                    <span class="tiny muted">—</span>
+                  }
+                </td>
+                <td class="num">
+                  {{ compact(row.quoteVolume) }}
+                  @if (row.trades24h) {
+                    <div class="tiny">{{ compact(row.trades24h) }} prints</div>
+                  }
+                </td>
+                <td>
+                  @if (row.bots) {
+                    <span class="badge" [class]="row.running ? 'badge-running' : 'badge-stopped'">{{ row.running ? 'RUNNING' : 'STOPPED' }}</span>
+                    <div class="tiny">{{ row.running }}/{{ row.bots }} bots</div>
+                  } @else {
+                    <span class="tiny muted">No bot</span>
+                  }
+                </td>
+                <td class="num">
+                  @if (row.positions) {
+                    <span [class]="pnlClass(row.unrealized)">{{ signedMoney(row.unrealized) }}</span>
+                    <div class="tiny">{{ money(row.positionNotional) }} USDT</div>
+                  } @else {
+                    <span class="tiny muted">Flat</span>
+                  }
+                  @if (row.closedTrades) {
+                    <div class="tiny" [class]="pnlClass(row.realized)">{{ row.closedTrades }} closed · {{ signedMoney(row.realized) }}</div>
+                  }
+                </td>
+                <td>
+                  @if (row.signal) {
+                    <span class="badge" [class.badge-long]="row.signal === 'LONG'" [class.badge-short]="row.signal === 'SHORT'">{{ row.signal }}</span>
+                  } @else {
+                    <span class="tiny muted">—</span>
+                  }
+                </td>
+                <td class="watch-actions" (click)="$event.stopPropagation()">
+                  <button class="btn sm ghost" type="button" (click)="openChart(row.symbol)">Chart</button>
+                  <button class="btn sm ghost" type="button" (click)="ui.toggleWatch(row.symbol)">Remove</button>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  </section>
+</div>

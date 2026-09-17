@@ -1,0 +1,186 @@
+<div class="settings">
+  <div class="tabs">
+    @for (tab of tabs(); track tab) {
+      <button type="button" [class.is-on]="current() === tab" (click)="current.set(tab)">{{ tab }}</button>
+    }
+  </div>
+
+  @switch (current()) {
+    @case ('General') {
+      <section class="panel settings-panel">
+        <div class="form" style="max-width:560px">
+          <div class="settings-stat">
+            <span class="metric-label">Workspace</span>
+            <strong>{{ ui.workspace() }}</strong>
+            <span class="tiny">Switch PAPER / LIVE in the header.</span>
+          </div>
+          <label class="field">Default coin
+            <select [ngModel]="ui.selectedSymbol()" (ngModelChange)="ui.setSymbol($event)">
+              @for (row of coins(); track row.symbol) {
+                <option [value]="row.symbol">{{ row.symbol }} · {{ row.displayName }}</option>
+              }
+            </select>
+          </label>
+          <label class="field">Default timeframe
+            <select [ngModel]="ui.timeframe()" (ngModelChange)="ui.setTimeframe($event)">
+              @for (tf of timeframes; track tf) {
+                <option [value]="tf">{{ tf }}</option>
+              }
+            </select>
+          </label>
+        </div>
+      </section>
+    }
+    @case ('Exchange') {
+      <app-exchanges-page />
+    }
+    @case ('Trading') {
+      <section class="panel settings-panel">
+        <div class="form" style="max-width:560px">
+          <label class="field">Preferred strategy
+            <select [ngModel]="ui.preferredStrategyId()" (ngModelChange)="ui.setPreferredStrategyId($event)">
+              <option value="">First in catalog</option>
+              @for (row of trading.strategies(); track row.id) {
+                <option [value]="row.id">{{ row.name }}</option>
+              }
+            </select>
+          </label>
+          <label class="field">Preferred risk book
+            <select [ngModel]="ui.preferredRiskId()" (ngModelChange)="ui.setPreferredRiskId($event)">
+              <option value="">Conservative</option>
+              @for (row of trading.riskProfiles(); track row.id) {
+                <option [value]="row.id">{{ row.name }}</option>
+              }
+            </select>
+          </label>
+          <label class="field">
+            <span class="settings-check">
+              <input type="checkbox" [ngModel]="ui.confirmStartAll()" (ngModelChange)="ui.setConfirmStartAll($event)" />
+              Confirm before Start all on Paper
+            </span>
+          </label>
+          <p class="tiny">LIVE already asks before Start all. These defaults apply on Bots → Create.</p>
+          <a class="btn sm" routerLink="/bots">Open Bots</a>
+        </div>
+      </section>
+    }
+    @case ('Risk') {
+      <section class="panel settings-panel">
+        <div class="section-head">
+          <h2>Risk books</h2>
+          <a class="btn sm" routerLink="/risk">Edit books</a>
+        </div>
+        @if (trading.riskProfiles().length === 0) {
+          <p class="muted tiny">No risk books loaded.</p>
+        } @else {
+          <div class="table-scroll">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th><app-sort-btn column="name" [query]="riskQuery">Book</app-sort-btn></th>
+                  <th><app-sort-btn column="margin" [query]="riskQuery">Margin</app-sort-btn></th>
+                  <th class="num"><app-sort-btn column="r" [query]="riskQuery" align="end">R / trade</app-sort-btn></th>
+                  <th class="num"><app-sort-btn column="heat" [query]="riskQuery" align="end">Heat</app-sort-btn></th>
+                  <th class="num"><app-sort-btn column="halt" [query]="riskQuery" align="end">Daily halt</app-sort-btn></th>
+                  <th><app-sort-btn column="coins" [query]="riskQuery">Coins</app-sort-btn></th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (row of riskRows(); track row.id ?? row.name) {
+                  <tr>
+                    <td>{{ row.name }}</td>
+                    <td>{{ row.marginMode || 'Isolated' }}</td>
+                    <td class="num">{{ row.riskPerTradePercent }}%</td>
+                    <td class="num">{{ row.maxPortfolioHeatPercent ?? 4 }}%</td>
+                    <td class="num">{{ row.maxDailyLossPercent }}%</td>
+                    <td>{{ row.appliesToAllSymbols === false ? (row.allowedSymbols?.length ?? 0) + ' coins' : 'All' }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+      </section>
+    }
+    @case ('Notifications') {
+      <section class="panel settings-panel">
+        <div class="form" style="max-width:560px">
+          <label class="field">
+            <span class="settings-check">
+              <input type="checkbox" [ngModel]="ui.notify().bots" (ngModelChange)="ui.patchNotify({ bots: $event })" />
+              Bot start / stop / delete
+            </span>
+          </label>
+          <label class="field">
+            <span class="settings-check">
+              <input type="checkbox" [ngModel]="ui.notify().trades" (ngModelChange)="ui.patchNotify({ trades: $event })" />
+              Trade fills
+            </span>
+          </label>
+          <label class="field">
+            <span class="settings-check">
+              <input type="checkbox" [ngModel]="ui.notify().risk" (ngModelChange)="ui.patchNotify({ risk: $event })" />
+              Risk saves and blocks
+            </span>
+          </label>
+          <label class="field">
+            <span class="settings-check">
+              <input type="checkbox" [ngModel]="ui.notify().connection" (ngModelChange)="ui.patchNotify({ connection: $event })" />
+              API and live connection
+            </span>
+          </label>
+          <div class="btn-row">
+            <button class="btn sm secondary" type="button" (click)="testToast()">Send test toast</button>
+            <a class="btn sm" routerLink="/notifications">Open history</a>
+          </div>
+        </div>
+      </section>
+    }
+    @case ('Security') {
+      <section class="panel settings-panel">
+        <div class="form" style="max-width:560px">
+          <div class="settings-stat">
+            <span class="metric-label">Signed in</span>
+            <strong>{{ auth.current()?.email || '—' }}</strong>
+            <span class="tiny">{{ (auth.current()?.roles ?? []).join(', ') || 'No roles' }}</span>
+          </div>
+          <label class="field">Current password
+            <input type="password" autocomplete="current-password" [(ngModel)]="currentPassword" />
+          </label>
+          <label class="field">New password
+            <input type="password" autocomplete="new-password" [(ngModel)]="newPassword" />
+          </label>
+          <label class="field">Confirm new password
+            <input type="password" autocomplete="new-password" [(ngModel)]="confirmPassword" />
+          </label>
+          <div class="btn-row">
+            <button class="btn" type="button" [disabled]="busy" (click)="changePassword()">Change password</button>
+            <button class="btn secondary" type="button" (click)="signOut()">Sign out</button>
+          </div>
+        </div>
+      </section>
+    }
+    @case ('Appearance') {
+      <section class="panel settings-panel">
+        <div class="form" style="max-width:560px">
+          <label class="field">Monthly income goal (USDT)
+            <input type="number" min="1" [ngModel]="ui.goalTarget()" (ngModelChange)="ui.setGoal($event)" />
+          </label>
+          <label class="field">
+            <span class="settings-check">
+              <input type="checkbox" [ngModel]="ui.compact()" (ngModelChange)="ui.setCompact($event)" />
+              Compact density
+            </span>
+          </label>
+          <label class="field">
+            <span class="settings-check">
+              <input type="checkbox" [ngModel]="ui.hour12()" (ngModelChange)="ui.setHour12($event)" />
+              12-hour clock
+            </span>
+          </label>
+          <button class="btn sm secondary" type="button" (click)="resetLayout()">Reset collapsed panels</button>
+        </div>
+      </section>
+    }
+  }
+</div>
