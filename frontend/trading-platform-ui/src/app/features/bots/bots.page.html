@@ -24,6 +24,7 @@
     <section class="create-composer">
       <div class="create-composer-head">
         <strong>New bots</strong>
+        <span class="tiny">Active Isolated book {{ trading.risk()?.name || '—' }} · {{ trading.risk()?.riskPerTradePercent ?? '—' }}% R</span>
       </div>
       <div class="btn-row" style="align-items:flex-end">
         <label class="field">
@@ -31,14 +32,6 @@
           <select [ngModel]="selectedStrategy()?.id ?? ''" (ngModelChange)="strategyId.set($event)">
             @for (row of trading.strategies(); track row.id) {
               <option [value]="row.id">{{ row.name }} · {{ row.appliesToAllSymbols ? 'All coins' : row.allowedSymbols.length + ' coins' }}</option>
-            }
-          </select>
-        </label>
-        <label class="field">
-          Risk
-          <select [ngModel]="selectedRisk()?.id ?? ''" (ngModelChange)="riskId.set($event)">
-            @for (row of trading.riskProfiles(); track row.id ?? row.name) {
-              <option [value]="row.id">{{ row.name }}</option>
             }
           </select>
         </label>

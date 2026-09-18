@@ -33,7 +33,8 @@ public sealed record ExchangeOrder(
     decimal FilledQuantity,
     decimal? Price,
     decimal? AverageFillPrice,
-    DateTimeOffset? ExchangeTimestamp);
+    DateTimeOffset? ExchangeTimestamp,
+    decimal Fee = 0m);
 
 public sealed record PlaceOrderRequest(
     string ClientOrderId,
@@ -55,6 +56,7 @@ public interface IExchangeConnector
     Task<IReadOnlyList<ExchangeOrder>> GetOpenOrdersAsync(string? symbol, CancellationToken cancellationToken = default);
     Task<ExchangeOrder?> GetOrderAsync(string? clientOrderId, string? exchangeOrderId, string symbol, CancellationToken cancellationToken = default);
     Task PrepareSymbolRiskAsync(string symbol, MarginMode marginMode, int leverage, CancellationToken cancellationToken = default);
+    Task<int> GetMaxIsolatedLeverageAsync(string symbol, CancellationToken cancellationToken = default);
     Task<ExchangeOrder> PlaceOrderAsync(PlaceOrderRequest request, CancellationToken cancellationToken = default);
     Task PlaceClosePositionStopsAsync(
         string symbol,

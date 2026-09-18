@@ -103,14 +103,20 @@ public sealed class TradingStore : ITradingStore
     public async Task AddStrategyAsync(Strategy strategy, CancellationToken cancellationToken = default) =>
         await _db.Strategies.AddAsync(strategy, cancellationToken);
 
-    public Task<RiskProfile> GetConservativeRiskAsync(CancellationToken cancellationToken = default) =>
-        _db.RiskProfiles.FirstAsync(r => r.Name == "Conservative", cancellationToken);
+    public async Task<RiskProfile> GetConservativeRiskAsync(CancellationToken cancellationToken = default)
+    {
+        var books = await _db.RiskProfiles.OrderBy(r => r.RiskPerTradePercent).ToListAsync(cancellationToken);
+        return books.FirstOrDefault(r => r.IsActive)
+            ?? books.FirstOrDefault(r => string.Equals(r.Name, "LOW", StringComparison.OrdinalIgnoreCase))
+            ?? books.FirstOrDefault(r => string.Equals(r.Name, "Low Risk", StringComparison.OrdinalIgnoreCase))
+            ?? books.First();
+    }
 
     public Task<RiskProfile?> GetRiskProfileByIdAsync(Guid riskProfileId, CancellationToken cancellationToken = default) =>
         _db.RiskProfiles.FirstOrDefaultAsync(r => r.Id == riskProfileId, cancellationToken);
 
     public async Task<IReadOnlyList<RiskProfile>> ListRiskProfilesAsync(CancellationToken cancellationToken = default) =>
-        await _db.RiskProfiles.OrderBy(r => r.Name).ToListAsync(cancellationToken);
+        await _db.RiskProfiles.OrderBy(r => r.RiskPerTradePercent).ThenBy(r => r.Name).ToListAsync(cancellationToken);
 
     public async Task AddRiskProfileAsync(RiskProfile risk, CancellationToken cancellationToken = default) =>
         await _db.RiskProfiles.AddAsync(risk, cancellationToken);
@@ -319,6 +325,33 @@ public sealed class TradingStore : ITradingStore
     {
         var recent = await _db.Trades
             .Where(t => t.BotId == botId && t.ClosedAt != null)
+            .OrderByDescending(t => t.ClosedAt)
+            .Take(20)
+            .Select(t => new { t.PnL, t.ClosedAt })
+            .ToListAsync(cancellationToken);
+
+        var losses = 0;
+        DateTimeOffset? lastLoss = null;
+        foreach (var trade in recent)
+        {
+            if (trade.PnL >= 0m)
+            {
+                break;
+            }
+
+            losses++;
+            lastLoss ??= trade.ClosedAt;
+        }
+
+        return (losses, lastLoss);
+    }
+
+    public async Task<(int ConsecutiveLosses, DateTimeOffset? LastLossAt)> GetLossStreakForModeAsync(
+        TradingMode mode,
+        CancellationToken cancellationToken = default)
+    {
+        var recent = await _db.Trades
+            .Where(t => t.Bot.Mode == mode && t.ClosedAt != null)
             .OrderByDescending(t => t.ClosedAt)
             .Take(20)
             .Select(t => new { t.PnL, t.ClosedAt })

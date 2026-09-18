@@ -14,6 +14,7 @@ import {
   OrderDto,
   PortfolioDto,
   PositionDto,
+  RiskPreviewDto,
   RiskProfileDto,
   RunBacktestRequest,
   BacktestResultDto,
@@ -208,6 +209,10 @@ export class TradingService {
       ]);
       this.strategies.set(strategies ?? []);
       this.riskProfiles.set(profiles ?? []);
+      const active = (profiles ?? []).find((row) => row.isActive) ?? profiles?.[0] ?? this.risk();
+      if (active) {
+        this.risk.set(active);
+      }
     } catch {
       this.strategies.set([]);
       this.riskProfiles.set([]);
@@ -228,6 +233,18 @@ export class TradingService {
 
   updateRiskProfile(id: string, body: SaveRiskProfileRequest): Promise<RiskProfileDto> {
     return firstValueFrom(this.http.put<RiskProfileDto>(`${environment.apiBaseUrl}/trading/risk-profiles/${id}`, body));
+  }
+
+  activateRiskProfile(id: string): Promise<RiskProfileDto> {
+    return firstValueFrom(this.http.post<RiskProfileDto>(`${environment.apiBaseUrl}/trading/risk-profiles/${id}/activate`, {}));
+  }
+
+  fetchRiskPreview(mode: WorkspaceMode, price: number): Promise<RiskPreviewDto> {
+    return firstValueFrom(
+      this.http.get<RiskPreviewDto>(`${environment.apiBaseUrl}/trading/risk-profiles/preview`, {
+        params: { mode, price },
+      }),
+    );
   }
 
   async loadKlines(symbol: string, interval: string): Promise<void> {

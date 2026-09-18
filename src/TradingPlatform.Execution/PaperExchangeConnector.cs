@@ -49,8 +49,18 @@ public sealed class PaperExchangeConnector : IExchangeConnector
     public Task<ExchangeOrder?> GetOrderAsync(string? clientOrderId, string? exchangeOrderId, string symbol, CancellationToken cancellationToken = default) =>
         Task.FromResult<ExchangeOrder?>(null);
 
-    public Task PrepareSymbolRiskAsync(string symbol, MarginMode marginMode, int leverage, CancellationToken cancellationToken = default) =>
-        Task.CompletedTask;
+    public Task PrepareSymbolRiskAsync(string symbol, MarginMode marginMode, int leverage, CancellationToken cancellationToken = default)
+    {
+        if (marginMode != MarginMode.Isolated)
+        {
+            throw new DomainException(ErrorCodes.RiskLimitExceeded, "Isolated margin only. Cross is not allowed.");
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task<int> GetMaxIsolatedLeverageAsync(string symbol, CancellationToken cancellationToken = default) =>
+        Task.FromResult(20);
 
     public Task<ExchangeOrder> PlaceOrderAsync(PlaceOrderRequest request, CancellationToken cancellationToken = default)
     {

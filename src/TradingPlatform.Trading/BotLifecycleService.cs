@@ -8,6 +8,8 @@ using TradingPlatform.Application.Abstractions.MarketData;
 using TradingPlatform.Application.Trading;
 using TradingPlatform.Domain.Bots;
 using TradingPlatform.Domain.Errors;
+using TradingPlatform.Domain.Orders;
+using TradingPlatform.Domain.Positions;
 using TradingPlatform.Domain.Risk;
 using TradingPlatform.Domain.Strategies;
 using TradingPlatform.Domain.Trades;
@@ -97,6 +99,7 @@ public sealed class BotLifecycleService : IBotLifecycleService
         Guid? riskProfileId = null,
         CancellationToken cancellationToken = default)
     {
+        _ = riskProfileId;
         if (_options.KillSwitchEnabled)
         {
             throw new DomainException(ErrorCodes.KillSwitchActive, "Kill switch is active.");
@@ -133,16 +136,9 @@ public sealed class BotLifecycleService : IBotLifecycleService
                 $"{strategyVersion.Strategy.Name} is not assigned to {name}. Open Strategies and add this coin, or set the strategy to all coins.");
         }
 
-        var risk = riskProfileId is { } rid && rid != Guid.Empty
-            ? await _store.GetRiskProfileByIdAsync(rid, cancellationToken) ?? await _store.GetConservativeRiskAsync(cancellationToken)
-            : await _store.GetConservativeRiskAsync(cancellationToken);
-        var riskAllowsAll = string.IsNullOrWhiteSpace(risk.AllowedSymbolsCsv);
-        if (!SymbolScope.Allows(riskAllowsAll, risk.AllowedSymbolsCsv, name))
-        {
-            throw new DomainException(
-                ErrorCodes.InvalidSymbol,
-                $"{risk.Name} risk is not assigned to {name}. Open Risk Management and add this coin, or set that profile to all coins.");
-        }
+        var risk = await _store.GetConservativeRiskAsync(cancellationToken);
+        RiskLiveGuard.EnsureAllowed(mode, risk);
+
         Domain.Exchanges.ExchangeAccount account;
         if (mode == TradingMode.Live)
         {
@@ -175,7 +171,7 @@ public sealed class BotLifecycleService : IBotLifecycleService
             cancellationToken);
         _cache.SetTicker(ranked.Symbol, ranked.LastPrice, _clock.UtcNow);
 
-        var bot = await _store.FindBotBySymbolAsync(user.Id, name, mode, strategyVersion.StrategyId, risk.Id, cancellationToken);
+        var bot = await _store.FindBotBySymbolAsync(user.Id, name, mode, strategyVersion.StrategyId, null, cancellationToken);
         if (bot is null)
         {
             var display = UsdtSpotUniverse.DisplayNameOf(name);
@@ -224,6 +220,7 @@ public sealed class BotLifecycleService : IBotLifecycleService
         IReadOnlyList<string> symbols,
         CancellationToken cancellationToken = default)
     {
+        _ = riskProfileId;
         if (mode is not TradingMode.Paper and not TradingMode.Live)
         {
             throw new DomainException(ErrorCodes.ValidationFailed, "Use Paper or Live.");
@@ -245,9 +242,8 @@ public sealed class BotLifecycleService : IBotLifecycleService
 
         var strategyVersion = await _store.GetLatestStrategyVersionAsync(strategyId, cancellationToken)
             ?? throw new DomainException(ErrorCodes.StrategyInvalid, "Strategy was not found.");
-        var risk = await _store.GetRiskProfileByIdAsync(riskProfileId, cancellationToken)
-            ?? throw new DomainException(ErrorCodes.ValidationFailed, "Risk profile was not found.");
-        var riskAllowsAll = string.IsNullOrWhiteSpace(risk.AllowedSymbolsCsv);
+        var risk = await _store.GetConservativeRiskAsync(cancellationToken);
+        RiskLiveGuard.EnsureAllowed(mode, risk);
 
         Domain.Exchanges.ExchangeAccount account;
         if (mode == TradingMode.Live)
@@ -284,8 +280,7 @@ public sealed class BotLifecycleService : IBotLifecycleService
                 continue;
             }
 
-            if (!SymbolScope.Allows(strategyVersion.Strategy.AppliesToAllSymbols, strategyVersion.Strategy.AllowedSymbolsCsv, name)
-                || !SymbolScope.Allows(riskAllowsAll, risk.AllowedSymbolsCsv, name))
+            if (!SymbolScope.Allows(strategyVersion.Strategy.AppliesToAllSymbols, strategyVersion.Strategy.AllowedSymbolsCsv, name))
             {
                 skipped++;
                 continue;
@@ -293,8 +288,7 @@ public sealed class BotLifecycleService : IBotLifecycleService
 
             var already = existing.Any(bot =>
                 string.Equals(bot.Symbol, name, StringComparison.OrdinalIgnoreCase)
-                && bot.StrategyVersion.StrategyId == strategyVersion.StrategyId
-                && bot.RiskProfileId == risk.Id);
+                && bot.StrategyVersion.StrategyId == strategyVersion.StrategyId);
             if (already)
             {
                 skipped++;
@@ -365,6 +359,8 @@ public sealed class BotLifecycleService : IBotLifecycleService
                 throw new DomainException(ErrorCodes.LiveTradingDisabled, "Save a Binance API key on Exchanges before starting a live bot.");
             }
 
+            RiskLiveGuard.EnsureAllowed(bot.Mode, await _store.GetConservativeRiskAsync(cancellationToken));
+
             var running = await _store.GetRunningBotsAsync(cancellationToken);
             if (running.Any(other =>
                     other.Id != bot.Id &&
@@ -417,6 +413,8 @@ public sealed class BotLifecycleService : IBotLifecycleService
             {
                 throw new DomainException(ErrorCodes.LiveTradingDisabled, "Save a Binance API key on Exchanges before starting a live bot.");
             }
+
+            RiskLiveGuard.EnsureAllowed(mode, await _store.GetConservativeRiskAsync(cancellationToken));
         }
 
         var bots = (await _store.ListBotsAsync(cancellationToken))
@@ -668,11 +666,12 @@ public sealed class TradingQueryService : ITradingQueryService
         positions.AddRange(live.OpenPositions.Select(MapExchangePosition));
         orders.AddRange(live.OpenOrders.Select(MapExchangeOrder));
 
+        var paperFree = balances.Where(b => b.Asset == "USDT").Sum(b => b.Free);
         var paperUsdt = balances.Where(b => b.Asset == "USDT").Sum(b => b.Free + b.Locked);
-        var paperPortfolio = MarkToMarket(balances.Select(b => (b.Asset, b.Free + b.Locked)));
         var paperBotIds = bots.Where(b => !string.Equals(b.Mode, "Live", StringComparison.OrdinalIgnoreCase)).Select(b => b.Id).ToHashSet();
         var liveBotIds = bots.Where(b => string.Equals(b.Mode, "Live", StringComparison.OrdinalIgnoreCase)).Select(b => b.Id).ToHashSet();
         var paperUnrealized = positions.Where(p => paperBotIds.Contains(p.BotId)).Sum(p => p.UnrealizedPnL);
+        var paperEquity = paperUsdt + paperUnrealized;
         var liveBotUnrealized = positions.Where(p => liveBotIds.Contains(p.BotId) && p.Source != "Binance").Sum(p => p.UnrealizedPnL);
         var liveUnrealized = liveBotUnrealized + positions.Where(p => p.Source == "Binance").Sum(p => p.UnrealizedPnL);
         var todayStart = new DateTimeOffset(DateTime.UtcNow.Date, TimeSpan.Zero);
@@ -688,8 +687,8 @@ public sealed class TradingQueryService : ITradingQueryService
         TickerDto? ticker = tickers.FirstOrDefault(t => t.Symbol == "BTCUSDT") ?? tickers.FirstOrDefault();
 
         return new PortfolioDto(
-            paperPortfolio > 0m ? paperPortfolio : _options.PaperDefaultBalance,
-            paperUsdt > 0m || balances.Count > 0 ? paperUsdt : _options.PaperDefaultBalance,
+            paperEquity > 0m || balances.Count > 0 ? paperEquity : _options.PaperDefaultBalance,
+            paperFree > 0m || balances.Count > 0 ? paperFree : _options.PaperDefaultBalance,
             paperUnrealized,
             paperRealized,
             paperTodays,
@@ -770,7 +769,8 @@ public sealed class TradingQueryService : ITradingQueryService
             0m,
             0m,
             DateTimeOffset.UtcNow,
-            "Binance");
+            "Binance",
+            0m);
 
     private static OrderDto MapExchangeOrder(LiveOpenOrder order) =>
         new(
@@ -841,7 +841,18 @@ public sealed class TradingQueryService : ITradingQueryService
             p.UnrealizedPnL,
             p.RealizedPnL,
             p.Fees,
-            p.OpenedAt))
+            p.OpenedAt,
+            "Bot",
+            p.InitialRiskUsdt,
+            p.MarginUsdt,
+            p.NotionalUsdt > 0m ? p.NotionalUsdt : p.Quantity * p.AverageEntryPrice,
+            p.Leverage,
+            p.StopLossPercent,
+            p.TakeProfitPercent,
+            p.StopLossPrice,
+            p.TakeProfitPrice,
+            p.LiquidationPrice,
+            p.RiskPerTradePercent))
         .ToList();
 
     public async Task<IReadOnlyList<TradeDto>> GetTradesAsync(CancellationToken cancellationToken = default) =>
@@ -1130,8 +1141,6 @@ public sealed class TradingQueryService : ITradingQueryService
     {
         var risk = await _store.GetRiskProfileByIdAsync(riskProfileId, cancellationToken)
             ?? throw new DomainException(ErrorCodes.ValidationFailed, "Risk profile was not found.");
-        ApplyRiskScope(risk, appliesToAll, symbols);
-        await _store.SaveChangesAsync(cancellationToken);
         return MapRisk(risk);
     }
 
@@ -1219,17 +1228,7 @@ public sealed class TradingQueryService : ITradingQueryService
         SaveRiskProfileRequest request,
         CancellationToken cancellationToken = default)
     {
-        await EnsureUniqueRiskNameAsync(request.Name, null, cancellationToken);
-        var risk = new RiskProfile
-        {
-            Name = request.Name.Trim(),
-            IsSystem = false
-        };
-        ApplyRiskValues(risk, request);
-        ApplyRiskScope(risk, request.AppliesToAllSymbols, request.Symbols);
-        await _store.AddRiskProfileAsync(risk, cancellationToken);
-        await _store.SaveChangesAsync(cancellationToken);
-        return MapRisk(risk);
+        throw new DomainException(ErrorCodes.ValidationFailed, "Use LOW, MEDIUM, or HIGH. Extra risk books are not allowed.");
     }
 
     public async Task<RiskProfileDto> UpdateRiskProfileAsync(
@@ -1239,16 +1238,77 @@ public sealed class TradingQueryService : ITradingQueryService
     {
         var risk = await _store.GetRiskProfileByIdAsync(riskProfileId, cancellationToken)
             ?? throw new DomainException(ErrorCodes.ValidationFailed, "Risk profile was not found.");
-        if (!risk.IsSystem)
-        {
-            await EnsureUniqueRiskNameAsync(request.Name, risk.Id, cancellationToken);
-            risk.Name = request.Name.Trim();
-        }
-
         ApplyRiskValues(risk, request);
-        ApplyRiskScope(risk, request.AppliesToAllSymbols, request.Symbols);
         await _store.SaveChangesAsync(cancellationToken);
         return MapRisk(risk);
+    }
+
+    public async Task<RiskProfileDto> ActivateRiskProfileAsync(Guid riskProfileId, CancellationToken cancellationToken = default)
+    {
+        var books = await _store.ListRiskProfilesAsync(cancellationToken);
+        var selected = books.FirstOrDefault(r => r.Id == riskProfileId)
+            ?? throw new DomainException(ErrorCodes.ValidationFailed, "Risk profile was not found.");
+        foreach (var book in books)
+        {
+            book.IsActive = book.Id == selected.Id;
+        }
+
+        await _store.SaveChangesAsync(cancellationToken);
+        return MapRisk(selected);
+    }
+
+    public async Task<RiskPreviewDto> PreviewRiskAsync(string mode, decimal price, CancellationToken cancellationToken = default)
+    {
+        var profile = await _store.GetConservativeRiskAsync(cancellationToken);
+        decimal available;
+        if (string.Equals(mode, "Live", StringComparison.OrdinalIgnoreCase))
+        {
+            await RefreshLiveCacheIfStaleAsync(cancellationToken);
+            available = _live.Current.UsdtFree ?? _live.Current.FuturesUsdt;
+        }
+        else
+        {
+            var user = await _store.GetFirstAdminAsync(cancellationToken);
+            var account = await _store.GetOrCreatePaperAccountAsync(user.Id, cancellationToken);
+            var usdt = await _store.GetOrCreateBalanceAsync(
+                account.Id,
+                null,
+                "USDT",
+                TradingMode.Paper,
+                _options.PaperDefaultBalance,
+                cancellationToken);
+            available = usdt.Free;
+        }
+
+        var entry = price > 0m ? price : 100_000m;
+        var open = await _store.GetOpenPositionsForModeAsync(
+            string.Equals(mode, "Live", StringComparison.OrdinalIgnoreCase) ? TradingMode.Live : TradingMode.Paper,
+            cancellationToken);
+        var openRisk = available > 0m ? open.Sum(p => p.InitialRiskUsdt) / available * 100m : 0m;
+        var plan = RiskEngine.Plan(profile, available, entry, PositionSide.Long, openRisk, null);
+        return new RiskPreviewDto(
+            profile.Name,
+            plan.AvailableBalance,
+            plan.RiskPerTradePercent,
+            plan.RiskAmount,
+            plan.Price,
+            plan.StopLossPercent,
+            plan.StopLossPrice,
+            plan.TakeProfitPercent,
+            plan.TakeProfitPrice,
+            plan.PositionNotional,
+            plan.Leverage,
+            plan.IsolatedMargin,
+            plan.EstimatedFee,
+            plan.EstimatedEntryFee,
+            plan.EstimatedExitFee,
+            plan.EstimatedSlippage,
+            plan.EstimatedTotalRisk,
+            plan.LiquidationPrice,
+            plan.PortfolioRiskBefore,
+            plan.PortfolioRiskAfter,
+            plan.Allowed,
+            plan.Reason);
     }
 
     private async Task EnsureUniqueStrategyNameAsync(string name, Guid? exceptId, CancellationToken cancellationToken)
@@ -1267,22 +1327,6 @@ public sealed class TradingQueryService : ITradingQueryService
         }
     }
 
-    private async Task EnsureUniqueRiskNameAsync(string name, Guid? exceptId, CancellationToken cancellationToken)
-    {
-        var trimmed = name.Trim();
-        if (string.IsNullOrWhiteSpace(trimmed))
-        {
-            throw new DomainException(ErrorCodes.ValidationFailed, "Risk profile name is required.");
-        }
-
-        var exists = (await _store.ListRiskProfilesAsync(cancellationToken))
-            .Any(row => row.Id != exceptId && string.Equals(row.Name, trimmed, StringComparison.OrdinalIgnoreCase));
-        if (exists)
-        {
-            throw new DomainException(ErrorCodes.ValidationFailed, "A risk profile with this name already exists.");
-        }
-    }
-
     private static void ApplyStrategyScope(Strategy strategy, bool appliesToAll, IEnumerable<string>? symbols)
     {
         var list = SymbolScope.Parse(SymbolScope.Join(symbols));
@@ -1295,88 +1339,70 @@ public sealed class TradingQueryService : ITradingQueryService
         strategy.AllowedSymbolsCsv = appliesToAll ? null : SymbolScope.Join(list);
     }
 
-    private static void ApplyRiskScope(RiskProfile risk, bool appliesToAll, IEnumerable<string>? symbols)
-    {
-        var list = SymbolScope.Parse(SymbolScope.Join(symbols));
-        if (!appliesToAll && list.Count == 0)
-        {
-            throw new DomainException(ErrorCodes.ValidationFailed, "Pick at least one coin, or set this risk profile to all coins.");
-        }
-
-        risk.AllowedSymbolsCsv = appliesToAll ? null : SymbolScope.Join(list);
-    }
-
     private static void ApplyRiskValues(RiskProfile risk, SaveRiskProfileRequest request)
     {
-        if (request.RiskPerTradePercent <= 0 || request.MaxPositionPercent <= 0 || request.MaxDailyLossPercent <= 0)
+        if (request.RiskPerTradePercent <= 0m || request.RiskPerTradePercent > 10m)
         {
-            throw new DomainException(ErrorCodes.ValidationFailed, "Risk percents must be greater than zero.");
+            throw new DomainException(ErrorCodes.ValidationFailed, "Risk per trade % must be between 0 and 10.");
         }
 
-        if (request.MaxPortfolioHeatPercent <= 0 || request.MaxTotalExposurePercent <= 0)
+        if (request.StopLossPercent <= 0m || request.TakeProfitPercent <= 0m)
         {
-            throw new DomainException(ErrorCodes.ValidationFailed, "Portfolio heat and total exposure must be greater than zero.");
+            throw new DomainException(ErrorCodes.ValidationFailed, "Stop loss and take profit percents must be greater than zero.");
         }
 
-        if (request.CorrelationFactor is < 0 or > 1)
+        if (request.TakeProfitPercent <= request.StopLossPercent)
         {
-            throw new DomainException(ErrorCodes.ValidationFailed, "Correlation factor must be between 0 (independent) and 1 (lockstep).");
+            throw new DomainException(ErrorCodes.ValidationFailed, "Take profit must be farther than stop loss.");
         }
 
-        if (request.MinFreeMarginPercent is < 0 or > 50)
+        if (request.MaxDailyLossPercent <= 0m || request.MaxDailyLossPercent > 50m)
         {
-            throw new DomainException(ErrorCodes.ValidationFailed, "Cash reserve must be between 0% and 50%.");
+            throw new DomainException(ErrorCodes.ValidationFailed, "Daily loss halt must be between 0% and 50%.");
         }
 
-        if (request.MaxOpenPositions < 1 || request.MaxDailyTrades < 1)
+        if (request.MaxLeverage < 1m || request.MaxLeverage > 20m)
         {
-            throw new DomainException(ErrorCodes.ValidationFailed, "Position and daily trade limits must be at least 1.");
+            throw new DomainException(ErrorCodes.ValidationFailed, "Isolated leverage must be between 1x and 20x.");
         }
 
-        if (request.MaxLeverage < 1)
+        if (request.MaxPortfolioRiskPercent <= 0m || request.MaxPortfolioRiskPercent > 50m)
         {
-            throw new DomainException(ErrorCodes.ValidationFailed, "Max leverage must be at least 1.");
+            throw new DomainException(ErrorCodes.ValidationFailed, "Maximum portfolio planned risk must be between 0% and 50%.");
         }
 
-        var margin = ParseMarginMode(request.MarginMode);
-        if (margin == MarginMode.Cross && request.MaxOpenPositions > RiskEngine.MaxCrossOpenPositions)
+        if (request.MaxSimultaneousPositions < 1 || request.MaxSimultaneousPositions > 20)
         {
-            throw new DomainException(
-                ErrorCodes.ValidationFailed,
-                $"Cross margin cannot run more than {RiskEngine.MaxCrossOpenPositions} coins. Use Isolated for a universe.");
+            throw new DomainException(ErrorCodes.ValidationFailed, "Maximum simultaneous positions must be between 1 and 20.");
         }
 
-        if (margin == MarginMode.Cross && request.MaxLeverage > 5m)
+        if (request.MaxConsecutiveLosses < 1 || request.MaxConsecutiveLosses > 50)
         {
-            throw new DomainException(ErrorCodes.ValidationFailed, "Cross leverage is capped at 5x. Isolated can go higher with a hard stop on the exchange.");
+            throw new DomainException(ErrorCodes.ValidationFailed, "Consecutive loss limit must be between 1 and 50.");
         }
 
-        if (margin == MarginMode.Isolated && request.MaxLeverage > 20m)
+        if (request.CooldownMinutes < 1 || request.CooldownMinutes > 1440)
         {
-            throw new DomainException(ErrorCodes.ValidationFailed, "Isolated leverage is capped at 20x so liquidation stays beyond a typical 1–2% stop.");
+            throw new DomainException(ErrorCodes.ValidationFailed, "Cooldown must be between 1 and 1440 minutes.");
+        }
+
+        if (request.MinimumLiquidationSafetyBufferPercent < 0.1m || request.MinimumLiquidationSafetyBufferPercent > 20m)
+        {
+            throw new DomainException(ErrorCodes.ValidationFailed, "Liquidation safety buffer must be between 0.1% and 20%.");
         }
 
         risk.RiskPerTradePercent = request.RiskPerTradePercent;
-        risk.MaxPositionPercent = request.MaxPositionPercent;
-        risk.MaxDailyLossPercent = request.MaxDailyLossPercent;
-        risk.MaxOpenPositions = request.MaxOpenPositions;
-        risk.MaxDailyTrades = request.MaxDailyTrades;
-        risk.CooldownAfterLossMinutes = Math.Max(0, request.CooldownAfterLossMinutes);
-        risk.MaxConsecutiveLosses = Math.Max(1, request.MaxConsecutiveLosses);
+        risk.StopLossPercent = request.StopLossPercent;
+        risk.TakeProfitPercent = request.TakeProfitPercent;
         risk.MaxLeverage = request.MaxLeverage;
-        risk.StopBotOnDailyLoss = request.StopBotOnDailyLoss;
-        risk.StopAccountOnDailyLoss = request.StopAccountOnDailyLoss;
-        risk.MarginMode = margin;
-        risk.MaxPortfolioHeatPercent = request.MaxPortfolioHeatPercent;
-        risk.MaxTotalExposurePercent = request.MaxTotalExposurePercent;
-        risk.CorrelationFactor = request.CorrelationFactor;
-        risk.MinFreeMarginPercent = request.MinFreeMarginPercent;
+        risk.MaxDailyLossPercent = request.MaxDailyLossPercent;
+        risk.MaxPortfolioRiskPercent = request.MaxPortfolioRiskPercent;
+        risk.MaxSimultaneousPositions = request.MaxSimultaneousPositions;
+        risk.MaxConsecutiveLosses = request.MaxConsecutiveLosses;
+        risk.CooldownMinutes = request.CooldownMinutes;
+        risk.MinimumLiquidationSafetyBufferPercent = request.MinimumLiquidationSafetyBufferPercent;
+        risk.AllowLive = request.AllowLive;
     }
-
-    private static MarginMode ParseMarginMode(string? value) =>
-        string.Equals(value, "Cross", StringComparison.OrdinalIgnoreCase)
-            ? MarginMode.Cross
-            : MarginMode.Isolated;
 
     private static EmaRsiParameters ToParameters(SaveStrategyRequest request) =>
         new(
@@ -1408,29 +1434,21 @@ public sealed class TradingQueryService : ITradingQueryService
             latest?.IsImmutable ?? false);
     }
 
-    private static RiskProfileDto MapRisk(RiskProfile risk)
-    {
-        var symbols = SymbolScope.Parse(risk.AllowedSymbolsCsv);
-        return new RiskProfileDto(
+    private static RiskProfileDto MapRisk(RiskProfile risk) =>
+        new(
             risk.Id,
             risk.Name,
             risk.RiskPerTradePercent,
-            risk.MaxPositionPercent,
-            risk.MaxDailyLossPercent,
-            risk.MaxOpenPositions,
-            risk.MaxDailyTrades,
-            risk.CooldownAfterLossMinutes,
-            risk.MaxConsecutiveLosses,
+            risk.StopLossPercent,
+            risk.TakeProfitPercent,
             risk.MaxLeverage,
-            risk.StopBotOnDailyLoss,
-            risk.StopAccountOnDailyLoss,
-            risk.MarginMode.ToString(),
-            risk.MaxPortfolioHeatPercent,
-            risk.MaxTotalExposurePercent,
-            risk.CorrelationFactor,
-            risk.MinFreeMarginPercent,
-            risk.IsSystem,
-            symbols.Count == 0,
-            symbols);
-    }
+            risk.MaxDailyLossPercent,
+            risk.MaxPortfolioRiskPercent,
+            risk.MaxSimultaneousPositions,
+            risk.MaxConsecutiveLosses,
+            risk.CooldownMinutes,
+            risk.MinimumLiquidationSafetyBufferPercent,
+            risk.IsActive,
+            risk.AllowLive,
+            risk.IsSystem);
 }

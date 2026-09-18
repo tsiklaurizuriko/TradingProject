@@ -4,129 +4,107 @@ import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { AuthService } from '../../core/auth/auth.service';
 import { TradingService } from '../../core/trading/trading.service';
-import { ExchangeConnectionDto, RiskProfileDto, SaveRiskProfileRequest } from '../../core/trading/trading.models';
+import { ExchangeConnectionDto, RiskProfileDto, SaveRiskProfileRequest, money, previewRisk, price } from '../../core/trading/trading.models';
 import { ListQuery } from '../../shared/lists/list-query';
 import { SortBtnComponent } from '../../shared/lists/list-tools';
 import { ToastService } from '../../core/ui/toast.service';
 import { UiStateService } from '../../core/ui/ui-state.service';
 
 interface RiskDraft {
-  name: string;
   riskPerTradePercent: number;
-  maxPositionPercent: number;
-  maxDailyLossPercent: number;
-  maxOpenPositions: number;
-  maxDailyTrades: number;
-  cooldownAfterLossMinutes: number;
-  maxConsecutiveLosses: number;
+  stopLossPercent: number;
+  takeProfitPercent: number;
   maxLeverage: number;
-  stopBotOnDailyLoss: boolean;
-  stopAccountOnDailyLoss: boolean;
-  marginMode: 'Isolated' | 'Cross';
-  maxPortfolioHeatPercent: number;
-  maxTotalExposurePercent: number;
-  correlationFactor: number;
-  minFreeMarginPercent: number;
-  all: boolean;
-  symbols: string;
+  maxDailyLossPercent: number;
+  maxPortfolioRiskPercent: number;
+  maxSimultaneousPositions: number;
+  maxConsecutiveLosses: number;
+  cooldownMinutes: number;
+  minimumLiquidationSafetyBufferPercent: number;
+  allowLive: boolean;
 }
 
 @Component({
   selector: 'app-risk-page',
-  imports: [FormsModule, NgTemplateOutlet, SortBtnComponent],
+  imports: [FormsModule, NgTemplateOutlet],
   template: `
     <header class="page-header">
-      <div class="list-sorts">
-        <app-sort-btn column="name" [query]="list">Book</app-sort-btn>
-        <app-sort-btn column="margin" [query]="list">Margin</app-sort-btn>
-        <app-sort-btn column="r" [query]="list">R</app-sort-btn>
+      <div>
+        <strong>Active book {{ active()?.name || '—' }}</strong>
+        <div class="tiny">New Isolated entries use this book on current {{ ui.workspace() }} available. Existing positions keep the snapshot from fill.</div>
       </div>
-      <button class="btn" type="button" [disabled]="busy" (click)="beginCreate()">Add profile</button>
     </header>
-    @if (creating(); as form) {
-      <section class="panel">
-        <h2>New risk profile</h2>
-        <ng-container [ngTemplateOutlet]="editor" [ngTemplateOutletContext]="{ $implicit: form, system: false }" />
+    <section class="panel">
+      <div class="section-head">
+        <div>
+          <h2>Calculator</h2>
+          <p class="tiny">{{ ui.workspace() }} available · sample entry {{ price(samplePrice()) }}</p>
+        </div>
+      </div>
+      <section class="kpi-row cols-3" style="margin:4px 0 12px">
+        <article class="card"><div class="metric-label">Available</div><div class="metric-value">{{ money(available()) }}</div></article>
+        <article class="card"><div class="metric-label">Planned Risk</div><div class="metric-value">{{ money(calc().risk) }}</div></article>
+        <article class="card"><div class="metric-label">Notional</div><div class="metric-value">{{ money(calc().notional) }}</div></article>
+        <article class="card"><div class="metric-label">Isolated margin</div><div class="metric-value">{{ money(calc().margin) }}</div></article>
+        <article class="card"><div class="metric-label">SL price</div><div class="metric-value">{{ price(calc().stopPrice) }}</div></article>
+        <article class="card"><div class="metric-label">TP price</div><div class="metric-value">{{ price(calc().takePrice) }}</div></article>
       </section>
-    }
-    @for (row of visible(); track row.id ?? row.name) {
+      <p class="tiny">Planned Risk = available × R% if the stop fills as assumed. It is not a guaranteed maximum loss. Notional and Isolated margin are different numbers.</p>
+    </section>
+    @for (row of books(); track row.id ?? row.name) {
       <section class="panel">
         <div class="section-head">
           <div>
             <strong>{{ row.name }}</strong>
-            <div class="tiny">{{ row.isSystem ? 'System book' : 'Custom book' }} · {{ row.marginMode || 'Isolated' }} · {{ row.riskPerTradePercent }}% R · {{ row.maxPortfolioHeatPercent ?? 4 }}% heat · {{ row.maxDailyLossPercent }}% daily halt</div>
+            <div class="tiny">Isolated · {{ row.riskPerTradePercent }}% R · {{ row.stopLossPercent }}% SL · {{ row.takeProfitPercent }}% TP · {{ row.maxLeverage }}x · {{ row.maxDailyLossPercent }}% daily halt{{ row.allowLive ? '' : ' · paper only' }}</div>
           </div>
-          <span class="badge" [class.badge-running]="row.appliesToAllSymbols !== false" [class.badge-paused]="row.appliesToAllSymbols === false">
-            {{ row.appliesToAllSymbols === false ? ((row.allowedSymbols?.length ?? 0) + ' coins') : 'All coins' }}
-          </span>
+          <span class="badge" [class.badge-running]="row.isActive" [class.badge-paused]="!row.isActive">{{ row.isActive ? 'Active' : 'Idle' }}</span>
         </div>
         @if (editingId() === row.id && draft(); as form) {
-          <ng-container [ngTemplateOutlet]="editor" [ngTemplateOutletContext]="{ $implicit: form, system: row.isSystem }" />
+          <ng-container [ngTemplateOutlet]="editor" [ngTemplateOutletContext]="{ $implicit: form }" />
         } @else {
           <section class="kpi-row cols-3" style="margin:4px 0 12px">
-            <article class="card"><div class="metric-label">R / trade</div><div class="metric-value">{{ row.riskPerTradePercent }}%</div></article>
-            <article class="card"><div class="metric-label">Margin</div><div class="metric-value">{{ row.marginMode || 'Isolated' }}</div></article>
-            <article class="card"><div class="metric-label">Heat cap</div><div class="metric-value">{{ row.maxPortfolioHeatPercent ?? 4 }}%</div></article>
-            <article class="card"><div class="metric-label">Daily halt</div><div class="metric-value">{{ row.maxDailyLossPercent }}%</div></article>
-            <article class="card"><div class="metric-label">Leverage</div><div class="metric-value">{{ row.maxLeverage }}x</div></article>
-            <article class="card"><div class="metric-label">Book size</div><div class="metric-value">{{ row.maxOpenPositions }}</div></article>
+            <article class="card"><div class="metric-label">Risk per trade</div><div class="metric-value">{{ row.riskPerTradePercent }}%</div></article>
+            <article class="card"><div class="metric-label">Stop loss</div><div class="metric-value">{{ row.stopLossPercent }}%</div></article>
+            <article class="card"><div class="metric-label">Take profit</div><div class="metric-value">{{ row.takeProfitPercent }}%</div></article>
+            <article class="card"><div class="metric-label">Max leverage</div><div class="metric-value">{{ row.maxLeverage }}x</div></article>
+            <article class="card"><div class="metric-label">Daily loss limit</div><div class="metric-value">{{ row.maxDailyLossPercent }}%</div></article>
+            <article class="card"><div class="metric-label">Portfolio risk cap</div><div class="metric-value">{{ row.maxPortfolioRiskPercent }}%</div></article>
+            <article class="card"><div class="metric-label">Max positions</div><div class="metric-value">{{ row.maxSimultaneousPositions }}</div></article>
+            <article class="card"><div class="metric-label">Cooldown</div><div class="metric-value">{{ row.cooldownMinutes }}m</div></article>
+            <article class="card"><div class="metric-label">Liq. buffer</div><div class="metric-value">{{ row.minimumLiquidationSafetyBufferPercent }}%</div></article>
+            <article class="card"><div class="metric-label">LIVE</div><div class="metric-value">{{ row.allowLive ? 'Allowed' : 'Paper' }}</div></article>
           </section>
-          <p class="tiny">{{ row.appliesToAllSymbols === false ? 'Assigned to ' + (row.allowedSymbols ?? []).join(', ') : 'Assigned to every USD-M USDT perpetual.' }}</p>
+          <p class="tiny">LIVE places Binance SL/TP with the fill. Paper simulates them. Daily halt stops new entries only.</p>
           <div class="btn-row" style="margin-top:12px">
+            <button class="btn" type="button" [disabled]="busy || row.isActive" (click)="activate(row)">Set active</button>
             <button class="btn secondary" type="button" [disabled]="busy || !row.id" (click)="beginEdit(row)">Edit</button>
           </div>
         }
       </section>
     }
-    <ng-template #editor let-form let-system="system">
+    <ng-template #editor let-form>
       <div class="form" style="margin-top:12px;max-width:880px">
-        <label class="field">Name <input [(ngModel)]="form.name" [disabled]="system" /></label>
         <div class="form-grid cols-3">
-          <label class="field">Margin
-            <select [(ngModel)]="form.marginMode">
-              <option value="Isolated">Isolated — one coin can die, others live</option>
-              <option value="Cross">Cross — whole futures wallet is collateral</option>
-            </select>
-          </label>
-          <label class="field">R / trade % (loss if SL hits) <input type="number" step="0.05" [(ngModel)]="form.riskPerTradePercent" /></label>
-          <label class="field">Max notional / name % <input type="number" step="0.1" [(ngModel)]="form.maxPositionPercent" /></label>
-          <label class="field">Daily loss halt % <input type="number" step="0.1" [(ngModel)]="form.maxDailyLossPercent" /></label>
-          <label class="field">Portfolio heat % <input type="number" step="0.1" [(ngModel)]="form.maxPortfolioHeatPercent" /></label>
-          <label class="field">Total exposure % <input type="number" step="0.1" [(ngModel)]="form.maxTotalExposurePercent" /></label>
-          <label class="field">Correlation 0–1 <input type="number" step="0.05" min="0" max="1" [(ngModel)]="form.correlationFactor" /></label>
-          <label class="field">Cash reserve % <input type="number" step="1" [(ngModel)]="form.minFreeMarginPercent" /></label>
+          <label class="field">Risk per trade % <input type="number" step="0.1" [(ngModel)]="form.riskPerTradePercent" /></label>
+          <label class="field">Stop loss % <input type="number" step="0.1" [(ngModel)]="form.stopLossPercent" /></label>
+          <label class="field">Take profit % <input type="number" step="0.1" [(ngModel)]="form.takeProfitPercent" /></label>
           <label class="field">Max leverage <input type="number" step="1" min="1" [(ngModel)]="form.maxLeverage" /></label>
-          <label class="field">Max open names (this book) <input type="number" [(ngModel)]="form.maxOpenPositions" /></label>
-          <label class="field">Max daily trades (this book) <input type="number" [(ngModel)]="form.maxDailyTrades" /></label>
-          <label class="field">Cooldown after loss (min) <input type="number" [(ngModel)]="form.cooldownAfterLossMinutes" /></label>
-          <label class="field">Max consecutive losses <input type="number" [(ngModel)]="form.maxConsecutiveLosses" /></label>
+          <label class="field">Daily loss limit % <input type="number" step="0.1" [(ngModel)]="form.maxDailyLossPercent" /></label>
+          <label class="field">Max portfolio risk % <input type="number" step="0.1" [(ngModel)]="form.maxPortfolioRiskPercent" /></label>
+          <label class="field">Max positions <input type="number" step="1" min="1" [(ngModel)]="form.maxSimultaneousPositions" /></label>
+          <label class="field">Consecutive losses <input type="number" step="1" min="1" [(ngModel)]="form.maxConsecutiveLosses" /></label>
+          <label class="field">Cooldown minutes <input type="number" step="1" min="1" [(ngModel)]="form.cooldownMinutes" /></label>
+          <label class="field">Liq. safety buffer % <input type="number" step="0.1" [(ngModel)]="form.minimumLiquidationSafetyBufferPercent" /></label>
         </div>
-        <p class="tiny">Cross is capped at 5 names and 5x. Isolated is for a coin universe. Starting bots is still manual.</p>
         <label class="field">
           <span style="display:flex;gap:8px;align-items:center">
-            <input type="checkbox" [(ngModel)]="form.stopBotOnDailyLoss" />
-            Stop this bot when the daily halt hits
+            <input type="checkbox" [(ngModel)]="form.allowLive" />
+            Allow LIVE bots on this book
           </span>
         </label>
-        <label class="field">
-          <span style="display:flex;gap:8px;align-items:center">
-            <input type="checkbox" [(ngModel)]="form.stopAccountOnDailyLoss" />
-            Stop the whole paper/live book when the daily halt hits (positions stay open; Binance SL/TP remain)
-          </span>
-        </label>
-        <label class="field">
-          <span style="display:flex;gap:8px;align-items:center">
-            <input type="checkbox" [(ngModel)]="form.all" />
-            Apply to every USD-M USDT perpetual
-          </span>
-        </label>
-        @if (!form.all) {
-          <label class="field">Assigned coins
-            <textarea rows="3" [(ngModel)]="form.symbols" placeholder="BTCUSDT, ETHUSDT"></textarea>
-          </label>
-        }
         <div class="btn-row">
-          <button class="btn" type="button" [disabled]="busy" (click)="save()">Save assignment</button>
+          <button class="btn" type="button" [disabled]="busy" (click)="save()">Save</button>
           <button class="btn secondary" type="button" [disabled]="busy" (click)="cancel()">Cancel</button>
         </div>
       </div>
@@ -135,142 +113,118 @@ interface RiskDraft {
 })
 export class RiskPage {
   readonly trading = inject(TradingService);
+  readonly ui = inject(UiStateService);
   private readonly toast = inject(ToastService);
-  readonly creating = signal<RiskDraft | null>(null);
+  readonly money = money;
+  readonly price = price;
   readonly editingId = signal<string | null>(null);
   readonly draft = signal<RiskDraft | null>(null);
-  readonly list = new ListQuery();
-  readonly visible = computed(() =>
-    this.list.apply(
-      this.trading.riskProfiles(),
-      (row) => [row.name, row.marginMode, row.allowedSymbols?.join(' ')],
-      {
-        name: (row) => row.name,
-        margin: (row) => row.marginMode || 'Isolated',
-        r: (row) => row.riskPerTradePercent,
-      },
-    ),
-  );
+  readonly books = computed(() => this.trading.riskProfiles());
+  readonly active = computed(() => this.books().find((row) => row.isActive) ?? this.trading.risk() ?? this.books()[0] ?? null);
+  readonly available = computed(() => {
+    const overview = this.trading.overview();
+    if (this.ui.isLive()) {
+      return overview?.liveAvailable ?? 0;
+    }
+    return overview?.availableBalance ?? 0;
+  });
+  readonly samplePrice = computed(() => {
+    const ticker = this.trading.overview()?.ticker ?? this.trading.tickers().find((row) => row.symbol === 'BTCUSDT') ?? this.trading.tickers()[0];
+    return ticker?.price || 100_000;
+  });
+  readonly calc = computed(() => {
+    const active = this.active();
+    const draft = this.editingId() === active?.id ? this.draft() : null;
+    const row = draft ?? active;
+    if (!row) {
+      return { risk: 0, notional: 0, margin: 0, stopPrice: 0, takePrice: 0 };
+    }
+    return previewRisk(row, this.available(), this.samplePrice());
+  });
   busy = false;
 
   constructor() {
     void this.trading.refreshCatalog();
-  }
-
-  beginCreate(): void {
-    this.editingId.set(null);
-    this.draft.set(null);
-    this.creating.set(blankRisk());
+    void this.trading.refreshRisk();
   }
 
   beginEdit(row: RiskProfileDto): void {
-    this.creating.set(null);
     this.editingId.set(row.id);
     this.draft.set(fromRisk(row));
   }
 
   cancel(): void {
-    this.creating.set(null);
     this.editingId.set(null);
     this.draft.set(null);
   }
 
-  async save(): Promise<void> {
-    const form = this.creating() ?? this.draft();
-    const id = this.creating() ? null : this.editingId();
-    if (!form) {
+  async activate(row: RiskProfileDto): Promise<void> {
+    if (!row.id) {
       return;
     }
-    const body = toRiskRequest(form);
     this.busy = true;
     try {
-      if (id) {
-        await this.trading.updateRiskProfile(id, body);
-      } else {
-        await this.trading.createRiskProfile(body);
-      }
+      await this.trading.activateRiskProfile(row.id);
       await this.trading.refreshCatalog();
-      this.cancel();
-      this.toast.show(
-        id ? 'Risk saved' : 'Risk profile added',
-        form.all ? `${form.name || 'Profile'} can apply to every coin.` : `Assigned to ${body.symbols.length} coin(s).`,
-        'success',
-        'risk',
-      );
+      await this.trading.refreshRisk();
+      this.toast.show('Active book', `${row.name} sizes every new Isolated entry.`, 'success', 'risk');
     } catch {
-      this.toast.show('Save blocked', 'Check the name, limits, and coin assignment.', 'error', 'risk');
+      this.toast.show('Activate blocked', 'Could not switch the active risk book.', 'error', 'risk');
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  async save(): Promise<void> {
+    const form = this.draft();
+    const id = this.editingId();
+    if (!form || !id) {
+      return;
+    }
+    this.busy = true;
+    try {
+      await this.trading.updateRiskProfile(id, toRiskRequest(form));
+      await this.trading.refreshCatalog();
+      await this.trading.refreshRisk();
+      this.cancel();
+      this.toast.show('Risk saved', 'New entries use the active book. Open positions keep their snapshot.', 'success', 'risk');
+    } catch {
+      this.toast.show('Save blocked', 'Check R%, stop, take profit, leverage, and daily halt.', 'error', 'risk');
     } finally {
       this.busy = false;
     }
   }
 }
 
-function blankRisk(): RiskDraft {
-  return {
-    name: '',
-    riskPerTradePercent: 0.5,
-    maxPositionPercent: 20,
-    maxDailyLossPercent: 3,
-    maxOpenPositions: 8,
-    maxDailyTrades: 24,
-    cooldownAfterLossMinutes: 15,
-    maxConsecutiveLosses: 4,
-    maxLeverage: 2,
-    stopBotOnDailyLoss: true,
-    stopAccountOnDailyLoss: true,
-    marginMode: 'Isolated',
-    maxPortfolioHeatPercent: 4,
-    maxTotalExposurePercent: 60,
-    correlationFactor: 0.75,
-    minFreeMarginPercent: 20,
-    all: true,
-    symbols: '',
-  };
-}
-
 function fromRisk(row: RiskProfileDto): RiskDraft {
   return {
-    name: row.name,
     riskPerTradePercent: row.riskPerTradePercent,
-    maxPositionPercent: row.maxPositionPercent,
-    maxDailyLossPercent: row.maxDailyLossPercent,
-    maxOpenPositions: row.maxOpenPositions,
-    maxDailyTrades: row.maxDailyTrades,
-    cooldownAfterLossMinutes: row.cooldownAfterLossMinutes,
-    maxConsecutiveLosses: row.maxConsecutiveLosses,
+    stopLossPercent: row.stopLossPercent,
+    takeProfitPercent: row.takeProfitPercent,
     maxLeverage: row.maxLeverage,
-    stopBotOnDailyLoss: row.stopBotOnDailyLoss,
-    stopAccountOnDailyLoss: row.stopAccountOnDailyLoss !== false,
-    marginMode: row.marginMode === 'Cross' ? 'Cross' : 'Isolated',
-    maxPortfolioHeatPercent: row.maxPortfolioHeatPercent ?? 4,
-    maxTotalExposurePercent: row.maxTotalExposurePercent ?? 60,
-    correlationFactor: row.correlationFactor ?? 0.75,
-    minFreeMarginPercent: row.minFreeMarginPercent ?? 20,
-    all: row.appliesToAllSymbols !== false,
-    symbols: (row.allowedSymbols ?? []).join(', '),
+    maxDailyLossPercent: row.maxDailyLossPercent,
+    maxPortfolioRiskPercent: row.maxPortfolioRiskPercent ?? 4,
+    maxSimultaneousPositions: row.maxSimultaneousPositions ?? 2,
+    maxConsecutiveLosses: row.maxConsecutiveLosses ?? 5,
+    cooldownMinutes: row.cooldownMinutes ?? 30,
+    minimumLiquidationSafetyBufferPercent: row.minimumLiquidationSafetyBufferPercent ?? 1,
+    allowLive: row.allowLive !== false,
   };
 }
 
 function toRiskRequest(form: RiskDraft): SaveRiskProfileRequest {
   return {
-    name: form.name.trim(),
     riskPerTradePercent: Number(form.riskPerTradePercent),
-    maxPositionPercent: Number(form.maxPositionPercent),
-    maxDailyLossPercent: Number(form.maxDailyLossPercent),
-    maxOpenPositions: Number(form.maxOpenPositions),
-    maxDailyTrades: Number(form.maxDailyTrades),
-    cooldownAfterLossMinutes: Number(form.cooldownAfterLossMinutes),
-    maxConsecutiveLosses: Number(form.maxConsecutiveLosses),
+    stopLossPercent: Number(form.stopLossPercent),
+    takeProfitPercent: Number(form.takeProfitPercent),
     maxLeverage: Number(form.maxLeverage),
-    stopBotOnDailyLoss: form.stopBotOnDailyLoss,
-    stopAccountOnDailyLoss: form.stopAccountOnDailyLoss,
-    marginMode: form.marginMode,
-    maxPortfolioHeatPercent: Number(form.maxPortfolioHeatPercent),
-    maxTotalExposurePercent: Number(form.maxTotalExposurePercent),
-    correlationFactor: Number(form.correlationFactor),
-    minFreeMarginPercent: Number(form.minFreeMarginPercent),
-    appliesToAllSymbols: form.all,
-    symbols: form.symbols.split(/[\s,]+/).map((item) => item.trim().toUpperCase()).filter(Boolean),
+    maxDailyLossPercent: Number(form.maxDailyLossPercent),
+    maxPortfolioRiskPercent: Number(form.maxPortfolioRiskPercent),
+    maxSimultaneousPositions: Number(form.maxSimultaneousPositions),
+    maxConsecutiveLosses: Number(form.maxConsecutiveLosses),
+    cooldownMinutes: Number(form.cooldownMinutes),
+    minimumLiquidationSafetyBufferPercent: Number(form.minimumLiquidationSafetyBufferPercent),
+    allowLive: form.allowLive,
   };
 }
 
@@ -399,14 +353,12 @@ export class SettingsPage {
   readonly riskRows = computed(() =>
     this.riskQuery.apply(
       this.trading.riskProfiles(),
-      (row) => [row.name, row.marginMode, row.appliesToAllSymbols === false ? 'coins' : 'All'],
+      (row) => [row.name],
       {
         name: (row) => row.name,
-        margin: (row) => row.marginMode || 'Isolated',
         r: (row) => row.riskPerTradePercent,
-        heat: (row) => row.maxPortfolioHeatPercent ?? 4,
         halt: (row) => row.maxDailyLossPercent,
-        coins: (row) => (row.appliesToAllSymbols === false ? (row.allowedSymbols?.length ?? 0) : 9999),
+        lev: (row) => row.maxLeverage,
       },
     ),
   );

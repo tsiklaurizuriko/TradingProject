@@ -38,17 +38,23 @@ import { ConfirmModalComponent, StatusBadgeComponent } from '../../shared/ui/ui-
         <section class="panel">
           <h2>Position</h2>
           @if (position(); as pos) {
-            <p>{{ pos.symbol }} · {{ pos.side }}</p>
-            <p>Entry {{ price(pos.averageEntryPrice) }} · Mark {{ price(pos.currentPrice) }}</p>
-            <p>Size {{ money(notionalUsdt(pos.quantity, pos.averageEntryPrice)) }} USDT · Qty {{ qty(pos.quantity) }}</p>
-            <p [class]="pos.unrealizedPnL >= 0 ? 'pnl-pos' : 'pnl-neg'">{{ signedMoney(pos.unrealizedPnL) }}</p>
+            <p>{{ pos.symbol }} · {{ pos.side === 'Buy' ? 'LONG' : pos.side }} · Isolated</p>
+            <p>Entry {{ price(pos.averageEntryPrice) }} · Current {{ price(pos.currentPrice) }}</p>
+            <p>Qty {{ qty(pos.quantity) }} · Notional {{ money(pos.notionalUsdt || notionalUsdt(pos.quantity, pos.averageEntryPrice)) }}</p>
+            <p>Isolated Margin {{ pos.marginUsdt ? money(pos.marginUsdt) : '—' }} · Leverage {{ pos.leverage ? pos.leverage + 'x' : '—' }}</p>
+            <p>SL {{ pos.stopLossPercent ? pos.stopLossPercent + '%' : '—' }} @ {{ pos.stopLossPrice ? price(pos.stopLossPrice) : '—' }}</p>
+            <p>TP {{ pos.takeProfitPercent ? pos.takeProfitPercent + '%' : '—' }} @ {{ pos.takeProfitPrice ? price(pos.takeProfitPrice) : '—' }}</p>
+            <p>Planned Risk {{ pos.initialRiskUsdt ? money(pos.initialRiskUsdt) : '—' }} ({{ pos.riskPerTradePercent ? pos.riskPerTradePercent + '%' : '—' }})</p>
+            <p>Liquidation {{ pos.liquidationPrice ? price(pos.liquidationPrice) : '—' }}</p>
+            <p class="tiny">Planned Risk is not Isolated Margin and not Notional.</p>
+            <p [class]="pos.unrealizedPnL >= 0 ? 'pnl-pos' : 'pnl-neg'">Unrealized {{ signedMoney(pos.unrealizedPnL) }}</p>
           } @else {
             <p class="muted">No open position. Bots are monitoring this market.</p>
           }
           <h2 style="margin-top:16px">Risk</h2>
-          <p class="tiny">Profile {{ bot.riskProfileName }} · {{ trading.risk()?.riskPerTradePercent ?? '—' }}% per trade</p>
+          <p class="tiny">Active Isolated book {{ trading.risk()?.name || bot.riskProfileName }} · Planned Risk {{ trading.risk()?.riskPerTradePercent ?? '—' }}% of available. Changing the book does not resize this position.</p>
           <h2 style="margin-top:16px">Strategy parameters</h2>
-          <p class="tiny">EMA 20/50 cross · RSI 14 &gt; 50 · SL 1.5% · TP 3%</p>
+          <p class="tiny">EMA 20/50 cross · RSI 14 &gt; 50. SL/TP come from the active Isolated book.</p>
         </section>
       </section>
       <section class="mid-grid">

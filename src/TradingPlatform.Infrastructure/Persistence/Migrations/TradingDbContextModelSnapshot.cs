@@ -1240,6 +1240,10 @@ namespace TradingPlatform.Infrastructure.Persistence.Migrations
                         .HasPrecision(28, 8)
                         .HasColumnType("numeric(28,8)");
 
+                    b.Property<decimal>("AvailableBalanceAtEntry")
+                        .HasPrecision(28, 8)
+                        .HasColumnType("numeric(28,8)");
+
                     b.Property<Guid>("BotId")
                         .HasColumnType("uuid");
 
@@ -1253,11 +1257,47 @@ namespace TradingPlatform.Infrastructure.Persistence.Migrations
                         .HasPrecision(28, 8)
                         .HasColumnType("numeric(28,8)");
 
+                    b.Property<decimal>("EquityAtEntry")
+                        .HasPrecision(28, 8)
+                        .HasColumnType("numeric(28,8)");
+
+                    b.Property<decimal>("EstimatedEntryFee")
+                        .HasPrecision(28, 8)
+                        .HasColumnType("numeric(28,8)");
+
+                    b.Property<decimal>("EstimatedExitFee")
+                        .HasPrecision(28, 8)
+                        .HasColumnType("numeric(28,8)");
+
+                    b.Property<decimal>("EstimatedSlippage")
+                        .HasPrecision(28, 8)
+                        .HasColumnType("numeric(28,8)");
+
+                    b.Property<decimal>("EstimatedTotalRisk")
+                        .HasPrecision(28, 8)
+                        .HasColumnType("numeric(28,8)");
+
                     b.Property<decimal>("Fees")
                         .HasPrecision(28, 8)
                         .HasColumnType("numeric(28,8)");
 
                     b.Property<decimal>("InitialRiskUsdt")
+                        .HasPrecision(28, 8)
+                        .HasColumnType("numeric(28,8)");
+
+                    b.Property<decimal>("Leverage")
+                        .HasPrecision(28, 8)
+                        .HasColumnType("numeric(28,8)");
+
+                    b.Property<decimal>("LiquidationPrice")
+                        .HasPrecision(28, 8)
+                        .HasColumnType("numeric(28,8)");
+
+                    b.Property<decimal>("MarginUsdt")
+                        .HasPrecision(28, 8)
+                        .HasColumnType("numeric(28,8)");
+
+                    b.Property<decimal>("NotionalUsdt")
                         .HasPrecision(28, 8)
                         .HasColumnType("numeric(28,8)");
 
@@ -1272,6 +1312,10 @@ namespace TradingPlatform.Infrastructure.Persistence.Migrations
                         .HasPrecision(28, 8)
                         .HasColumnType("numeric(28,8)");
 
+                    b.Property<decimal>("RiskPerTradePercent")
+                        .HasPrecision(28, 8)
+                        .HasColumnType("numeric(28,8)");
+
                     b.Property<long>("RowVersion")
                         .IsConcurrencyToken()
                         .HasColumnType("bigint");
@@ -1283,9 +1327,21 @@ namespace TradingPlatform.Infrastructure.Persistence.Migrations
                         .HasPrecision(28, 8)
                         .HasColumnType("numeric(28,8)");
 
+                    b.Property<decimal>("StopLossPrice")
+                        .HasPrecision(28, 8)
+                        .HasColumnType("numeric(28,8)");
+
                     b.Property<string>("Symbol")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<decimal>("TakeProfitPercent")
+                        .HasPrecision(28, 8)
+                        .HasColumnType("numeric(28,8)");
+
+                    b.Property<decimal>("TakeProfitPrice")
+                        .HasPrecision(28, 8)
+                        .HasColumnType("numeric(28,8)");
 
                     b.Property<decimal>("UnrealizedPnL")
                         .HasPrecision(28, 8)
@@ -1346,16 +1402,11 @@ namespace TradingPlatform.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<string>("AllowedSymbolsCsv")
-                        .HasMaxLength(4000)
-                        .HasColumnType("character varying(4000)");
+                    b.Property<bool>("AllowLive")
+                        .HasColumnType("boolean");
 
-                    b.Property<int>("CooldownAfterLossMinutes")
+                    b.Property<int>("CooldownMinutes")
                         .HasColumnType("integer");
-
-                    b.Property<decimal>("CorrelationFactor")
-                        .HasPrecision(28, 8)
-                        .HasColumnType("numeric(28,8)");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -1363,11 +1414,11 @@ namespace TradingPlatform.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("DeletedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<bool>("IsSystem")
+                    b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
 
-                    b.Property<int>("MarginMode")
-                        .HasColumnType("integer");
+                    b.Property<bool>("IsSystem")
+                        .HasColumnType("boolean");
 
                     b.Property<int>("MaxConsecutiveLosses")
                         .HasColumnType("integer");
@@ -1376,33 +1427,18 @@ namespace TradingPlatform.Infrastructure.Persistence.Migrations
                         .HasPrecision(28, 8)
                         .HasColumnType("numeric(28,8)");
 
-                    b.Property<int>("MaxDailyTrades")
-                        .HasColumnType("integer");
-
                     b.Property<decimal>("MaxLeverage")
                         .HasPrecision(28, 8)
                         .HasColumnType("numeric(28,8)");
 
-                    b.Property<int>("MaxOpenPositions")
+                    b.Property<decimal>("MaxPortfolioRiskPercent")
+                        .HasPrecision(28, 8)
+                        .HasColumnType("numeric(28,8)");
+
+                    b.Property<int>("MaxSimultaneousPositions")
                         .HasColumnType("integer");
 
-                    b.Property<decimal>("MaxPortfolioHeatPercent")
-                        .HasPrecision(28, 8)
-                        .HasColumnType("numeric(28,8)");
-
-                    b.Property<decimal>("MaxPositionPercent")
-                        .HasPrecision(28, 8)
-                        .HasColumnType("numeric(28,8)");
-
-                    b.Property<decimal>("MaxTotalExposurePercent")
-                        .HasPrecision(28, 8)
-                        .HasColumnType("numeric(28,8)");
-
-                    b.Property<decimal>("MinAvailableBalance")
-                        .HasPrecision(28, 8)
-                        .HasColumnType("numeric(28,8)");
-
-                    b.Property<decimal>("MinFreeMarginPercent")
+                    b.Property<decimal>("MinimumLiquidationSafetyBufferPercent")
                         .HasPrecision(28, 8)
                         .HasColumnType("numeric(28,8)");
 
@@ -1414,11 +1450,13 @@ namespace TradingPlatform.Infrastructure.Persistence.Migrations
                         .HasPrecision(28, 8)
                         .HasColumnType("numeric(28,8)");
 
-                    b.Property<bool>("StopAccountOnDailyLoss")
-                        .HasColumnType("boolean");
+                    b.Property<decimal>("StopLossPercent")
+                        .HasPrecision(28, 8)
+                        .HasColumnType("numeric(28,8)");
 
-                    b.Property<bool>("StopBotOnDailyLoss")
-                        .HasColumnType("boolean");
+                    b.Property<decimal>("TakeProfitPercent")
+                        .HasPrecision(28, 8)
+                        .HasColumnType("numeric(28,8)");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");

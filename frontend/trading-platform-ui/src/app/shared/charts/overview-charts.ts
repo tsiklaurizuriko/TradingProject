@@ -171,25 +171,42 @@ export class GoalProgressComponent {
     <section class="panel panel-fill compact">
       <div class="section-head"><h2>Risk Overview</h2></div>
       <div class="risk-row">
-        <span>R / Trade <strong>{{ risk() ? risk()!.riskPerTradePercent.toFixed(2) + '%' : '—' }}</strong></span>
+        <span>Profile <strong>{{ risk()?.name || '—' }}</strong></span>
+      </div>
+      <div class="risk-row">
+        <span>Risk per trade <strong>{{ risk() ? risk()!.riskPerTradePercent.toFixed(1) + '%' : '—' }}</strong></span>
         <div class="progress"><span [style.width.%]="bar(risk()?.riskPerTradePercent, 2)"></span></div>
       </div>
       <div class="risk-row">
-        <span>Margin <strong>{{ risk()?.marginMode || 'Isolated' }}</strong></span>
+        <span>Available <strong>{{ money(equity()) }}</strong></span>
       </div>
       <div class="risk-row">
-        <span>Heat cap <strong>{{ risk() ? (risk()!.maxPortfolioHeatPercent ?? 4).toFixed(1) + '%' : '—' }}</strong></span>
+        <span>Planned Risk next <strong>{{ money(plannedRisk()) }}</strong></span>
+      </div>
+      <div class="risk-row">
+        <span>Margin <strong>Isolated</strong></span>
       </div>
       <div class="risk-row">
         <span>Daily Loss <strong>{{ dailyLossLabel() }}</strong></span>
         <div class="progress"><span [style.width.%]="dailyLossBar()"></span></div>
       </div>
       <div class="risk-row">
+        <span>Daily limit <strong>{{ dailyLossUsdtLabel() }}</strong></span>
+      </div>
+      <div class="risk-row">
+        <span>Open planned risk <strong>{{ money(openRisk()) }} / {{ risk() ? risk()!.maxPortfolioRiskPercent + '%' : '—' }}</strong></span>
+      </div>
+      <div class="risk-row">
         <span>Leverage <strong>{{ risk() ? risk()!.maxLeverage + 'x' : '—' }}</strong></span>
       </div>
       <div class="risk-row">
-        <span>Open Positions <strong>{{ openPositions() }}{{ risk() ? ' / ' + risk()!.maxOpenPositions : '' }}</strong></span>
-        <div class="progress"><span [style.width.%]="bar(openPositions(), risk()?.maxOpenPositions ?? 1)"></span></div>
+        <span>Open Positions <strong>{{ openPositions() }}{{ risk() ? ' / ' + risk()!.maxSimultaneousPositions : '' }}</strong></span>
+      </div>
+      <div class="risk-row">
+        <span>Consecutive losses <strong>{{ consecutiveLosses() }}{{ risk() ? ' / ' + risk()!.maxConsecutiveLosses : '' }}</strong></span>
+      </div>
+      <div class="risk-row">
+        <span>Risk Lock <strong>{{ locked() ? 'ON' : 'Off' }}</strong></span>
       </div>
     </section>
   `,
@@ -199,6 +216,12 @@ export class RiskOverviewComponent {
   readonly equity = input(0);
   readonly todaysPnL = input(0);
   readonly openPositions = input(0);
+  readonly plannedRisk = input(0);
+  readonly openRisk = input(0);
+  readonly consecutiveLosses = input(0);
+  readonly locked = input(false);
+  readonly money = money;
+  readonly signedMoney = signedMoney;
 
   bar(value: number | null | undefined, max: number): number {
     if (value === null || value === undefined || max <= 0) {
@@ -216,6 +239,16 @@ export class RiskOverviewComponent {
     }
     const used = this.equity() ? ((loss / this.equity()) * 100).toFixed(1) : '0.0';
     return cap === null ? `${used}%` : `${used}% / ${risk!.maxDailyLossPercent}%`;
+  }
+
+  dailyLossUsdtLabel(): string {
+    const risk = this.risk();
+    const loss = Math.max(0, -this.todaysPnL());
+    const cap = risk && this.equity() > 0 ? (risk.maxDailyLossPercent / 100) * this.equity() : 0;
+    if (!cap) {
+      return `${this.signedMoney(-loss)}`;
+    }
+    return `${this.signedMoney(-loss)} / ${this.money(cap)}`;
   }
 
   dailyLossBar(): number {

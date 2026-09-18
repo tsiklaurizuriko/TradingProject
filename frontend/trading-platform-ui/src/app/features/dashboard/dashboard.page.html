@@ -153,19 +153,23 @@
   <div class="dash-risk">
     <app-risk-overview
       [risk]="trading.risk()"
-      [equity]="equity()"
+      [equity]="available()"
       [todaysPnL]="todaysPnL()"
       [openPositions]="modePositions().length"
+      [plannedRisk]="plannedRisk()"
+      [openRisk]="openRisk()"
+      [consecutiveLosses]="consecutiveLosses()"
+      [locked]="riskLocked()"
     />
   </div>
 </div>
 <app-confirm-modal
   [open]="confirmStartAll()"
-  title="Start All Bots"
-  message="This starts every stopped bot in this LIVE workspace."
-  warning="Real Binance USD-M futures orders can fire as soon as a strategy signals."
-  confirmLabel="Start All Bots"
-  [danger]="true"
+  [title]="startAllTitle()"
+  [message]="startAllMessage()"
+  [warning]="startAllWarning()"
+  [confirmLabel]="isLive() ? 'Enable live entries' : 'Start All Bots'"
+  [danger]="isLive()"
   (cancel)="confirmStartAll.set(false)"
   (confirm)="startAll()"
 />

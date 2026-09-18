@@ -45,21 +45,13 @@
               }
             </select>
           </label>
-          <label class="field">Preferred risk book
-            <select [ngModel]="ui.preferredRiskId()" (ngModelChange)="ui.setPreferredRiskId($event)">
-              <option value="">Conservative</option>
-              @for (row of trading.riskProfiles(); track row.id) {
-                <option [value]="row.id">{{ row.name }}</option>
-              }
-            </select>
-          </label>
           <label class="field">
             <span class="settings-check">
               <input type="checkbox" [ngModel]="ui.confirmStartAll()" (ngModelChange)="ui.setConfirmStartAll($event)" />
               Confirm before Start all on Paper
             </span>
           </label>
-          <p class="tiny">LIVE already asks before Start all. These defaults apply on Bots → Create.</p>
+          <p class="tiny">Active Isolated book is {{ trading.risk()?.name || '—' }}. Switch it on Risk. LIVE already asks before Start all.</p>
           <a class="btn sm" routerLink="/bots">Open Bots</a>
         </div>
       </section>
@@ -78,22 +70,20 @@
               <thead>
                 <tr>
                   <th><app-sort-btn column="name" [query]="riskQuery">Book</app-sort-btn></th>
-                  <th><app-sort-btn column="margin" [query]="riskQuery">Margin</app-sort-btn></th>
-                  <th class="num"><app-sort-btn column="r" [query]="riskQuery" align="end">R / trade</app-sort-btn></th>
-                  <th class="num"><app-sort-btn column="heat" [query]="riskQuery" align="end">Heat</app-sort-btn></th>
+                  <th class="num"><app-sort-btn column="r" [query]="riskQuery" align="end">R%</app-sort-btn></th>
+                  <th class="num"><app-sort-btn column="lev" [query]="riskQuery" align="end">Leverage</app-sort-btn></th>
                   <th class="num"><app-sort-btn column="halt" [query]="riskQuery" align="end">Daily halt</app-sort-btn></th>
-                  <th><app-sort-btn column="coins" [query]="riskQuery">Coins</app-sort-btn></th>
+                  <th>Active</th>
                 </tr>
               </thead>
               <tbody>
                 @for (row of riskRows(); track row.id ?? row.name) {
                   <tr>
                     <td>{{ row.name }}</td>
-                    <td>{{ row.marginMode || 'Isolated' }}</td>
                     <td class="num">{{ row.riskPerTradePercent }}%</td>
-                    <td class="num">{{ row.maxPortfolioHeatPercent ?? 4 }}%</td>
+                    <td class="num">{{ row.maxLeverage }}x</td>
                     <td class="num">{{ row.maxDailyLossPercent }}%</td>
-                    <td>{{ row.appliesToAllSymbols === false ? (row.allowedSymbols?.length ?? 0) + ' coins' : 'All' }}</td>
+                    <td>{{ row.isActive ? 'Yes' : '' }}</td>
                   </tr>
                 }
               </tbody>

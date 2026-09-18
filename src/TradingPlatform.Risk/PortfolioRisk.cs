@@ -44,8 +44,42 @@ public static class PortfolioRisk
             return 0m;
         }
 
-        var dollarsAtRisk = equity * (riskPerTradePercent / 100m);
+        return QuantityFromRiskUsdt(equity * (riskPerTradePercent / 100m), price, stopLossPercent);
+    }
+
+    public static decimal QuantityFromRiskUsdt(decimal riskUsdt, decimal price, decimal stopLossPercent)
+    {
+        if (riskUsdt <= 0m || price <= 0m || stopLossPercent <= 0m)
+        {
+            return 0m;
+        }
+
         var stopDistance = price * (stopLossPercent / 100m);
-        return dollarsAtRisk / stopDistance;
+        return riskUsdt / stopDistance;
+    }
+
+    public static decimal IsolatedMargin(decimal notional, decimal leverage)
+    {
+        if (notional <= 0m)
+        {
+            return 0m;
+        }
+
+        return notional / Math.Max(1m, leverage);
+    }
+
+    public static decimal FloorToStep(decimal quantity, decimal stepSize)
+    {
+        if (quantity <= 0m)
+        {
+            return 0m;
+        }
+
+        if (stepSize <= 0m)
+        {
+            return decimal.Round(quantity, 8, MidpointRounding.ToZero);
+        }
+
+        return Math.Floor(quantity / stepSize) * stepSize;
     }
 }

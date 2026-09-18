@@ -1,5 +1,7 @@
 using TradingPlatform.Domain.Market;
+using TradingPlatform.Domain.Risk;
 using TradingPlatform.Domain.Trading;
+using TradingPlatform.Risk;
 using TradingPlatform.Strategies.Engine;
 
 namespace TradingPlatform.Backtesting;
@@ -13,7 +15,13 @@ public sealed record ReplaySettings(
     decimal FeePercent,
     decimal SlippagePercent,
     decimal StopLossPercent,
-    decimal TakeProfitPercent);
+    decimal TakeProfitPercent,
+    decimal MaxDailyLossPercent = 100m,
+    decimal MaxPortfolioRiskPercent = 100m,
+    int MaxSimultaneousPositions = 20,
+    int MaxConsecutiveLosses = 100,
+    int CooldownMinutes = 30,
+    decimal MinimumLiquidationSafetyBufferPercent = 0.1m);
 
 public sealed record ReplayTrade(
     DateTimeOffset OpenedAt,
@@ -76,6 +84,12 @@ public sealed class BacktestReplay
         var sampleEvery = Math.Max(1, ordered.Count / 300);
         var lastBar = start;
         var inWindow = 0;
+        var consecutiveLosses = 0;
+        DateTimeOffset? lastLossAt = null;
+        var dayStart = DateTimeOffset.MinValue;
+        var dayPnl = 0m;
+        var riskEngine = new RiskEngine();
+        var profile = ProfileFromSettings(settings);
 
         for (var i = 0; i < ordered.Count; i++)
         {
@@ -95,8 +109,24 @@ public sealed class BacktestReplay
 
             if (pendingBuy && open is null)
             {
+                var utcDay = new DateTimeOffset(bar.OpenTime.UtcDateTime.Date, TimeSpan.Zero);
+                if (utcDay != dayStart)
+                {
+                    dayStart = utcDay;
+                    dayPnl = 0m;
+                }
+
                 var fill = ApplySlippage(bar.Open, settings.SlippagePercent, worseForBuy: true);
-                var qty = Size(equity, fill, settings);
+                var qty = Size(
+                    riskEngine,
+                    profile,
+                    equity,
+                    fill,
+                    settings,
+                    dayPnl,
+                    consecutiveLosses,
+                    lastLossAt,
+                    bar.OpenTime);
                 if (qty > 0m)
                 {
                     var fee = Notional(qty, fill) * (settings.FeePercent / 100m);
@@ -109,7 +139,7 @@ public sealed class BacktestReplay
             }
             else if (pendingExit && open is not null)
             {
-                Close(open, ApplySlippage(bar.Open, settings.SlippagePercent, worseForBuy: false), bar.OpenTime, pendingExitReason, settings, trades, ref equity, ref feesPaid);
+                Close(open, ApplySlippage(bar.Open, settings.SlippagePercent, worseForBuy: false), bar.OpenTime, pendingExitReason, settings, trades, ref equity, ref feesPaid, ref consecutiveLosses, ref lastLossAt, ref dayPnl);
                 open = null;
                 pendingExit = false;
             }
@@ -122,7 +152,7 @@ public sealed class BacktestReplay
                 {
                     var fill = Math.Min(stop, bar.Low);
                     fill = ApplySlippage(fill, settings.SlippagePercent, worseForBuy: false);
-                    Close(open, fill, bar.CloseTime, "Stop loss", settings, trades, ref equity, ref feesPaid);
+                    Close(open, fill, bar.CloseTime, "Stop loss", settings, trades, ref equity, ref feesPaid, ref consecutiveLosses, ref lastLossAt, ref dayPnl);
                     open = null;
                     pendingExit = false;
                 }
@@ -130,7 +160,7 @@ public sealed class BacktestReplay
                 {
                     var fill = Math.Min(target, bar.High);
                     fill = ApplySlippage(fill, settings.SlippagePercent, worseForBuy: false);
-                    Close(open, fill, bar.CloseTime, "Take profit", settings, trades, ref equity, ref feesPaid);
+                    Close(open, fill, bar.CloseTime, "Take profit", settings, trades, ref equity, ref feesPaid, ref consecutiveLosses, ref lastLossAt, ref dayPnl);
                     open = null;
                     pendingExit = false;
                 }
@@ -182,7 +212,7 @@ public sealed class BacktestReplay
         if (open is not null)
         {
             var last = ordered.Last(c => c.OpenTime <= end);
-            Close(open, ApplySlippage(last.Close, settings.SlippagePercent, worseForBuy: false), last.CloseTime, "End of window", settings, trades, ref equity, ref feesPaid);
+            Close(open, ApplySlippage(last.Close, settings.SlippagePercent, worseForBuy: false), last.CloseTime, "End of window", settings, trades, ref equity, ref feesPaid, ref consecutiveLosses, ref lastLossAt, ref dayPnl);
         }
 
         var wins = trades.Where(t => t.PnL > 0m).ToList();
@@ -206,10 +236,12 @@ public sealed class BacktestReplay
         var windowStart = ordered.FirstOrDefault(c => c.CloseTime >= start)?.OpenTime ?? start;
         var windowEnd = lastBar;
         var assumptions =
-            "Long-only replay of the same strategy engine as live bots. " +
+            "Long-only replay of the same strategy engine and Isolated RiskEngine as paper/LIVE. " +
+            "Position size, SL, TP, leverage, daily halt, and consecutive-loss lock come from the active risk book. " +
             "Entries and signal exits fill at the next bar open with slippage. " +
             "Stop and take-profit use that bar's high/low; stop wins if both are hit. " +
-            "Unclosed trades flatten at the last close. No look-ahead on unclosed candles.";
+            "Unclosed trades flatten at the last close. No look-ahead on unclosed candles. " +
+            "Historical simulation, not a guarantee of future performance.";
 
         return new ReplayResult(
             settings.InitialBalance,
@@ -242,12 +274,26 @@ public sealed class BacktestReplay
         ReplaySettings settings,
         List<ReplayTrade> trades,
         ref decimal equity,
-        ref decimal feesPaid)
+        ref decimal feesPaid,
+        ref int consecutiveLosses,
+        ref DateTimeOffset? lastLossAt,
+        ref decimal dayPnl)
     {
         var exitFee = Notional(open.Quantity, exitPrice) * (settings.FeePercent / 100m);
         var pnl = (exitPrice - open.EntryPrice) * open.Quantity - open.EntryFee - exitFee;
         equity += (exitPrice - open.EntryPrice) * open.Quantity - exitFee;
         feesPaid += exitFee;
+        dayPnl += pnl;
+        if (pnl < 0m)
+        {
+            consecutiveLosses++;
+            lastLossAt = at;
+        }
+        else
+        {
+            consecutiveLosses = 0;
+        }
+
         trades.Add(new ReplayTrade(
             open.OpenedAt,
             at,
@@ -259,33 +305,60 @@ public sealed class BacktestReplay
             reason));
     }
 
-    private static decimal Size(decimal equity, decimal price, ReplaySettings settings)
+    private static decimal Size(
+        RiskEngine engine,
+        RiskProfile profile,
+        decimal available,
+        decimal price,
+        ReplaySettings settings,
+        decimal dayPnl,
+        int consecutiveLosses,
+        DateTimeOffset? lastLossAt,
+        DateTimeOffset at)
     {
-        if (price <= 0m || equity <= 0m)
+        var evaluation = engine.Evaluate(
+            SignalType.Buy,
+            profile,
+            new RiskSnapshot
+            {
+                Equity = available,
+                AvailableBalance = available,
+                DailyRealizedPnL = dayPnl,
+                AccountDailyPnL = dayPnl,
+                Symbol = "BACKTEST",
+                Price = price,
+                ConsecutiveLosses = consecutiveLosses,
+                LastLossAt = lastLossAt,
+                Sizing = new RiskSizingHints
+                {
+                    TakerFeePercent = settings.FeePercent,
+                    SlippagePercent = settings.SlippagePercent
+                }
+            },
+            at);
+        if (evaluation.Decision != RiskDecision.Approved || evaluation.ApprovedQuantity <= 0m)
         {
             return 0m;
         }
 
-        var stopDistance = price * (settings.StopLossPercent / 100m);
-        if (stopDistance <= 0m)
-        {
-            return 0m;
-        }
-
-        var qty = equity * (settings.RiskPercent / 100m) / stopDistance;
-        var maxNotional = equity * Math.Max(settings.Leverage, 1m);
-        if (qty * price > maxNotional)
-        {
-            qty = maxNotional / price;
-        }
-
-        if (qty * price < 5m)
-        {
-            return 0m;
-        }
-
-        return Math.Round(qty, 8, MidpointRounding.ToZero);
+        return Math.Round(evaluation.ApprovedQuantity, 8, MidpointRounding.ToZero);
     }
+
+    private static RiskProfile ProfileFromSettings(ReplaySettings settings) =>
+        new()
+        {
+            Name = "BACKTEST",
+            RiskPerTradePercent = settings.RiskPercent,
+            StopLossPercent = settings.StopLossPercent,
+            TakeProfitPercent = settings.TakeProfitPercent,
+            MaxLeverage = settings.Leverage,
+            MaxDailyLossPercent = settings.MaxDailyLossPercent,
+            MaxPortfolioRiskPercent = settings.MaxPortfolioRiskPercent,
+            MaxSimultaneousPositions = settings.MaxSimultaneousPositions,
+            MaxConsecutiveLosses = settings.MaxConsecutiveLosses,
+            CooldownMinutes = settings.CooldownMinutes,
+            MinimumLiquidationSafetyBufferPercent = settings.MinimumLiquidationSafetyBufferPercent
+        };
 
     private static decimal ApplySlippage(decimal price, decimal slippagePercent, bool worseForBuy)
     {

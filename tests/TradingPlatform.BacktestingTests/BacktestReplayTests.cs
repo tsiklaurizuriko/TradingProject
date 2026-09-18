@@ -53,8 +53,8 @@ public sealed class BacktestReplayTests
         result.Trades[0].PnL.Should().BeNegative();
     }
 
-    private static ReplaySettings Settings(DateTimeOffset start, DateTimeOffset end, decimal stopLossPercent = 50m) =>
-        new(start, end, 10_000m, 1m, 1m, 0.1m, 0m, stopLossPercent, 20m);
+    private static ReplaySettings Settings(DateTimeOffset start, DateTimeOffset end, decimal stopLossPercent = 2m) =>
+        new(start, end, 10_000m, 1m, 1m, 0.1m, 0m, stopLossPercent, 4m);
 
     private static MarketCandle Bar(DateTimeOffset start, int index, decimal price) =>
         new()

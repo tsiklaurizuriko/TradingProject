@@ -1,6 +1,6 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { TradingService } from '../../core/trading/trading.service';
-import { PositionDto, formatTime, money, modeBadge, notionalUsdt, pct, pnlClass, price, qty, signedMoney } from '../../core/trading/trading.models';
+import { PositionDto, feeCash, formatTime, money, modeBadge, notionalUsdt, pct, pnlClass, price, qty, signedMoney } from '../../core/trading/trading.models';
 import { ToastService } from '../../core/ui/toast.service';
 import { UiStateService } from '../../core/ui/ui-state.service';
 import { ListQuery, timeValue } from '../../shared/lists/list-query';
@@ -40,7 +40,7 @@ import { ConfirmModalComponent, EmptyStateComponent } from '../../shared/ui/ui-k
                 <td class="num">{{ qty(row.quantity) }}</td>
                 <td class="num">{{ price(row.price) }}</td>
                 <td class="num" [class]="pnlClass(row.pnL)">{{ signedMoney(row.pnL) }}</td>
-                <td class="num">{{ row.fee == null ? '—' : money(row.fee, 4) }}</td>
+                <td class="num" [class]="pnlClass(feeCash(row.fee))">{{ signedMoney(feeCash(row.fee), 4) }}</td>
                 <td><span class="badge" [class]="modeBadge(trading.workspace())">{{ trading.workspace() }}</span></td>
                 <td class="tiny">{{ row.exchangeOrderId }}</td>
               </tr>
@@ -58,7 +58,7 @@ export class OrdersPage {
   readonly price = price;
   readonly signedMoney = signedMoney;
   readonly pnlClass = pnlClass;
-  readonly money = money;
+  readonly feeCash = feeCash;
   readonly modeBadge = modeBadge;
   readonly list = new ListQuery();
   readonly rows = computed(() =>
@@ -97,7 +97,14 @@ export class OrdersPage {
               <th class="num"><app-sort-btn column="entry" [query]="list" align="end">Entry</app-sort-btn></th>
               <th class="num"><app-sort-btn column="mark" [query]="list" align="end">Mark</app-sort-btn></th>
               <th class="num"><app-sort-btn column="qty" [query]="list" align="end">Qty</app-sort-btn></th>
-              <th class="num"><app-sort-btn column="size" [query]="list" align="end">Size USDT</app-sort-btn></th>
+              <th class="num"><app-sort-btn column="size" [query]="list" align="end">Notional</app-sort-btn></th>
+              <th class="num"><app-sort-btn column="risk" [query]="list" align="end">Planned Risk</app-sort-btn></th>
+              <th class="num"><app-sort-btn column="margin" [query]="list" align="end">Margin</app-sort-btn></th>
+              <th class="num"><app-sort-btn column="lev" [query]="list" align="end">Lev</app-sort-btn></th>
+              <th class="num"><app-sort-btn column="sl" [query]="list" align="end">SL</app-sort-btn></th>
+              <th class="num"><app-sort-btn column="tp" [query]="list" align="end">TP</app-sort-btn></th>
+              <th class="num"><app-sort-btn column="liq" [query]="list" align="end">Liq</app-sort-btn></th>
+              <th>Margin mode</th>
               <th class="num"><app-sort-btn column="pnl" [query]="list" align="end">PnL</app-sort-btn></th>
               <th><app-sort-btn column="mode" [query]="list">Mode</app-sort-btn></th>
               <th></th>
@@ -111,7 +118,14 @@ export class OrdersPage {
                 <td class="num">{{ price(row.averageEntryPrice) }}</td>
                 <td class="num">{{ price(row.currentPrice) }}</td>
                 <td class="num">{{ qty(row.quantity) }}</td>
-                <td class="num">{{ money(notionalUsdt(row.quantity, row.averageEntryPrice)) }}</td>
+                <td class="num">{{ money(row.notionalUsdt || notionalUsdt(row.quantity, row.averageEntryPrice)) }}</td>
+                <td class="num">{{ row.initialRiskUsdt ? money(row.initialRiskUsdt) : '—' }}</td>
+                <td class="num">{{ row.marginUsdt ? money(row.marginUsdt) : '—' }}</td>
+                <td class="num">{{ row.leverage ? row.leverage + 'x' : '—' }}</td>
+                <td class="num">{{ row.stopLossPercent ? row.stopLossPercent + '%' : '—' }}{{ row.stopLossPrice ? ' @ ' + price(row.stopLossPrice) : '' }}</td>
+                <td class="num">{{ row.takeProfitPercent ? row.takeProfitPercent + '%' : '—' }}{{ row.takeProfitPrice ? ' @ ' + price(row.takeProfitPrice) : '' }}</td>
+                <td class="num">{{ row.liquidationPrice ? price(row.liquidationPrice) : '—' }}</td>
+                <td>Isolated</td>
                 <td class="num" [class]="pnlClass(row.unrealizedPnL)">{{ signedMoney(row.unrealizedPnL) }}</td>
                 <td><span class="badge" [class]="modeBadge(trading.workspace())">{{ trading.workspace() }}</span></td>
                 <td>
@@ -167,7 +181,13 @@ export class PositionsPage {
         entry: (row) => row.averageEntryPrice,
         mark: (row) => row.currentPrice,
         qty: (row) => row.quantity,
-        size: (row) => notionalUsdt(row.quantity, row.averageEntryPrice),
+        size: (row) => row.notionalUsdt || notionalUsdt(row.quantity, row.averageEntryPrice),
+        risk: (row) => row.initialRiskUsdt ?? 0,
+        margin: (row) => row.marginUsdt ?? 0,
+        lev: (row) => row.leverage ?? 0,
+        sl: (row) => row.stopLossPercent ?? 0,
+        tp: (row) => row.takeProfitPercent ?? 0,
+        liq: (row) => row.liquidationPrice ?? 0,
         pnl: (row) => row.unrealizedPnL,
         mode: () => this.trading.workspace(),
       },
@@ -220,6 +240,7 @@ export class PositionsPage {
               <th class="num"><app-sort-btn column="entry" [query]="list" align="end">Entry</app-sort-btn></th>
               <th class="num"><app-sort-btn column="exit" [query]="list" align="end">Exit</app-sort-btn></th>
               <th class="num"><app-sort-btn column="pnl" [query]="list" align="end">PnL</app-sort-btn></th>
+              <th class="num"><app-sort-btn column="pnlPct" [query]="list" align="end">PnL %</app-sort-btn></th>
               <th class="num"><app-sort-btn column="fee" [query]="list" align="end">Fee</app-sort-btn></th>
               <th><app-sort-btn column="mode" [query]="list">Mode</app-sort-btn></th>
               <th><app-sort-btn column="status" [query]="list">Status</app-sort-btn></th>
@@ -233,8 +254,9 @@ export class PositionsPage {
                 <td><span class="badge badge-long">LONG</span></td>
                 <td class="num">{{ price(row.entryPrice) }}</td>
                 <td class="num">{{ price(row.exitPrice) }}</td>
-                <td class="num" [class]="pnlClass(row.pnL)">{{ signedMoney(row.pnL) }} · {{ pct(row.pnLPercent) }}</td>
-                <td class="num">{{ money(row.fees, 4) }}</td>
+                <td class="num" [class]="pnlClass(row.pnL)">{{ signedMoney(row.pnL) }}</td>
+                <td class="num" [class]="pnlClass(row.pnLPercent)">{{ pct(row.pnLPercent) }}</td>
+                <td class="num" [class]="pnlClass(feeCash(row.fees))">{{ signedMoney(feeCash(row.fees), 4) }}</td>
                 <td><span class="badge" [class]="modeBadge(trading.workspace())">{{ trading.workspace() }}</span></td>
                 <td>{{ row.closedAt ? 'Closed' : 'Open' }}</td>
               </tr>
@@ -251,8 +273,8 @@ export class TradesPage {
   readonly price = price;
   readonly signedMoney = signedMoney;
   readonly pnlClass = pnlClass;
+  readonly feeCash = feeCash;
   readonly pct = pct;
-  readonly money = money;
   readonly modeBadge = modeBadge;
   readonly list = new ListQuery();
   readonly rows = computed(() =>
@@ -266,6 +288,7 @@ export class TradesPage {
         entry: (row) => row.entryPrice,
         exit: (row) => row.exitPrice,
         pnl: (row) => row.pnL,
+        pnlPct: (row) => row.pnLPercent,
         fee: (row) => row.fees,
         mode: () => this.trading.workspace(),
         status: (row) => (row.closedAt ? 'Closed' : 'Open'),

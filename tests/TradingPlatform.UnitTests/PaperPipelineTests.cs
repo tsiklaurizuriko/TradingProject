@@ -128,7 +128,17 @@ public sealed class PaperPipelineTests
             Timeframe = Timeframe.FiveMinutes
         };
         strategy.Versions.Add(version);
-        var risk = new RiskProfile { Name = "Conservative", RiskPerTradePercent = 1m, MaxPositionPercent = 10m, MaxOpenPositions = 3, MaxDailyTrades = 20 };
+        var risk = new RiskProfile
+        {
+            Name = "LOW",
+            RiskPerTradePercent = 0.5m,
+            StopLossPercent = 2m,
+            TakeProfitPercent = 4m,
+            MaxLeverage = 3m,
+            MaxDailyLossPercent = 3m,
+            AllowLive = true,
+            IsActive = true
+        };
         var account = new ExchangeAccount { User = user, UserId = user.Id, Name = "Paper Simulator", ApiKeyFingerprint = "paper" };
         var symbol = new Symbol { Name = "BTCUSDT", BaseAsset = "BTC", QuoteAsset = "USDT", StepSize = 0.00001m, MinQuantity = 0.00001m, MinNotional = 5m };
         var bot = new Bot
@@ -184,6 +194,12 @@ public sealed class PaperPipelineTests
         order.Mode.Should().Be(TradingMode.Paper);
         (await db.Positions.CountAsync(p => p.ClosedAt == null)).Should().Be(1);
         (await db.Executions.SingleAsync()).ExchangeTradeId.Should().StartWith("PAPER-FILL-");
+        var usdt = await db.Balances.SingleAsync(b => b.Asset == "USDT");
+        var position = await db.Positions.SingleAsync(p => p.ClosedAt == null);
+        position.MarginUsdt.Should().BeGreaterThan(0m);
+        usdt.Locked.Should().Be(position.MarginUsdt);
+        (usdt.Free + usdt.Locked).Should().BeApproximately(10_000m - (await db.Executions.SingleAsync()).Fee, 0.0001m);
+        usdt.Free.Should().BeGreaterThan(10_000m - position.Quantity * position.AverageEntryPrice);
     }
 
     private static List<MarketCandle> CrossingCandles()

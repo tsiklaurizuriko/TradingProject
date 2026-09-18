@@ -121,15 +121,12 @@ internal static class TradingModelConfiguration
             b.ToTable("RiskProfiles");
             b.HasQueryFilter(x => x.DeletedAt == null);
             Money(b.Property(x => x.RiskPerTradePercent));
-            Money(b.Property(x => x.MaxPositionPercent));
-            Money(b.Property(x => x.MaxDailyLossPercent));
+            Money(b.Property(x => x.StopLossPercent));
+            Money(b.Property(x => x.TakeProfitPercent));
             Money(b.Property(x => x.MaxLeverage));
-            Money(b.Property(x => x.MinAvailableBalance));
-            Money(b.Property(x => x.MaxPortfolioHeatPercent));
-            Money(b.Property(x => x.MaxTotalExposurePercent));
-            Money(b.Property(x => x.CorrelationFactor));
-            Money(b.Property(x => x.MinFreeMarginPercent));
-            b.Property(x => x.AllowedSymbolsCsv).HasMaxLength(4000);
+            Money(b.Property(x => x.MaxDailyLossPercent));
+            Money(b.Property(x => x.MaxPortfolioRiskPercent));
+            Money(b.Property(x => x.MinimumLiquidationSafetyBufferPercent));
         });
         model.Entity<Signal>(b =>
         {
@@ -170,7 +167,21 @@ internal static class TradingModelConfiguration
             Money(b.Property(x => x.RealizedPnL));
             Money(b.Property(x => x.Fees));
             Money(b.Property(x => x.StopLossPercent));
+            Money(b.Property(x => x.TakeProfitPercent));
             Money(b.Property(x => x.InitialRiskUsdt));
+            Money(b.Property(x => x.MarginUsdt));
+            Money(b.Property(x => x.AvailableBalanceAtEntry));
+            Money(b.Property(x => x.RiskPerTradePercent));
+            Money(b.Property(x => x.StopLossPrice));
+            Money(b.Property(x => x.TakeProfitPrice));
+            Money(b.Property(x => x.NotionalUsdt));
+            Money(b.Property(x => x.Leverage));
+            Money(b.Property(x => x.EquityAtEntry));
+            Money(b.Property(x => x.LiquidationPrice));
+            Money(b.Property(x => x.EstimatedEntryFee));
+            Money(b.Property(x => x.EstimatedExitFee));
+            Money(b.Property(x => x.EstimatedSlippage));
+            Money(b.Property(x => x.EstimatedTotalRisk));
             b.Property(x => x.RowVersion).IsConcurrencyToken();
             b.HasIndex(x => new { x.BotId, x.Symbol, x.ClosedAt });
         });

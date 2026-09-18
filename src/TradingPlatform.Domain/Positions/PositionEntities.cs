@@ -22,7 +22,21 @@ public sealed class Position : Entity
     public decimal RealizedPnL { get; set; }
     public decimal Fees { get; set; }
     public decimal StopLossPercent { get; set; }
+    public decimal TakeProfitPercent { get; set; }
     public decimal InitialRiskUsdt { get; set; }
+    public decimal MarginUsdt { get; set; }
+    public decimal AvailableBalanceAtEntry { get; set; }
+    public decimal RiskPerTradePercent { get; set; }
+    public decimal StopLossPrice { get; set; }
+    public decimal TakeProfitPrice { get; set; }
+    public decimal NotionalUsdt { get; set; }
+    public decimal Leverage { get; set; }
+    public decimal EquityAtEntry { get; set; }
+    public decimal LiquidationPrice { get; set; }
+    public decimal EstimatedEntryFee { get; set; }
+    public decimal EstimatedExitFee { get; set; }
+    public decimal EstimatedSlippage { get; set; }
+    public decimal EstimatedTotalRisk { get; set; }
     public DateTimeOffset OpenedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? ClosedAt { get; set; }
     public bool IsOpen => ClosedAt is null && Quantity > 0m;

@@ -66,8 +66,6 @@ const timeframes = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '1d'];
           <section class="kpi-row" style="margin:4px 0 12px">
             <article class="card"><div class="metric-label">EMA</div><div class="metric-value">{{ row.emaFast ?? 20 }}/{{ row.emaSlow ?? 50 }}</div></article>
             <article class="card"><div class="metric-label">RSI</div><div class="metric-value">{{ row.rsiPeriod ?? 14 }} &gt; {{ row.rsiMinimum ?? 50 }}</div></article>
-            <article class="card"><div class="metric-label">Stop</div><div class="metric-value">{{ row.stopLossPercent ?? 1.5 }}%</div></article>
-            <article class="card"><div class="metric-label">Take profit</div><div class="metric-value">{{ row.takeProfitPercent ?? 3 }}%</div></article>
           </section>
           <p class="tiny">{{ row.appliesToAllSymbols ? 'Assigned to every USD-M USDT perpetual.' : 'Assigned to ' + (row.allowedSymbols ?? []).join(', ') }}</p>
           <div class="btn-row" style="margin-top:12px">
@@ -98,8 +96,6 @@ const timeframes = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '1d'];
           <label class="field">EMA slow <input type="number" [(ngModel)]="form.emaSlow" /></label>
           <label class="field">RSI period <input type="number" [(ngModel)]="form.rsiPeriod" /></label>
           <label class="field">RSI minimum <input type="number" [(ngModel)]="form.rsiMinimum" /></label>
-          <label class="field">Stop loss % <input type="number" step="0.1" [(ngModel)]="form.stopLossPercent" /></label>
-          <label class="field">Take profit % <input type="number" step="0.1" [(ngModel)]="form.takeProfitPercent" /></label>
         </div>
         <label class="field">
           <span style="display:flex;gap:8px;align-items:center">
@@ -295,8 +291,7 @@ const TopMarketCapCoins = [
           <label class="field">From <input type="date" [(ngModel)]="from" /></label>
           <label class="field">To <input type="date" [(ngModel)]="to" /></label>
           <label class="field">Initial capital <input type="number" [(ngModel)]="capital" /></label>
-          <label class="field">Risk % <input type="number" step="0.1" [(ngModel)]="risk" /></label>
-          <label class="field">Leverage <input type="number" [(ngModel)]="leverage" /></label>
+          <p class="tiny">Sizing uses the active Isolated book {{ trading.risk()?.name || '—' }} · {{ trading.risk()?.riskPerTradePercent ?? '—' }}% R · {{ trading.risk()?.stopLossPercent ?? '—' }}% SL · {{ trading.risk()?.takeProfitPercent ?? '—' }}% TP · {{ trading.risk()?.maxLeverage ?? '—' }}x. Change it on Risk.</p>
           <label class="field">Fees % <input type="number" step="0.01" [(ngModel)]="fees" /></label>
           <label class="field">Slippage % <input type="number" step="0.01" [(ngModel)]="slippage" /></label>
           <button class="btn accent" type="button" [disabled]="busy() || !strategyId" (click)="run()">
@@ -371,8 +366,6 @@ export class BacktestingPage {
   from = dateInput(daysAgo(90));
   to = dateInput(new Date());
   capital = 10000;
-  risk = 1;
-  leverage = 1;
   fees = 0.04;
   slippage = 0.02;
   readonly busy = signal(false);
@@ -402,6 +395,8 @@ export class BacktestingPage {
   });
 
   constructor() {
+    void this.trading.refreshCatalog();
+    void this.trading.refreshRisk();
     effect(() => {
       const first = this.trading.strategies()[0];
       if (first && !this.strategyId) {
@@ -437,8 +432,8 @@ export class BacktestingPage {
         from: `${this.from}T00:00:00.000Z`,
         to: `${this.to}T23:59:59.000Z`,
         initialCapital: Number(this.capital),
-        riskPercent: Number(this.risk),
-        leverage: Number(this.leverage),
+        riskPercent: this.trading.risk()?.riskPerTradePercent ?? 1,
+        leverage: this.trading.risk()?.maxLeverage ?? 3,
         feesPercent: Number(this.fees),
         slippagePercent: Number(this.slippage),
       });

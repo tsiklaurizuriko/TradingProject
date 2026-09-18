@@ -172,6 +172,17 @@ public sealed class TradingController : ControllerBase
     public Task<RiskProfileDto> UpdateRiskProfile(Guid riskProfileId, [FromBody] SaveRiskProfileRequest request, CancellationToken cancellationToken) =>
         _query.UpdateRiskProfileAsync(riskProfileId, request, cancellationToken);
 
+    [HttpPost("risk-profiles/{riskProfileId:guid}/activate")]
+    public Task<RiskProfileDto> ActivateRiskProfile(Guid riskProfileId, CancellationToken cancellationToken) =>
+        _query.ActivateRiskProfileAsync(riskProfileId, cancellationToken);
+
+    [HttpGet("risk-profiles/preview")]
+    public Task<RiskPreviewDto> PreviewRisk(
+        [FromQuery] string mode,
+        [FromQuery] decimal price,
+        CancellationToken cancellationToken) =>
+        _query.PreviewRiskAsync(mode, price, cancellationToken);
+
     [HttpPost("bots/{botId:guid}/start")]
     public Task<BotDto> Start(Guid botId, CancellationToken cancellationToken) =>
         _lifecycle.StartAsync(botId, cancellationToken);

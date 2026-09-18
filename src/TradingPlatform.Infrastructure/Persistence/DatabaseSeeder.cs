@@ -198,9 +198,10 @@ public sealed class DatabaseSeeder
 
     private async Task SeedTradingDefaultsAsync(CancellationToken cancellationToken)
     {
-        await UpsertSystemRiskAsync("Conservative", IsolatedBook(), cancellationToken);
-        await UpsertSystemRiskAsync("Moderate", ModerateBook(), cancellationToken);
-        await UpsertSystemRiskAsync("Aggressive", AggressiveBook(), cancellationToken);
+        await UpsertSystemRiskAsync("LOW", ["Low Risk", "Conservative"], LowBook(), cancellationToken);
+        await UpsertSystemRiskAsync("MEDIUM", ["Medium Risk", "Moderate"], MediumBook(), cancellationToken);
+        await UpsertSystemRiskAsync("HIGH", ["High Risk", "Aggressive"], HighBook(), cancellationToken);
+        await EnsureOneActiveAsync(cancellationToken);
 
         if (!await _db.Strategies.AnyAsync(cancellationToken))
         {
@@ -235,9 +236,15 @@ public sealed class DatabaseSeeder
         }
     }
 
-    private async Task UpsertSystemRiskAsync(string name, RiskProfile template, CancellationToken cancellationToken)
+    private async Task UpsertSystemRiskAsync(
+        string name,
+        string[] aliases,
+        RiskProfile template,
+        CancellationToken cancellationToken)
     {
-        var existing = await _db.RiskProfiles.FirstOrDefaultAsync(r => r.Name == name, cancellationToken);
+        var names = new HashSet<string>(aliases.Append(name), StringComparer.OrdinalIgnoreCase);
+        var existing = (await _db.RiskProfiles.ToListAsync(cancellationToken))
+            .FirstOrDefault(row => names.Contains(row.Name));
         if (existing is null)
         {
             template.Name = name;
@@ -246,81 +253,86 @@ public sealed class DatabaseSeeder
             return;
         }
 
+        existing.Name = name;
         existing.IsSystem = true;
         existing.RiskPerTradePercent = template.RiskPerTradePercent;
-        existing.MaxPositionPercent = template.MaxPositionPercent;
-        existing.MaxDailyLossPercent = template.MaxDailyLossPercent;
-        existing.MaxOpenPositions = template.MaxOpenPositions;
-        existing.MaxDailyTrades = template.MaxDailyTrades;
-        existing.CooldownAfterLossMinutes = template.CooldownAfterLossMinutes;
-        existing.MaxConsecutiveLosses = template.MaxConsecutiveLosses;
+        existing.StopLossPercent = template.StopLossPercent;
+        existing.TakeProfitPercent = template.TakeProfitPercent;
         existing.MaxLeverage = template.MaxLeverage;
-        existing.StopBotOnDailyLoss = template.StopBotOnDailyLoss;
-        existing.StopAccountOnDailyLoss = template.StopAccountOnDailyLoss;
-        existing.MarginMode = template.MarginMode;
-        existing.MaxPortfolioHeatPercent = template.MaxPortfolioHeatPercent;
-        existing.MaxTotalExposurePercent = template.MaxTotalExposurePercent;
-        existing.CorrelationFactor = template.CorrelationFactor;
-        existing.MinFreeMarginPercent = template.MinFreeMarginPercent;
+        existing.MaxDailyLossPercent = template.MaxDailyLossPercent;
+        existing.MaxPortfolioRiskPercent = template.MaxPortfolioRiskPercent;
+        existing.MaxSimultaneousPositions = template.MaxSimultaneousPositions;
+        existing.MaxConsecutiveLosses = template.MaxConsecutiveLosses;
+        existing.CooldownMinutes = template.CooldownMinutes;
+        existing.MinimumLiquidationSafetyBufferPercent = template.MinimumLiquidationSafetyBufferPercent;
+        existing.AllowLive = template.AllowLive;
     }
 
-    private static RiskProfile IsolatedBook() =>
+    private async Task EnsureOneActiveAsync(CancellationToken cancellationToken)
+    {
+        var books = await _db.RiskProfiles.Where(r => r.IsSystem).ToListAsync(cancellationToken);
+        if (books.Count == 0)
+        {
+            return;
+        }
+
+        if (books.Count(r => r.IsActive) == 1)
+        {
+            return;
+        }
+
+        foreach (var book in books)
+        {
+            book.IsActive = string.Equals(book.Name, "LOW", StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    private static RiskProfile LowBook() =>
         new()
         {
             RiskPerTradePercent = 0.5m,
-            MaxPositionPercent = 20m,
-            MaxDailyLossPercent = 3m,
-            MaxOpenPositions = 8,
-            MaxDailyTrades = 24,
-            CooldownAfterLossMinutes = 15,
-            MaxConsecutiveLosses = 4,
-            MaxLeverage = 2m,
-            StopBotOnDailyLoss = true,
-            StopAccountOnDailyLoss = true,
-            MarginMode = MarginMode.Isolated,
-            MaxPortfolioHeatPercent = 4m,
-            MaxTotalExposurePercent = 60m,
-            CorrelationFactor = 0.75m,
-            MinFreeMarginPercent = 20m
-        };
-
-    private static RiskProfile ModerateBook() =>
-        new()
-        {
-            RiskPerTradePercent = 0.75m,
-            MaxPositionPercent = 25m,
-            MaxDailyLossPercent = 4m,
-            MaxOpenPositions = 6,
-            MaxDailyTrades = 32,
-            CooldownAfterLossMinutes = 10,
-            MaxConsecutiveLosses = 4,
+            StopLossPercent = 2m,
+            TakeProfitPercent = 4m,
             MaxLeverage = 3m,
-            StopBotOnDailyLoss = true,
-            StopAccountOnDailyLoss = true,
-            MarginMode = MarginMode.Isolated,
-            MaxPortfolioHeatPercent = 5m,
-            MaxTotalExposurePercent = 70m,
-            CorrelationFactor = 0.75m,
-            MinFreeMarginPercent = 15m
+            MaxDailyLossPercent = 3m,
+            MaxPortfolioRiskPercent = 4m,
+            MaxSimultaneousPositions = 2,
+            MaxConsecutiveLosses = 5,
+            CooldownMinutes = 30,
+            MinimumLiquidationSafetyBufferPercent = 1m,
+            AllowLive = true,
+            IsActive = true
         };
 
-    private static RiskProfile AggressiveBook() =>
+    private static RiskProfile MediumBook() =>
         new()
         {
             RiskPerTradePercent = 1m,
-            MaxPositionPercent = 30m,
-            MaxDailyLossPercent = 6m,
-            MaxOpenPositions = 3,
-            MaxDailyTrades = 20,
-            CooldownAfterLossMinutes = 5,
-            MaxConsecutiveLosses = 3,
-            MaxLeverage = 3m,
-            StopBotOnDailyLoss = true,
-            StopAccountOnDailyLoss = true,
-            MarginMode = MarginMode.Cross,
-            MaxPortfolioHeatPercent = 6m,
-            MaxTotalExposurePercent = 40m,
-            CorrelationFactor = 0.8m,
-            MinFreeMarginPercent = 25m
+            StopLossPercent = 2.5m,
+            TakeProfitPercent = 5m,
+            MaxLeverage = 5m,
+            MaxDailyLossPercent = 5m,
+            MaxPortfolioRiskPercent = 4m,
+            MaxSimultaneousPositions = 2,
+            MaxConsecutiveLosses = 5,
+            CooldownMinutes = 30,
+            MinimumLiquidationSafetyBufferPercent = 1m,
+            AllowLive = true
+        };
+
+    private static RiskProfile HighBook() =>
+        new()
+        {
+            RiskPerTradePercent = 2m,
+            StopLossPercent = 3m,
+            TakeProfitPercent = 6m,
+            MaxLeverage = 8m,
+            MaxDailyLossPercent = 7m,
+            MaxPortfolioRiskPercent = 4m,
+            MaxSimultaneousPositions = 2,
+            MaxConsecutiveLosses = 5,
+            CooldownMinutes = 30,
+            MinimumLiquidationSafetyBufferPercent = 1m,
+            AllowLive = false
         };
 }

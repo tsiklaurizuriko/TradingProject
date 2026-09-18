@@ -147,7 +147,10 @@ export class BotTableComponent {
                   <th><app-sort-btn column="side" [query]="list">Side</app-sort-btn></th>
                   <th class="num"><app-sort-btn column="entry" [query]="list" align="end">Entry</app-sort-btn></th>
                   <th class="num"><app-sort-btn column="mark" [query]="list" align="end">Mark</app-sort-btn></th>
-                  <th class="num"><app-sort-btn column="size" [query]="list" align="end">Size USDT</app-sort-btn></th>
+                  <th class="num"><app-sort-btn column="size" [query]="list" align="end">Notional</app-sort-btn></th>
+                  <th class="num"><app-sort-btn column="risk" [query]="list" align="end">Planned Risk</app-sort-btn></th>
+                  <th class="num"><app-sort-btn column="margin" [query]="list" align="end">Margin</app-sort-btn></th>
+                  <th class="num"><app-sort-btn column="lev" [query]="list" align="end">Lev</app-sort-btn></th>
                   <th class="num"><app-sort-btn column="pnl" [query]="list" align="end">PnL</app-sort-btn></th>
                   <th class="num"><app-sort-btn column="pct" [query]="list" align="end">PnL %</app-sort-btn></th>
                   <th></th>
@@ -161,6 +164,9 @@ export class BotTableComponent {
                     <td class="num">{{ price(row.averageEntryPrice) }}</td>
                     <td class="num">{{ price(row.currentPrice) }}</td>
                     <td class="num">{{ money(size(row)) }}</td>
+                    <td class="num">{{ row.initialRiskUsdt ? money(row.initialRiskUsdt) : '—' }}</td>
+                    <td class="num">{{ row.marginUsdt ? money(row.marginUsdt) : '—' }}</td>
+                    <td class="num">{{ row.leverage ? row.leverage + 'x' : '—' }}</td>
                     <td class="num" [class]="pnlClass(row.unrealizedPnL)"><strong>{{ signedMoney(row.unrealizedPnL) }}</strong></td>
                     <td class="num" [class]="pnlClass(change(row))">{{ pct(change(row)) }}</td>
                     <td>
@@ -215,13 +221,16 @@ export class PositionTableComponent {
         entry: (row) => row.averageEntryPrice,
         mark: (row) => row.currentPrice,
         size: (row) => this.size(row),
+        risk: (row) => row.initialRiskUsdt ?? 0,
+        margin: (row) => row.marginUsdt ?? 0,
+        lev: (row) => row.leverage ?? 0,
         pnl: (row) => row.unrealizedPnL,
         pct: (row) => this.change(row),
       },
     ),
   );
   size(row: PositionDto): number {
-    return (row.quantity ?? 0) * (row.averageEntryPrice ?? 0);
+    return row.notionalUsdt || (row.quantity ?? 0) * (row.averageEntryPrice ?? 0);
   }
   totalSize(): number {
     return this.positions().reduce((sum, row) => sum + this.size(row), 0);
@@ -286,6 +295,7 @@ export class PositionTableComponent {
                   <th class="num"><app-sort-btn column="entry" [query]="list" align="end">Entry</app-sort-btn></th>
                   <th class="num"><app-sort-btn column="exit" [query]="list" align="end">Exit</app-sort-btn></th>
                   <th class="num"><app-sort-btn column="pnl" [query]="list" align="end">PnL</app-sort-btn></th>
+                  <th class="num"><app-sort-btn column="pnlPct" [query]="list" align="end">PnL %</app-sort-btn></th>
                 </tr>
               </thead>
               <tbody>
@@ -296,7 +306,8 @@ export class PositionTableComponent {
                     <td><span class="badge badge-long">LONG</span></td>
                     <td class="num">{{ price(row.entryPrice) }}</td>
                     <td class="num">{{ price(row.exitPrice) }}</td>
-                    <td class="num" [class]="pnlClass(row.pnL)">{{ signedMoney(row.pnL) }}@if (row.closedAt) { <span class="tiny">{{ pct(row.pnLPercent) }}</span> }</td>
+                    <td class="num" [class]="pnlClass(row.pnL)">{{ signedMoney(row.pnL) }}</td>
+                    <td class="num" [class]="pnlClass(row.pnLPercent)">{{ row.closedAt ? pct(row.pnLPercent) : '—' }}</td>
                   </tr>
                 }
               </tbody>
@@ -327,6 +338,7 @@ export class TradeTableComponent {
         entry: (row) => row.entryPrice,
         exit: (row) => row.exitPrice,
         pnl: (row) => row.pnL,
+        pnlPct: (row) => row.pnLPercent,
       },
     ),
   );

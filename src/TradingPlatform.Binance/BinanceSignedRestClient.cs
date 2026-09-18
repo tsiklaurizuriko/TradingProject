@@ -78,6 +78,19 @@ public sealed class BinanceSignedRestClient
         return await SendAsync(_futures, HttpMethod.Post, "fapi/v1/order", fields, apiKey, apiSecret, cancellationToken);
     }
 
+    public Task<JsonElement> GetFuturesLeverageBracketsAsync(
+        string apiKey,
+        string apiSecret,
+        string symbol,
+        CancellationToken cancellationToken)
+    {
+        var fields = new Dictionary<string, string>
+        {
+            ["symbol"] = symbol.ToUpperInvariant()
+        };
+        return SendAsync(_futures, HttpMethod.Get, "fapi/v1/leverageBracket", fields, apiKey, apiSecret, cancellationToken);
+    }
+
     public async Task SetFuturesMarginTypeAsync(
         string apiKey,
         string apiSecret,
@@ -139,6 +152,25 @@ public sealed class BinanceSignedRestClient
             ["newOrderRespType"] = "RESULT"
         };
         return SendAsync(_futures, HttpMethod.Post, "fapi/v1/order", fields, apiKey, apiSecret, cancellationToken);
+    }
+
+    public Task<JsonElement> GetFuturesUserTradesAsync(
+        string apiKey,
+        string apiSecret,
+        string symbol,
+        string? orderId,
+        CancellationToken cancellationToken)
+    {
+        var fields = new Dictionary<string, string>
+        {
+            ["symbol"] = symbol.ToUpperInvariant()
+        };
+        if (!string.IsNullOrWhiteSpace(orderId))
+        {
+            fields["orderId"] = orderId;
+        }
+
+        return SendAsync(_futures, HttpMethod.Get, "fapi/v1/userTrades", fields, apiKey, apiSecret, cancellationToken);
     }
 
     public Task<JsonElement> CancelFuturesOrderAsync(

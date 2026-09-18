@@ -14,45 +14,41 @@ public sealed class RiskProfile : SoftDeletableEntity
     public User? User { get; set; }
     public string Name { get; set; } = string.Empty;
 
-    /// <summary>Van Tharp R: percent of equity lost if the strategy stop hits.</summary>
+    /// <summary>Percent of current available futures planned as loss if the stop hits.</summary>
     public decimal RiskPerTradePercent { get; set; } = 0.5m;
 
-    /// <summary>Hard cap on a single name's notional as percent of equity.</summary>
-    public decimal MaxPositionPercent { get; set; } = 20m;
+    /// <summary>Protective stop distance from entry.</summary>
+    public decimal StopLossPercent { get; set; } = 2m;
 
-    /// <summary>Elder daily stop: halt new entries when account MTM loss hits this percent of equity.</summary>
+    /// <summary>Protective take-profit distance from entry.</summary>
+    public decimal TakeProfitPercent { get; set; } = 4m;
+
+    /// <summary>Application ceiling. Isolated margin = notional / leverage. Not the planned risk.</summary>
+    public decimal MaxLeverage { get; set; } = 3m;
+
+    /// <summary>Halt new entries when account MTM loss hits this percent of available. Positions stay open.</summary>
     public decimal MaxDailyLossPercent { get; set; } = 3m;
 
-    /// <summary>Account-wide (this paper/live book), not per bot.</summary>
-    public int MaxOpenPositions { get; set; } = 8;
+    /// <summary>Cap on sum of planned risk across open Isolated positions, as percent of available.</summary>
+    public decimal MaxPortfolioRiskPercent { get; set; } = 4m;
 
-    public int MaxDailyTrades { get; set; } = 24;
-    public int CooldownAfterLossMinutes { get; set; } = 15;
-    public int MaxConsecutiveLosses { get; set; } = 4;
+    /// <summary>Max open Isolated positions for new entries. One position per coin still applies.</summary>
+    public int MaxSimultaneousPositions { get; set; } = 2;
 
-    /// <summary>Sent to Binance before a live order. Isolated liquidation should stay beyond the stop.</summary>
-    public decimal MaxLeverage { get; set; } = 2m;
+    /// <summary>Losing streak that activates Risk Lock.</summary>
+    public int MaxConsecutiveLosses { get; set; } = 5;
 
-    public decimal MinAvailableBalance { get; set; } = 0m;
-    public bool StopBotOnDailyLoss { get; set; } = true;
+    /// <summary>Minutes new entries stay locked after the consecutive-loss limit.</summary>
+    public int CooldownMinutes { get; set; } = 30;
 
-    /// <summary>When the daily loss halt fires, stop every running bot in this paper/live book.</summary>
-    public bool StopAccountOnDailyLoss { get; set; } = true;
+    /// <summary>Stop must sit at least this many percent of price away from estimated Isolated liquidation.</summary>
+    public decimal MinimumLiquidationSafetyBufferPercent { get; set; } = 1m;
 
-    public MarginMode MarginMode { get; set; } = MarginMode.Isolated;
+    /// <summary>Only one system book is active. New trades use this profile.</summary>
+    public bool IsActive { get; set; }
 
-    /// <summary>Elder/Tharp heat: max correlated open risk as percent of equity.</summary>
-    public decimal MaxPortfolioHeatPercent { get; set; } = 4m;
+    /// <summary>HIGH stays paper-only unless this is true.</summary>
+    public bool AllowLive { get; set; }
 
-    /// <summary>Sum of open notionals as percent of equity.</summary>
-    public decimal MaxTotalExposurePercent { get; set; } = 60m;
-
-    /// <summary>USDT-M alts vs BTC typically 0.7–0.85. Inflates heat so 8 alts are not 8 independent bets.</summary>
-    public decimal CorrelationFactor { get; set; } = 0.75m;
-
-    /// <summary>Cash buffer — never size using the last slice of available margin (Carver/prop book).</summary>
-    public decimal MinFreeMarginPercent { get; set; } = 20m;
-
-    public string? AllowedSymbolsCsv { get; set; }
     public bool IsSystem { get; set; }
 }

@@ -26,7 +26,6 @@ export class BotsPage {
   busy = false;
   busyId: string | null = null;
   readonly strategyId = signal(this.ui.preferredStrategyId());
-  readonly riskId = signal(this.ui.preferredRiskId());
   readonly coinQuery = signal('');
   readonly selected = signal<Set<string>>(new Set());
   readonly confirmDelete = signal<BotDto[] | null>(null);
@@ -73,24 +72,14 @@ export class BotsPage {
   readonly selectedStrategy = computed(() =>
     this.trading.strategies().find((row) => row.id === this.strategyId()) ?? this.trading.strategies()[0] ?? null,
   );
-  readonly selectedRisk = computed(() =>
-    this.trading.riskProfiles().find((row) => row.id === this.riskId())
-    ?? this.trading.riskProfiles().find((row) => row.name === 'Conservative')
-    ?? this.trading.riskProfiles()[0]
-    ?? null,
-  );
   readonly coins = computed(() => {
     const markets = this.trading.markets();
     const all = markets.length
       ? markets
       : this.trading.tickers().map((row) => ({ symbol: row.symbol, displayName: row.displayName }));
     const strategy = this.selectedStrategy();
-    const risk = this.selectedRisk();
     const scoped = all.filter((row) => {
       if (strategy && !strategy.appliesToAllSymbols && !(strategy.allowedSymbols ?? []).includes(row.symbol)) {
-        return false;
-      }
-      if (risk && risk.appliesToAllSymbols === false && !(risk.allowedSymbols ?? []).includes(row.symbol)) {
         return false;
       }
       return true;
@@ -106,18 +95,13 @@ export class BotsPage {
 
   alreadyCreated(symbol: string): boolean {
     const strategy = this.selectedStrategy();
-    const risk = this.selectedRisk();
     return this.bots().some((bot) => {
       if (bot.symbol !== symbol) {
         return false;
       }
-      const sameStrategy = strategy
+      return strategy
         ? bot.strategyId === strategy.id || (!bot.strategyId && bot.strategyName === strategy.name)
         : true;
-      const sameRisk = risk
-        ? bot.riskProfileId === risk.id || (!bot.riskProfileId && bot.riskProfileName === risk.name)
-        : true;
-      return sameStrategy && sameRisk;
     });
   }
 
@@ -162,10 +146,10 @@ export class BotsPage {
 
   async createBots(): Promise<void> {
     const strategy = this.selectedStrategy();
-    const risk = this.selectedRisk();
+    const risk = this.trading.risk() ?? this.trading.riskProfiles().find((row) => row.isActive) ?? this.trading.riskProfiles()[0];
     const symbols = [...this.selected()].filter((symbol) => !this.alreadyCreated(symbol));
     if (!strategy?.id || !risk?.id) {
-      this.toast.show('Pick strategy and risk', 'Choose a strategy and a risk profile first.', 'error');
+      this.toast.show('Pick a strategy', 'Choose a strategy. New bots use the active Isolated book.', 'error');
       return;
     }
     if (!symbols.length) {

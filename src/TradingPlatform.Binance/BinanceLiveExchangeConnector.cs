@@ -71,15 +71,72 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
             request.ClientOrderId,
             request.ReduceOnly,
             cancellationToken);
-        return MapOrder(payload, request);
+        var mapped = MapOrder(payload, request);
+        if ((mapped.Status == OrderStatus.Filled || mapped.Status == OrderStatus.PartiallyFilled)
+            && !string.IsNullOrWhiteSpace(mapped.ExchangeOrderId))
+        {
+            try
+            {
+                var trades = await _signed.GetFuturesUserTradesAsync(
+                    key,
+                    secret,
+                    request.Symbol,
+                    mapped.ExchangeOrderId,
+                    cancellationToken);
+                var fromTrades = SumCommission(trades);
+                if (fromTrades != 0m)
+                {
+                    mapped = mapped with { Fee = fromTrades };
+                }
+            }
+            catch (DomainException)
+            {
+            }
+        }
+
+        return mapped;
     }
 
     public async Task PrepareSymbolRiskAsync(string symbol, MarginMode marginMode, int leverage, CancellationToken cancellationToken = default)
     {
+        if (marginMode != MarginMode.Isolated)
+        {
+            throw new DomainException(ErrorCodes.RiskLimitExceeded, "Isolated margin only. Cross is not allowed.");
+        }
+
         var (key, secret) = await RequireKeys(cancellationToken);
-        var type = marginMode == MarginMode.Isolated ? "ISOLATED" : "CROSSED";
-        await _signed.SetFuturesMarginTypeAsync(key, secret, symbol, type, cancellationToken);
-        await _signed.SetFuturesLeverageAsync(key, secret, symbol, Math.Max(1, leverage), cancellationToken);
+        await _signed.SetFuturesMarginTypeAsync(key, secret, symbol, "ISOLATED", cancellationToken);
+        var cap = await GetMaxIsolatedLeverageAsync(symbol, cancellationToken);
+        var used = Math.Clamp(leverage, 1, cap);
+        await _signed.SetFuturesLeverageAsync(key, secret, symbol, used, cancellationToken);
+        var positions = await _signed.GetFuturesPositionsAsync(key, secret, cancellationToken);
+        if (!IsIsolated(positions, symbol))
+        {
+            throw new DomainException(ErrorCodes.RiskLimitExceeded, "Could not switch this coin to Isolated margin.");
+        }
+    }
+
+    public async Task<int> GetMaxIsolatedLeverageAsync(string symbol, CancellationToken cancellationToken = default)
+    {
+        var (key, secret) = await RequireKeys(cancellationToken);
+        try
+        {
+            var payload = await _signed.GetFuturesLeverageBracketsAsync(key, secret, symbol, cancellationToken);
+            var max = 1;
+            foreach (var row in ReadBrackets(payload, symbol))
+            {
+                if (row > max)
+                {
+                    max = row;
+                }
+            }
+
+            return Math.Max(1, max);
+        }
+        catch (DomainException)
+        {
+            return 1;
+        }
     }
 
     public async Task PlaceClosePositionStopsAsync(
@@ -273,7 +330,55 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
             executed,
             avg,
             avg,
-            transact is null ? null : DateTimeOffset.FromUnixTimeMilliseconds(transact.Value));
+            transact is null ? null : DateTimeOffset.FromUnixTimeMilliseconds(transact.Value),
+            ReadCommission(payload));
+    }
+
+    private static decimal ReadCommission(JsonElement payload)
+    {
+        var total = 0m;
+        if (payload.TryGetProperty("commission", out var commissionEl))
+        {
+            total += Dec(commissionEl);
+        }
+
+        if (payload.TryGetProperty("fills", out var fills) && fills.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var fill in fills.EnumerateArray())
+            {
+                if (fill.TryGetProperty("commission", out var fillCommission))
+                {
+                    total += Dec(fillCommission);
+                }
+            }
+        }
+
+        return total;
+    }
+
+    private static decimal SumCommission(JsonElement trades)
+    {
+        if (trades.ValueKind != JsonValueKind.Array)
+        {
+            return 0m;
+        }
+
+        var total = 0m;
+        foreach (var trade in trades.EnumerateArray())
+        {
+            if (trade.TryGetProperty("commissionAsset", out var assetEl)
+                && !string.Equals(assetEl.GetString(), "USDT", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (trade.TryGetProperty("commission", out var commissionEl))
+            {
+                total += Dec(commissionEl);
+            }
+        }
+
+        return total;
     }
 
     private static decimal Dec(JsonElement element)
@@ -284,6 +389,71 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
         }
 
         return decimal.Parse(element.GetString() ?? "0", CultureInfo.InvariantCulture);
+    }
+
+    private static bool IsIsolated(JsonElement positions, string symbol)
+    {
+        if (positions.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        foreach (var row in positions.EnumerateArray())
+        {
+            if (!row.TryGetProperty("symbol", out var name)
+                || !string.Equals(name.GetString(), symbol, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            return row.TryGetProperty("marginType", out var margin)
+                && string.Equals(margin.GetString(), "isolated", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
+    }
+
+    private static IEnumerable<int> ReadBrackets(JsonElement payload, string symbol)
+    {
+        if (payload.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var row in payload.EnumerateArray())
+            {
+                if (row.TryGetProperty("symbol", out var name)
+                    && !string.Equals(name.GetString(), symbol, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                foreach (var value in ReadBracketList(row))
+                {
+                    yield return value;
+                }
+            }
+
+            yield break;
+        }
+
+        foreach (var value in ReadBracketList(payload))
+        {
+            yield return value;
+        }
+    }
+
+    private static IEnumerable<int> ReadBracketList(JsonElement row)
+    {
+        if (!row.TryGetProperty("brackets", out var brackets) || brackets.ValueKind != JsonValueKind.Array)
+        {
+            yield break;
+        }
+
+        foreach (var bracket in brackets.EnumerateArray())
+        {
+            if (bracket.TryGetProperty("initialLeverage", out var lev) && lev.TryGetInt32(out var value))
+            {
+                yield return value;
+            }
+        }
     }
 }
 

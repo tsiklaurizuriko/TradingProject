@@ -208,18 +208,12 @@ public sealed class StrategyEngine : IStrategyEngine
             return EvaluateGroup(node.Group, context, requirePosition);
         }
 
-        if (string.Equals(node.Type, "STOP_LOSS", StringComparison.OrdinalIgnoreCase))
+        // Protective SL/TP live on the Isolated risk book (fill snapshot / Binance closes).
+        // Strategy JSON may still contain leftover STOP_LOSS / TAKE_PROFIT nodes; ignore them.
+        if (string.Equals(node.Type, "STOP_LOSS", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(node.Type, "TAKE_PROFIT", StringComparison.OrdinalIgnoreCase))
         {
-            if (!requirePosition || context.AverageEntryPrice is null || node.Percent is null) return false;
-            var threshold = context.AverageEntryPrice.Value * (1m - node.Percent.Value / 100m);
-            return context.CurrentPrice <= threshold;
-        }
-
-        if (string.Equals(node.Type, "TAKE_PROFIT", StringComparison.OrdinalIgnoreCase))
-        {
-            if (!requirePosition || context.AverageEntryPrice is null || node.Percent is null) return false;
-            var threshold = context.AverageEntryPrice.Value * (1m + node.Percent.Value / 100m);
-            return context.CurrentPrice >= threshold;
+            return false;
         }
 
         if (node.Indicator is null || node.Comparison is null)

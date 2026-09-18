@@ -53,7 +53,7 @@ public sealed class StrategyEngineTests
     }
 
     [Fact]
-    public void Stop_loss_exits_an_open_position()
+    public void Strategy_stop_nodes_do_not_exit_an_open_position()
     {
         var engine = new StrategyEngine();
         var definition = new StrategyDefinitionValidator().Parse(DatabaseSeeder.SampleEmaRsiDefinition);
@@ -77,7 +77,7 @@ public sealed class StrategyEngineTests
             CurrentPrice = 98m
         }, out _);
 
-        signal.Should().Be(SignalType.Exit);
+        signal.Should().Be(SignalType.Hold);
     }
 
     [Fact]

@@ -32,44 +32,57 @@ export interface RiskProfileDto {
   id: string;
   name: string;
   riskPerTradePercent: number;
-  maxPositionPercent: number;
-  maxDailyLossPercent: number;
-  maxOpenPositions: number;
-  maxDailyTrades: number;
-  cooldownAfterLossMinutes: number;
-  maxConsecutiveLosses: number;
+  stopLossPercent: number;
+  takeProfitPercent: number;
   maxLeverage: number;
-  stopBotOnDailyLoss: boolean;
-  stopAccountOnDailyLoss?: boolean;
-  marginMode?: string;
-  maxPortfolioHeatPercent?: number;
-  maxTotalExposurePercent?: number;
-  correlationFactor?: number;
-  minFreeMarginPercent?: number;
+  maxDailyLossPercent: number;
+  maxPortfolioRiskPercent: number;
+  maxSimultaneousPositions: number;
+  maxConsecutiveLosses: number;
+  cooldownMinutes: number;
+  minimumLiquidationSafetyBufferPercent: number;
+  isActive: boolean;
+  allowLive: boolean;
   isSystem: boolean;
-  appliesToAllSymbols?: boolean;
-  allowedSymbols?: string[];
 }
 
 export interface SaveRiskProfileRequest {
-  name: string;
   riskPerTradePercent: number;
-  maxPositionPercent: number;
-  maxDailyLossPercent: number;
-  maxOpenPositions: number;
-  maxDailyTrades: number;
-  cooldownAfterLossMinutes: number;
-  maxConsecutiveLosses: number;
+  stopLossPercent: number;
+  takeProfitPercent: number;
   maxLeverage: number;
-  stopBotOnDailyLoss: boolean;
-  stopAccountOnDailyLoss: boolean;
-  marginMode: string;
-  maxPortfolioHeatPercent: number;
-  maxTotalExposurePercent: number;
-  correlationFactor: number;
-  minFreeMarginPercent: number;
-  appliesToAllSymbols: boolean;
-  symbols: string[];
+  maxDailyLossPercent: number;
+  maxPortfolioRiskPercent: number;
+  maxSimultaneousPositions: number;
+  maxConsecutiveLosses: number;
+  cooldownMinutes: number;
+  minimumLiquidationSafetyBufferPercent: number;
+  allowLive: boolean;
+}
+
+export interface RiskPreviewDto {
+  profileName: string;
+  availableBalance: number;
+  riskPerTradePercent: number;
+  riskAmount: number;
+  entryPrice: number;
+  stopLossPercent: number;
+  stopLossPrice: number;
+  takeProfitPercent: number;
+  takeProfitPrice: number;
+  positionNotional: number;
+  leverage: number;
+  isolatedMargin: number;
+  estimatedFee: number;
+  estimatedEntryFee?: number;
+  estimatedExitFee?: number;
+  estimatedSlippage: number;
+  estimatedTotalRisk: number;
+  liquidationPrice: number;
+  portfolioRiskBefore?: number;
+  portfolioRiskAfter?: number;
+  allowed: boolean;
+  reason: string;
 }
 
 export interface StrategyDto {
@@ -223,6 +236,16 @@ export interface PositionDto {
   fees: number;
   openedAt: string;
   source?: string;
+  initialRiskUsdt?: number;
+  marginUsdt?: number;
+  notionalUsdt?: number;
+  leverage?: number;
+  stopLossPercent?: number;
+  takeProfitPercent?: number;
+  stopLossPrice?: number;
+  takeProfitPrice?: number;
+  liquidationPrice?: number;
+  riskPerTradePercent?: number;
 }
 
 export interface OrderDto {
@@ -418,12 +441,46 @@ export function pnlClass(value: number | null | undefined): string {
   return value > 0 ? 'pnl-pos' : 'pnl-neg';
 }
 
-export function signedMoney(value: number | null | undefined): string {
+export function signedMoney(value: number | null | undefined, digits = 2): string {
   if (value === null || value === undefined || Number.isNaN(value)) {
     return '—';
   }
   const sign = value > 0 ? '+' : '';
-  return `${sign}${money(value)}`;
+  return `${sign}${money(value, digits)}`;
+}
+
+/** Stored fee is a cost when positive and a rebate when negative. Show as cash (paid = −). */
+export function feeCash(value: number | null | undefined): number | null {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return null;
+  }
+  return -value;
+}
+
+export function previewRisk(
+  row: Pick<RiskProfileDto, 'riskPerTradePercent' | 'stopLossPercent' | 'takeProfitPercent' | 'maxLeverage'>,
+  available: number,
+  price = 100_000,
+): {
+  risk: number;
+  notional: number;
+  margin: number;
+  stopPrice: number;
+  takePrice: number;
+} {
+  const r = Math.max(0, row.riskPerTradePercent ?? 0);
+  const sl = Math.max(0, row.stopLossPercent ?? 0);
+  const tp = Math.max(0, row.takeProfitPercent ?? 0);
+  const leverage = Math.max(1, row.maxLeverage ?? 1);
+  const risk = (available * r) / 100;
+  const notional = sl > 0 ? risk / (sl / 100) : 0;
+  return {
+    risk,
+    notional,
+    margin: notional / leverage,
+    stopPrice: price * (1 - sl / 100),
+    takePrice: price * (1 + tp / 100),
+  };
 }
 
 export function formatClock(date: Date, hour12 = false): string {

@@ -56,23 +56,11 @@ public sealed class BacktestService : IBacktestService
         }
 
         var capital = request.InitialCapital;
-        var risk = request.RiskPercent;
-        var leverage = request.Leverage;
         var fees = request.FeesPercent;
         var slippage = request.SlippagePercent;
         if (capital < 100m || capital > 10_000_000m)
         {
             throw new DomainException(ErrorCodes.ValidationFailed, "Initial capital must be between 100 and 10,000,000 USDT.");
-        }
-
-        if (risk is <= 0m or > 10m)
-        {
-            throw new DomainException(ErrorCodes.ValidationFailed, "Risk % must be greater than 0 and at most 10.");
-        }
-
-        if (leverage is < 1m or > 20m)
-        {
-            throw new DomainException(ErrorCodes.ValidationFailed, "Leverage must be between 1 and 20.");
         }
 
         if (fees is < 0m or > 2m || slippage is < 0m or > 2m)
@@ -89,7 +77,6 @@ public sealed class BacktestService : IBacktestService
         }
 
         var definition = _validator.Parse(version.DefinitionJson);
-        var parameters = EmaRsiTemplate.Read(version.DefinitionJson);
         var warmup = timeframe.ToDuration() * WarmupBars;
         var fetchStart = from - warmup;
         var candles = await _market.GetClosedKlinesRangeAsync(
@@ -106,6 +93,7 @@ public sealed class BacktestService : IBacktestService
                 "Not enough historical candles from Binance for this range. Use a longer window or a higher timeframe.");
         }
 
+        var book = await _store.GetConservativeRiskAsync(cancellationToken);
         var result = _replay.Run(
             definition,
             candles,
@@ -113,12 +101,18 @@ public sealed class BacktestService : IBacktestService
                 from,
                 to,
                 capital,
-                risk,
-                leverage,
+                book.RiskPerTradePercent,
+                book.MaxLeverage,
                 fees,
                 slippage,
-                parameters.StopLossPercent,
-                parameters.TakeProfitPercent));
+                book.StopLossPercent,
+                book.TakeProfitPercent,
+                book.MaxDailyLossPercent,
+                book.MaxPortfolioRiskPercent,
+                book.MaxSimultaneousPositions,
+                book.MaxConsecutiveLosses,
+                book.CooldownMinutes,
+                book.MinimumLiquidationSafetyBufferPercent));
 
         var user = await _store.GetUserAsync(userId, cancellationToken)
             ?? await _store.GetFirstAdminAsync(cancellationToken);
@@ -126,12 +120,13 @@ public sealed class BacktestService : IBacktestService
         {
             result.Assumptions,
             result.BarsUsed,
-            riskPercent = risk,
-            leverage,
+            riskBook = book.Name,
+            riskPercent = book.RiskPerTradePercent,
+            leverage = book.MaxLeverage,
             feesPercent = fees,
             slippagePercent = slippage,
-            stopLossPercent = parameters.StopLossPercent,
-            takeProfitPercent = parameters.TakeProfitPercent,
+            stopLossPercent = book.StopLossPercent,
+            takeProfitPercent = book.TakeProfitPercent,
             capped = candles.Count >= MaxBars + WarmupBars,
         });
 

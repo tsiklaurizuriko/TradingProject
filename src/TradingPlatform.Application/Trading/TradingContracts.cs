@@ -31,7 +31,17 @@ public sealed record PositionDto(
     decimal RealizedPnL,
     decimal Fees,
     DateTimeOffset OpenedAt,
-    string Source = "Bot");
+    string Source = "Bot",
+    decimal InitialRiskUsdt = 0m,
+    decimal MarginUsdt = 0m,
+    decimal NotionalUsdt = 0m,
+    decimal Leverage = 0m,
+    decimal StopLossPercent = 0m,
+    decimal TakeProfitPercent = 0m,
+    decimal StopLossPrice = 0m,
+    decimal TakeProfitPrice = 0m,
+    decimal LiquidationPrice = 0m,
+    decimal RiskPerTradePercent = 0m);
 
 public sealed record OrderDto(
     Guid Id,
@@ -93,23 +103,55 @@ public sealed record RiskProfileDto(
     Guid Id,
     string Name,
     decimal RiskPerTradePercent,
-    decimal MaxPositionPercent,
-    decimal MaxDailyLossPercent,
-    int MaxOpenPositions,
-    int MaxDailyTrades,
-    int CooldownAfterLossMinutes,
-    int MaxConsecutiveLosses,
+    decimal StopLossPercent,
+    decimal TakeProfitPercent,
     decimal MaxLeverage,
-    bool StopBotOnDailyLoss,
-    bool StopAccountOnDailyLoss,
-    string MarginMode,
-    decimal MaxPortfolioHeatPercent,
-    decimal MaxTotalExposurePercent,
-    decimal CorrelationFactor,
-    decimal MinFreeMarginPercent,
-    bool IsSystem,
-    bool AppliesToAllSymbols,
-    IReadOnlyList<string> AllowedSymbols);
+    decimal MaxDailyLossPercent,
+    decimal MaxPortfolioRiskPercent,
+    int MaxSimultaneousPositions,
+    int MaxConsecutiveLosses,
+    int CooldownMinutes,
+    decimal MinimumLiquidationSafetyBufferPercent,
+    bool IsActive,
+    bool AllowLive,
+    bool IsSystem);
+
+public sealed record SaveRiskProfileRequest(
+    decimal RiskPerTradePercent,
+    decimal StopLossPercent,
+    decimal TakeProfitPercent,
+    decimal MaxLeverage,
+    decimal MaxDailyLossPercent,
+    decimal MaxPortfolioRiskPercent,
+    int MaxSimultaneousPositions,
+    int MaxConsecutiveLosses,
+    int CooldownMinutes,
+    decimal MinimumLiquidationSafetyBufferPercent,
+    bool AllowLive);
+
+public sealed record RiskPreviewDto(
+    string ProfileName,
+    decimal AvailableBalance,
+    decimal RiskPerTradePercent,
+    decimal RiskAmount,
+    decimal EntryPrice,
+    decimal StopLossPercent,
+    decimal StopLossPrice,
+    decimal TakeProfitPercent,
+    decimal TakeProfitPrice,
+    decimal PositionNotional,
+    decimal Leverage,
+    decimal IsolatedMargin,
+    decimal EstimatedFee,
+    decimal EstimatedEntryFee,
+    decimal EstimatedExitFee,
+    decimal EstimatedSlippage,
+    decimal EstimatedTotalRisk,
+    decimal LiquidationPrice,
+    decimal PortfolioRiskBefore,
+    decimal PortfolioRiskAfter,
+    bool Allowed,
+    string Reason);
 
 public sealed record StrategyDto(
     Guid Id,
@@ -139,26 +181,6 @@ public sealed record SaveStrategyRequest(
     decimal RsiMinimum,
     decimal StopLossPercent,
     decimal TakeProfitPercent);
-
-public sealed record SaveRiskProfileRequest(
-    string Name,
-    decimal RiskPerTradePercent,
-    decimal MaxPositionPercent,
-    decimal MaxDailyLossPercent,
-    int MaxOpenPositions,
-    int MaxDailyTrades,
-    int CooldownAfterLossMinutes,
-    int MaxConsecutiveLosses,
-    decimal MaxLeverage,
-    bool StopBotOnDailyLoss,
-    bool StopAccountOnDailyLoss,
-    string MarginMode,
-    decimal MaxPortfolioHeatPercent,
-    decimal MaxTotalExposurePercent,
-    decimal CorrelationFactor,
-    decimal MinFreeMarginPercent,
-    bool AppliesToAllSymbols,
-    string[]? Symbols);
 
 public sealed record SaveSymbolScopeRequest(bool AppliesToAllSymbols, string[]? Symbols);
 
@@ -260,6 +282,8 @@ public interface ITradingQueryService
     Task<StrategyDto> UpdateStrategyAsync(Guid strategyId, SaveStrategyRequest request, CancellationToken cancellationToken = default);
     Task<RiskProfileDto> CreateRiskProfileAsync(SaveRiskProfileRequest request, CancellationToken cancellationToken = default);
     Task<RiskProfileDto> UpdateRiskProfileAsync(Guid riskProfileId, SaveRiskProfileRequest request, CancellationToken cancellationToken = default);
+    Task<RiskProfileDto> ActivateRiskProfileAsync(Guid riskProfileId, CancellationToken cancellationToken = default);
+    Task<RiskPreviewDto> PreviewRiskAsync(string mode, decimal price, CancellationToken cancellationToken = default);
 }
 
 public sealed record StartSymbolRequest(string Symbol, string Mode, Guid? StrategyId, Guid? RiskProfileId);
