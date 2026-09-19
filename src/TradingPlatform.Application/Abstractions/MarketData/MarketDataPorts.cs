@@ -41,6 +41,12 @@ public interface IPublicMarketDataClient
     Task<decimal> GetLastPriceAsync(string symbol, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<RankedUsdtSpotSymbol>> GetPaperUniverseAsync(CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<DiscoveredFuturesContract>> DiscoverUsdtPerpetualsAsync(CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<FuturesBookTicker>> GetBookTickersAsync(CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<FuturesPremiumIndex>> GetPremiumIndexAsync(CancellationToken cancellationToken = default);
 }
 
 public interface IMarketDataCache

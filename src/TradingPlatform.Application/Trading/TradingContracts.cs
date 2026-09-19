@@ -95,7 +95,16 @@ public sealed record MarketQuoteDto(
     DateTimeOffset Timestamp,
     decimal HighPrice24h = 0,
     decimal LowPrice24h = 0,
-    int Trades24h = 0);
+    int Trades24h = 0,
+    decimal ScanScore = 0,
+    decimal SpreadBps = 0,
+    decimal FundingRate = 0,
+    decimal VolatilityPercent = 0,
+    decimal OpenInterest = 0,
+    bool Eligible = false,
+    string EligibilityReason = "",
+    bool Watchable = true,
+    string ContractType = "PERPETUAL");
 
 public sealed record KlineBarDto(long Time, decimal Open, decimal High, decimal Low, decimal Close, decimal Volume);
 
@@ -161,13 +170,32 @@ public sealed record StrategyDto(
     string Timeframe,
     bool AppliesToAllSymbols,
     IReadOnlyList<string> AllowedSymbols,
+    string TemplateKey,
+    string TemplateLabel,
+    string AllowedSide,
+    string Blurb,
     int EmaFast,
     int EmaSlow,
     int RsiPeriod,
     decimal RsiMinimum,
-    decimal StopLossPercent,
-    decimal TakeProfitPercent,
-    bool VersionUsed);
+    decimal RsiLongMax,
+    decimal RsiOversold,
+    decimal RsiOverbought,
+    int MacdFast,
+    int MacdSlow,
+    int MacdSignal,
+    int BbPeriod,
+    decimal BbStdDev,
+    int DonchianLength,
+    bool RequireVolume,
+    int VolumeLookback,
+    decimal MinAtrPercent,
+    decimal MaxAtrPercent,
+    bool VersionUsed,
+    bool IsEnabled,
+    string ValidationStatus,
+    IReadOnlyList<string> SupportedTimeframes,
+    IReadOnlyList<string> SupportedDirections);
 
 public sealed record SaveStrategyRequest(
     string Name,
@@ -175,12 +203,43 @@ public sealed record SaveStrategyRequest(
     string Timeframe,
     bool AppliesToAllSymbols,
     string[]? Symbols,
-    int EmaFast,
-    int EmaSlow,
-    int RsiPeriod,
-    decimal RsiMinimum,
-    decimal StopLossPercent,
-    decimal TakeProfitPercent);
+    string TemplateKey = "ema_rsi_trend",
+    string AllowedSide = "Long",
+    int EmaFast = 20,
+    int EmaSlow = 50,
+    int RsiPeriod = 14,
+    decimal RsiMinimum = 50m,
+    decimal RsiLongMax = 68m,
+    decimal RsiOversold = 30m,
+    decimal RsiOverbought = 70m,
+    int MacdFast = 12,
+    int MacdSlow = 26,
+    int MacdSignal = 9,
+    int BbPeriod = 20,
+    decimal BbStdDev = 2m,
+    int DonchianLength = 20,
+    bool RequireVolume = true,
+    int VolumeLookback = 20,
+    decimal MinAtrPercent = 0.15m,
+    decimal MaxAtrPercent = 4m);
+
+public sealed record SetStrategyEnabledRequest(bool Enabled);
+
+public sealed record StrategyPreviewBarDto(
+    DateTimeOffset Time,
+    string Signal,
+    decimal Close,
+    string Reason);
+
+public sealed record StrategyPreviewDto(
+    Guid StrategyId,
+    string Name,
+    string TemplateKey,
+    string Symbol,
+    string Timeframe,
+    string LastSignal,
+    string LastReason,
+    IReadOnlyList<StrategyPreviewBarDto> Bars);
 
 public sealed record SaveSymbolScopeRequest(bool AppliesToAllSymbols, string[]? Symbols);
 
@@ -275,11 +334,13 @@ public interface ITradingQueryService
     Task<IReadOnlyList<TradeDto>> GetTradesAsync(CancellationToken cancellationToken = default);
     Task<RiskProfileDto> GetRiskProfileAsync(CancellationToken cancellationToken = default);
     Task<IReadOnlyList<StrategyDto>> GetStrategiesAsync(CancellationToken cancellationToken = default);
+    Task<StrategyPreviewDto> PreviewStrategyAsync(Guid strategyId, string? symbol, int? limit, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<RiskProfileDto>> GetRiskProfilesAsync(CancellationToken cancellationToken = default);
     Task<StrategyDto> UpdateStrategyScopeAsync(Guid strategyId, bool appliesToAll, IEnumerable<string>? symbols, CancellationToken cancellationToken = default);
     Task<RiskProfileDto> UpdateRiskScopeAsync(Guid riskProfileId, bool appliesToAll, IEnumerable<string>? symbols, CancellationToken cancellationToken = default);
     Task<StrategyDto> CreateStrategyAsync(Guid userId, SaveStrategyRequest request, CancellationToken cancellationToken = default);
     Task<StrategyDto> UpdateStrategyAsync(Guid strategyId, SaveStrategyRequest request, CancellationToken cancellationToken = default);
+    Task<StrategyDto> SetStrategyEnabledAsync(Guid strategyId, bool enabled, CancellationToken cancellationToken = default);
     Task<RiskProfileDto> CreateRiskProfileAsync(SaveRiskProfileRequest request, CancellationToken cancellationToken = default);
     Task<RiskProfileDto> UpdateRiskProfileAsync(Guid riskProfileId, SaveRiskProfileRequest request, CancellationToken cancellationToken = default);
     Task<RiskProfileDto> ActivateRiskProfileAsync(Guid riskProfileId, CancellationToken cancellationToken = default);
@@ -322,7 +383,8 @@ public sealed record BacktestTradeDto(
     decimal ExitPrice,
     decimal PnL,
     decimal Fees,
-    string Reason);
+    string Reason,
+    string Side = "Long");
 
 public sealed record BacktestResultDto(
     Guid Id,

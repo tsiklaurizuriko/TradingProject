@@ -78,6 +78,9 @@ secrets.json
 *.tmp
 *.temp
 *~
+
+## Cached Binance universe
+**/data/futures-universe.json
 *.swp
 
 ## OS

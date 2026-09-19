@@ -11,10 +11,49 @@ public interface IIndicator
 
 public static class CandleSeries
 {
-    public static decimal[] Closes(IReadOnlyList<MarketCandle> candles) => candles.Select(c => c.Close).ToArray();
-    public static decimal[] Highs(IReadOnlyList<MarketCandle> candles) => candles.Select(c => c.High).ToArray();
-    public static decimal[] Lows(IReadOnlyList<MarketCandle> candles) => candles.Select(c => c.Low).ToArray();
-    public static decimal[] Volumes(IReadOnlyList<MarketCandle> candles) => candles.Select(c => c.Volume).ToArray();
+    public static decimal[] Closes(IReadOnlyList<MarketCandle> candles)
+    {
+        var result = new decimal[candles.Count];
+        for (var i = 0; i < result.Length; i++)
+        {
+            result[i] = candles[i].Close;
+        }
+
+        return result;
+    }
+
+    public static decimal[] Highs(IReadOnlyList<MarketCandle> candles)
+    {
+        var result = new decimal[candles.Count];
+        for (var i = 0; i < result.Length; i++)
+        {
+            result[i] = candles[i].High;
+        }
+
+        return result;
+    }
+
+    public static decimal[] Lows(IReadOnlyList<MarketCandle> candles)
+    {
+        var result = new decimal[candles.Count];
+        for (var i = 0; i < result.Length; i++)
+        {
+            result[i] = candles[i].Low;
+        }
+
+        return result;
+    }
+
+    public static decimal[] Volumes(IReadOnlyList<MarketCandle> candles)
+    {
+        var result = new decimal[candles.Count];
+        for (var i = 0; i < result.Length; i++)
+        {
+            result[i] = candles[i].Volume;
+        }
+
+        return result;
+    }
 }
 
 public sealed class SmaIndicator : IIndicator
@@ -136,6 +175,7 @@ public sealed class IndicatorRegistry
         "ATR" => new AtrIndicator(period),
         "VOLUME" => new VolumeIndicator(),
         "AVERAGEVOLUME" or "AVGVOLUME" => new AverageVolumeIndicator(period),
+        "ATRPERCENT" or "ATR%" => new AtrPercentIndicator(period),
         _ => throw new ArgumentException($"Unknown indicator '{name}'.", nameof(name))
     };
 }
@@ -232,3 +272,189 @@ public sealed class AverageVolumeIndicator : IIndicator
         return result;
     }
 }
+
+public sealed class AtrPercentIndicator : IIndicator
+{
+    public AtrPercentIndicator(int period = 14) => Period = period > 0 ? period : 14;
+    public string Name => $"ATR%({Period})";
+    public int Period { get; }
+    public int Lookback => Period + 1;
+
+    public IReadOnlyList<decimal?> Compute(IReadOnlyList<MarketCandle> candles)
+    {
+        var atr = new AtrIndicator(Period).Compute(candles);
+        var result = new decimal?[candles.Count];
+        for (var i = 0; i < candles.Count; i++)
+        {
+            if (atr[i] is { } value && candles[i].Close > 0m)
+            {
+                result[i] = value / candles[i].Close * 100m;
+            }
+        }
+
+        return result;
+    }
+}
+
+public static class MacdSeries
+{
+    public static (decimal?[] Macd, decimal?[] Signal, decimal?[] Histogram) Compute(
+        IReadOnlyList<MarketCandle> candles,
+        int fast,
+        int slow,
+        int signal)
+    {
+        var closes = CandleSeries.Closes(candles);
+        var emaFast = EmaOf(closes, fast);
+        var emaSlow = EmaOf(closes, slow);
+        var macd = new decimal?[closes.Length];
+        var macdPlain = new decimal[closes.Length];
+        var filled = new bool[closes.Length];
+        for (var i = 0; i < closes.Length; i++)
+        {
+            if (emaFast[i] is { } f && emaSlow[i] is { } s)
+            {
+                macd[i] = f - s;
+                macdPlain[i] = f - s;
+                filled[i] = true;
+            }
+        }
+
+        var signalLine = EmaOfSparse(macdPlain, filled, signal);
+        var hist = new decimal?[closes.Length];
+        for (var i = 0; i < closes.Length; i++)
+        {
+            if (macd[i] is { } m && signalLine[i] is { } sig)
+            {
+                hist[i] = m - sig;
+            }
+        }
+
+        return (macd, signalLine, hist);
+    }
+
+    private static decimal?[] EmaOf(decimal[] values, int period)
+    {
+        var result = new decimal?[values.Length];
+        if (values.Length < period)
+        {
+            return result;
+        }
+
+        decimal sum = 0;
+        for (var i = 0; i < period; i++)
+        {
+            sum += values[i];
+        }
+
+        var ema = sum / period;
+        result[period - 1] = ema;
+        var k = 2m / (period + 1);
+        for (var i = period; i < values.Length; i++)
+        {
+            ema = values[i] * k + ema * (1 - k);
+            result[i] = ema;
+        }
+
+        return result;
+    }
+
+    private static decimal?[] EmaOfSparse(decimal[] values, bool[] filled, int period)
+    {
+        var result = new decimal?[values.Length];
+        var seed = new List<decimal>();
+        var k = 2m / (period + 1);
+        decimal? ema = null;
+        for (var i = 0; i < values.Length; i++)
+        {
+            if (!filled[i])
+            {
+                continue;
+            }
+
+            if (ema is null)
+            {
+                seed.Add(values[i]);
+                if (seed.Count == period)
+                {
+                    ema = seed.Average();
+                    result[i] = ema;
+                }
+
+                continue;
+            }
+
+            ema = values[i] * k + ema.Value * (1 - k);
+            result[i] = ema;
+        }
+
+        return result;
+    }
+}
+
+public static class BollingerSeries
+{
+    public static (decimal?[] Mid, decimal?[] Upper, decimal?[] Lower) Compute(
+        IReadOnlyList<MarketCandle> candles,
+        int period,
+        decimal stdDev)
+    {
+        var closes = CandleSeries.Closes(candles);
+        var mid = new decimal?[closes.Length];
+        var upper = new decimal?[closes.Length];
+        var lower = new decimal?[closes.Length];
+        for (var i = period - 1; i < closes.Length; i++)
+        {
+            decimal sum = 0;
+            for (var j = i - period + 1; j <= i; j++)
+            {
+                sum += closes[j];
+            }
+
+            var mean = sum / period;
+            decimal variance = 0;
+            for (var j = i - period + 1; j <= i; j++)
+            {
+                var d = closes[j] - mean;
+                variance += d * d;
+            }
+
+            var sd = (decimal)Math.Sqrt((double)(variance / period));
+            mid[i] = mean;
+            upper[i] = mean + stdDev * sd;
+            lower[i] = mean - stdDev * sd;
+        }
+
+        return (mid, upper, lower);
+    }
+}
+
+public static class DonchianSeries
+{
+    public static (decimal?[] High, decimal?[] Low) Compute(IReadOnlyList<MarketCandle> candles, int length)
+    {
+        var high = new decimal?[candles.Count];
+        var low = new decimal?[candles.Count];
+        for (var i = 0; i < candles.Count; i++)
+        {
+            if (i < length)
+            {
+                continue;
+            }
+
+            decimal max = decimal.MinValue;
+            decimal min = decimal.MaxValue;
+            for (var j = i - length; j < i; j++)
+            {
+                if (candles[j].High > max) max = candles[j].High;
+                if (candles[j].Low < min) min = candles[j].Low;
+            }
+
+            high[i] = max;
+            low[i] = min;
+        }
+
+        return (high, low);
+    }
+}
+

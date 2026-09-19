@@ -16,6 +16,15 @@ public sealed class LiveProtectivePricesTests
     }
 
     [Fact]
+    public void FromEntry_short_places_stop_above_and_take_below()
+    {
+        var (stop, take) = LiveProtectivePrices.FromEntry(100m, 1.5m, 3m, 0.01m, TradingPlatform.Domain.Positions.PositionSide.Short);
+
+        stop.Should().Be(101.50m);
+        take.Should().Be(97.00m);
+    }
+
+    [Fact]
     public void Client_order_ids_fit_binance_limit_and_are_stable()
     {
         var botId = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");

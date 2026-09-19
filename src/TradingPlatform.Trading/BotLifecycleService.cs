@@ -30,6 +30,8 @@ public sealed class BotLifecycleService : IBotLifecycleService
     private readonly ICorrelationIdAccessor _correlation;
     private readonly ITradingRealtimePublisher _publisher;
     private readonly IExchangeCredentialStore _credentials;
+    private readonly ITradeEligibility _eligibility;
+    private readonly IMarketScanner _scanner;
     private readonly TradingOptions _options;
     private readonly ILogger<BotLifecycleService> _logger;
 
@@ -41,6 +43,8 @@ public sealed class BotLifecycleService : IBotLifecycleService
         ICorrelationIdAccessor correlation,
         ITradingRealtimePublisher publisher,
         IExchangeCredentialStore credentials,
+        ITradeEligibility eligibility,
+        IMarketScanner scanner,
         IOptions<TradingOptions> options,
         ILogger<BotLifecycleService> logger)
     {
@@ -51,6 +55,8 @@ public sealed class BotLifecycleService : IBotLifecycleService
         _correlation = correlation;
         _publisher = publisher;
         _credentials = credentials;
+        _eligibility = eligibility;
+        _scanner = scanner;
         _options = options.Value;
         _logger = logger;
     }
@@ -113,6 +119,8 @@ public sealed class BotLifecycleService : IBotLifecycleService
             throw new DomainException(ErrorCodes.InvalidSymbol, $"{name} is not a Binance USD-M USDT perpetual.");
         }
 
+        await EnsureTradeEligibleAsync(name, cancellationToken);
+
         if (mode is not TradingMode.Paper and not TradingMode.Live)
         {
             throw new DomainException(ErrorCodes.ValidationFailed, "Use Paper or Live.");
@@ -129,6 +137,8 @@ public sealed class BotLifecycleService : IBotLifecycleService
         {
             throw new DomainException(ErrorCodes.StrategyInvalid, "Strategy was not found.");
         }
+
+        EnsureStrategyEnabled(strategyVersion.Strategy);
         if (!SymbolScope.Allows(strategyVersion.Strategy.AppliesToAllSymbols, strategyVersion.Strategy.AllowedSymbolsCsv, name))
         {
             throw new DomainException(
@@ -242,6 +252,7 @@ public sealed class BotLifecycleService : IBotLifecycleService
 
         var strategyVersion = await _store.GetLatestStrategyVersionAsync(strategyId, cancellationToken)
             ?? throw new DomainException(ErrorCodes.StrategyInvalid, "Strategy was not found.");
+        EnsureStrategyEnabled(strategyVersion.Strategy);
         var risk = await _store.GetConservativeRiskAsync(cancellationToken);
         RiskLiveGuard.EnsureAllowed(mode, risk);
 
@@ -471,6 +482,7 @@ public sealed class BotLifecycleService : IBotLifecycleService
     private async Task AttachLatestStrategyAsync(Bot bot, CancellationToken cancellationToken)
     {
         var latest = await _store.GetLatestStrategyVersionAsync(bot.StrategyVersion.StrategyId, cancellationToken);
+        EnsureStrategyEnabled(latest?.Strategy ?? bot.StrategyVersion.Strategy);
         if (latest is null || latest.Id == bot.StrategyVersionId)
         {
             return;
@@ -576,6 +588,33 @@ public sealed class BotLifecycleService : IBotLifecycleService
         await _publisher.PublishOverviewAsync(cancellationToken);
     }
 
+    private async Task EnsureTradeEligibleAsync(string symbol, CancellationToken cancellationToken)
+    {
+        IReadOnlyList<MarketScanRow> scan;
+        try
+        {
+            scan = await _scanner.ScanAsync(cancellationToken);
+        }
+        catch
+        {
+            scan = [];
+        }
+
+        var row = scan.FirstOrDefault(item => string.Equals(item.Contract.Symbol, symbol, StringComparison.OrdinalIgnoreCase));
+        var decision = row is not null
+            ? _eligibility.Evaluate(row)
+            : _eligibility.Evaluate(
+                (await _market.GetPaperUniverseAsync(cancellationToken))
+                    .FirstOrDefault(item => string.Equals(item.Symbol, symbol, StringComparison.OrdinalIgnoreCase))
+                ?? throw new DomainException(ErrorCodes.InvalidSymbol, $"{symbol} is not a Binance USD-M USDT perpetual."));
+        if (!decision.Eligible)
+        {
+            throw new DomainException(
+                ErrorCodes.ValidationFailed,
+                $"{symbol} is watched but not currently eligible to trade. {decision.Reason}");
+        }
+    }
+
     internal static BotDto Map(Bot bot) =>
         new(
             bot.Id,
@@ -584,7 +623,7 @@ public sealed class BotLifecycleService : IBotLifecycleService
             bot.Mode.ToString(),
             bot.Symbol,
             UsdtSpotUniverse.DisplayNameOf(bot.Symbol),
-            UsdtSpotUniverse.RankOf(bot.Symbol),
+            0,
             bot.Timeframe.ToBinanceInterval(),
             bot.StrategyVersion.Strategy.Name,
             bot.StrategyVersion.VersionNumber,
@@ -593,6 +632,16 @@ public sealed class BotLifecycleService : IBotLifecycleService
             bot.StartedAt,
             bot.StrategyVersion.StrategyId,
             bot.RiskProfileId);
+
+    private static void EnsureStrategyEnabled(Strategy strategy)
+    {
+        if (!strategy.IsEnabled)
+        {
+            throw new DomainException(
+                ErrorCodes.StrategyInvalid,
+                $"{strategy.Name} is disabled. Enable it on Strategies. The template is not deleted.");
+        }
+    }
 }
 
 public sealed class TradingQueryService : ITradingQueryService
@@ -602,6 +651,8 @@ public sealed class TradingQueryService : ITradingQueryService
     private readonly IPublicMarketDataClient _market;
     private readonly ILiveAccountCache _live;
     private readonly IExchangeAccountService _accounts;
+    private readonly IStrategyEngine _strategy;
+    private readonly StrategyDefinitionValidator _validator;
     private readonly TradingOptions _options;
 
     public TradingQueryService(
@@ -610,6 +661,8 @@ public sealed class TradingQueryService : ITradingQueryService
         IPublicMarketDataClient market,
         ILiveAccountCache live,
         IExchangeAccountService accounts,
+        IStrategyEngine strategy,
+        StrategyDefinitionValidator validator,
         IOptions<TradingOptions> options)
     {
         _store = store;
@@ -617,6 +670,8 @@ public sealed class TradingQueryService : ITradingQueryService
         _market = market;
         _live = live;
         _accounts = accounts;
+        _strategy = strategy;
+        _validator = validator;
         _options = options.Value;
     }
 
@@ -656,7 +711,7 @@ public sealed class TradingQueryService : ITradingQueryService
                 : _cache.GetTickers().Select(t => new TickerDto(
                     t.Symbol,
                     UsdtSpotUniverse.DisplayNameOf(t.Symbol),
-                    UsdtSpotUniverse.RankOf(t.Symbol),
+                    0,
                     t.Price,
                     t.Timestamp)))
             .ToList();
@@ -795,7 +850,7 @@ public sealed class TradingQueryService : ITradingQueryService
     }
 
     public async Task<IReadOnlyList<BotDto>> GetBotsAsync(CancellationToken cancellationToken = default) =>
-        UsdtSpotUniverse.OrderByMarketCap(
+        UsdtSpotUniverse.OrderBySymbol(
             (await _store.ListBotsAsync(cancellationToken)).Select(BotLifecycleService.Map),
             b => b.Symbol);
 
@@ -1117,6 +1172,73 @@ public sealed class TradingQueryService : ITradingQueryService
     public async Task<IReadOnlyList<StrategyDto>> GetStrategiesAsync(CancellationToken cancellationToken = default) =>
         (await _store.ListStrategiesAsync(cancellationToken)).Select(MapStrategy).ToList();
 
+    public async Task<StrategyPreviewDto> PreviewStrategyAsync(
+        Guid strategyId,
+        string? symbol,
+        int? limit,
+        CancellationToken cancellationToken = default)
+    {
+        var strategy = await _store.GetStrategyAsync(strategyId, cancellationToken)
+            ?? throw new DomainException(ErrorCodes.StrategyInvalid, "Strategy was not found.");
+        var latest = strategy.Versions.OrderByDescending(v => v.VersionNumber).FirstOrDefault()
+            ?? throw new DomainException(ErrorCodes.StrategyInvalid, "Strategy has no version to preview.");
+        var definition = _validator.Parse(latest.DefinitionJson);
+        var coin = (symbol ?? string.Empty).Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(coin))
+        {
+            coin = strategy.AppliesToAllSymbols
+                ? "BTCUSDT"
+                : SymbolScope.Parse(strategy.AllowedSymbolsCsv).FirstOrDefault() ?? "BTCUSDT";
+        }
+
+        var bars = Math.Clamp(limit ?? 80, 20, 300);
+        var candles = await _market.GetClosedKlinesAsync(coin, latest.Timeframe, bars, cancellationToken);
+        var series = new List<StrategyPreviewBarDto>();
+        var open = false;
+        var side = PositionSide.Long;
+        var lastSignal = SignalType.NoAction;
+        var lastReason = candles.Count == 0 ? "No closed candles yet." : "Waiting for enough closed candles.";
+        for (var i = 1; i < candles.Count; i++)
+        {
+            var window = candles.Take(i + 1).ToList();
+            lastSignal = _strategy.Evaluate(
+                definition,
+                new StrategyContext
+                {
+                    ClosedCandles = window,
+                    CurrentPrice = window[^1].Close,
+                    HasOpenPosition = open,
+                    AverageEntryPrice = open ? window[^1].Close : null,
+                    PositionSide = side
+                },
+                out lastReason);
+            if (!open && lastSignal is SignalType.Buy or SignalType.Sell)
+            {
+                open = true;
+                side = lastSignal == SignalType.Sell ? PositionSide.Short : PositionSide.Long;
+            }
+            else if (open && (lastSignal is SignalType.Exit
+                || (side == PositionSide.Long && lastSignal == SignalType.Sell)
+                || (side == PositionSide.Short && lastSignal == SignalType.Buy)))
+            {
+                open = false;
+            }
+
+            series.Add(new StrategyPreviewBarDto(window[^1].CloseTime, lastSignal.ToString(), window[^1].Close, lastReason));
+        }
+
+        var parsed = StrategyTemplates.Read(latest.DefinitionJson);
+        return new StrategyPreviewDto(
+            strategy.Id,
+            strategy.Name,
+            parsed.TemplateKey,
+            coin,
+            (latest.Timeframe).ToBinanceInterval(),
+            lastSignal.ToString(),
+            lastReason,
+            series.TakeLast(40).ToList());
+    }
+
     public async Task<IReadOnlyList<RiskProfileDto>> GetRiskProfilesAsync(CancellationToken cancellationToken = default) =>
         (await _store.ListRiskProfilesAsync(cancellationToken)).Select(MapRisk).ToList();
 
@@ -1158,20 +1280,24 @@ public sealed class TradingQueryService : ITradingQueryService
             throw new DomainException(ErrorCodes.StrategyInvalid, $"Unknown timeframe '{request.Timeframe}'.");
         }
 
-        var parameters = EmaRsiTemplate.Validate(ToParameters(request));
+        var parameters = StrategyTemplates.Validate(ToTemplateParams(request) with { Timeframe = timeframe.ToBinanceInterval() });
         var strategy = new Strategy
         {
             UserId = user.Id,
             User = user,
             Name = request.Name.Trim(),
-            Description = (request.Description ?? string.Empty).Trim()
+            Description = (request.Description ?? string.Empty).Trim(),
+            TemplateKey = parameters.TemplateKey,
+            AllowedSide = parameters.AllowedSide,
+            IsEnabled = true,
+            ValidationStatus = StrategyValidationStatuses.ValidationPending
         };
         ApplyStrategyScope(strategy, request.AppliesToAllSymbols, request.Symbols);
         strategy.Versions.Add(new StrategyVersion
         {
             Strategy = strategy,
             VersionNumber = 1,
-            DefinitionJson = EmaRsiTemplate.Build(strategy.Name, 1, timeframe.ToBinanceInterval(), parameters),
+            DefinitionJson = StrategyTemplates.Build(strategy.Name, 1, parameters),
             Symbol = "BTCUSDT",
             Timeframe = timeframe
         });
@@ -1193,15 +1319,17 @@ public sealed class TradingQueryService : ITradingQueryService
             throw new DomainException(ErrorCodes.StrategyInvalid, $"Unknown timeframe '{request.Timeframe}'.");
         }
 
-        var parameters = EmaRsiTemplate.Validate(ToParameters(request));
+        var parameters = StrategyTemplates.Validate(ToTemplateParams(request) with { Timeframe = timeframe.ToBinanceInterval() });
         strategy.Name = request.Name.Trim();
         strategy.Description = (request.Description ?? string.Empty).Trim();
+        strategy.TemplateKey = parameters.TemplateKey;
+        strategy.AllowedSide = parameters.AllowedSide;
         ApplyStrategyScope(strategy, request.AppliesToAllSymbols, request.Symbols);
 
         var latest = strategy.Versions.OrderByDescending(v => v.VersionNumber).FirstOrDefault();
         var definitionChanged = latest is null
             || latest.Timeframe != timeframe
-            || EmaRsiTemplate.Read(latest.DefinitionJson) != parameters;
+            || StrategyTemplates.Read(latest.DefinitionJson) != parameters;
         if (latest is null || (definitionChanged && latest.IsImmutable))
         {
             var versionNumber = (latest?.VersionNumber ?? 0) + 1;
@@ -1209,17 +1337,29 @@ public sealed class TradingQueryService : ITradingQueryService
             {
                 Strategy = strategy,
                 VersionNumber = versionNumber,
-                DefinitionJson = EmaRsiTemplate.Build(strategy.Name, versionNumber, timeframe.ToBinanceInterval(), parameters),
+                DefinitionJson = StrategyTemplates.Build(strategy.Name, versionNumber, parameters),
                 Symbol = "BTCUSDT",
                 Timeframe = timeframe
             });
         }
         else if (definitionChanged)
         {
-            latest.DefinitionJson = EmaRsiTemplate.Build(strategy.Name, latest.VersionNumber, timeframe.ToBinanceInterval(), parameters);
+            latest.DefinitionJson = StrategyTemplates.Build(strategy.Name, latest.VersionNumber, parameters);
             latest.Timeframe = timeframe;
         }
 
+        await _store.SaveChangesAsync(cancellationToken);
+        return MapStrategy(strategy);
+    }
+
+    public async Task<StrategyDto> SetStrategyEnabledAsync(
+        Guid strategyId,
+        bool enabled,
+        CancellationToken cancellationToken = default)
+    {
+        var strategy = await _store.GetStrategyAsync(strategyId, cancellationToken)
+            ?? throw new DomainException(ErrorCodes.StrategyInvalid, "Strategy was not found.");
+        strategy.IsEnabled = enabled;
         await _store.SaveChangesAsync(cancellationToken);
         return MapStrategy(strategy);
     }
@@ -1404,19 +1544,49 @@ public sealed class TradingQueryService : ITradingQueryService
         risk.AllowLive = request.AllowLive;
     }
 
-    private static EmaRsiParameters ToParameters(SaveStrategyRequest request) =>
+    private static StrategyTemplateParams ToTemplateParams(SaveStrategyRequest request) =>
         new(
+            request.TemplateKey,
+            request.AllowedSide,
+            request.Timeframe,
             request.EmaFast,
             request.EmaSlow,
             request.RsiPeriod,
             request.RsiMinimum,
-            request.StopLossPercent,
-            request.TakeProfitPercent);
+            request.RsiLongMax,
+            request.RsiOversold,
+            request.RsiOverbought,
+            request.MacdFast,
+            request.MacdSlow,
+            request.MacdSignal,
+            request.BbPeriod,
+            request.BbStdDev,
+            request.DonchianLength,
+            new StrategyQualityParams(
+                request.RequireVolume,
+                request.VolumeLookback,
+                request.MinAtrPercent,
+                request.MaxAtrPercent));
+
+    private static void EnsureStrategyEnabled(Strategy strategy)
+    {
+        if (!strategy.IsEnabled)
+        {
+            throw new DomainException(
+                ErrorCodes.StrategyInvalid,
+                $"{strategy.Name} is disabled. Enable it on Strategies. The template is not deleted.");
+        }
+    }
 
     private static StrategyDto MapStrategy(Strategy strategy)
     {
         var latest = strategy.Versions.OrderByDescending(v => v.VersionNumber).FirstOrDefault();
-        var parameters = EmaRsiTemplate.Read(latest?.DefinitionJson);
+        var parsed = StrategyTemplates.Read(latest?.DefinitionJson);
+        var template = StrategyTemplateKeys.Normalize(
+            string.IsNullOrWhiteSpace(strategy.TemplateKey) ? parsed.TemplateKey : strategy.TemplateKey);
+        var side = StrategySides.Normalize(
+            string.IsNullOrWhiteSpace(strategy.AllowedSide) ? parsed.AllowedSide : strategy.AllowedSide);
+        var quality = parsed.Quality ?? new StrategyQualityParams();
         return new StrategyDto(
             strategy.Id,
             strategy.Name,
@@ -1425,13 +1595,34 @@ public sealed class TradingQueryService : ITradingQueryService
             (latest?.Timeframe ?? Timeframe.FiveMinutes).ToBinanceInterval(),
             strategy.AppliesToAllSymbols,
             SymbolScope.Parse(strategy.AllowedSymbolsCsv),
-            parameters.EmaFast,
-            parameters.EmaSlow,
-            parameters.RsiPeriod,
-            parameters.RsiMinimum,
-            parameters.StopLossPercent,
-            parameters.TakeProfitPercent,
-            latest?.IsImmutable ?? false);
+            template,
+            StrategyTemplates.DisplayName(template),
+            side,
+            StrategyTemplates.Blurb(template),
+            parsed.EmaFast,
+            parsed.EmaSlow,
+            parsed.RsiPeriod,
+            parsed.RsiMinimum,
+            parsed.RsiLongMax,
+            parsed.RsiOversold,
+            parsed.RsiOverbought,
+            parsed.MacdFast,
+            parsed.MacdSlow,
+            parsed.MacdSignal,
+            parsed.BbPeriod,
+            parsed.BbStdDev,
+            parsed.DonchianLength,
+            quality.RequireVolume,
+            quality.VolumeLookback,
+            quality.MinAtrPercent,
+            quality.MaxAtrPercent,
+            latest?.IsImmutable ?? false,
+            strategy.IsEnabled,
+            string.IsNullOrWhiteSpace(strategy.ValidationStatus)
+                ? StrategyValidationStatuses.ValidationPending
+                : strategy.ValidationStatus,
+            StrategyTemplateKeys.SupportedTimeframes,
+            StrategyTemplateKeys.SupportedDirections);
     }
 
     private static RiskProfileDto MapRisk(RiskProfile risk) =>

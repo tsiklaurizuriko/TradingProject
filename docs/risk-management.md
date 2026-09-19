@@ -44,3 +44,7 @@ There is no Martingale: the next trade always uses current available × current 
 ## Snapshot
 
 Each fill stores available, R%, planned risk, SL/TP percents and prices, notional, quantity, leverage, Isolated margin, estimated fees/slippage/total risk, and liquidation price at entry. That row does not change when you edit the book.
+
+## Strategies
+
+Strategies only emit **when**. See [strategies.md](strategies.md) for the five closed-candle templates, quality filters, SHORT, and the no-order preview. Filters skip some noisy setups; they do not guarantee fewer losses and they do not replace Isolated SL/TP.

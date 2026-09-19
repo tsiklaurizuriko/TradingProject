@@ -50,7 +50,7 @@ public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
         int limit,
         CancellationToken cancellationToken = default)
     {
-        var cap = Math.Clamp(limit, 50, 6000);
+        var cap = Math.Clamp(limit, 50, 250_000);
         var interval = timeframe.ToBinanceInterval();
         var candles = new List<MarketCandle>(Math.Min(cap, 1500));
         var cursor = start.ToUnixTimeMilliseconds();
@@ -206,65 +206,25 @@ public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
         var universe = new List<RankedUsdtSpotSymbol>();
         foreach (var symbol in info.Value.GetProperty("symbols").EnumerateArray())
         {
-            if (!IsUsdtPerpetual(symbol))
+            if (!UsdtPerpetualContractRules.TryMap(symbol, out var contract, out _) || contract is null)
             {
                 continue;
             }
 
-            var name = symbol.GetProperty("symbol").GetString() ?? "";
-            var baseAsset = symbol.GetProperty("baseAsset").GetString() ?? "";
-            var quoteAsset = symbol.GetProperty("quoteAsset").GetString() ?? "USDT";
-            var tickSize = 0.01m;
-            var stepSize = 0.001m;
-            var minQty = 0.001m;
-            var minNotional = 5m;
-            foreach (var filter in symbol.GetProperty("filters").EnumerateArray())
-            {
-                var type = filter.GetProperty("filterType").GetString();
-                if (type == "PRICE_FILTER")
-                {
-                    tickSize = Dec(filter.GetProperty("tickSize"));
-                }
-                else if (type is "LOT_SIZE" or "MARKET_LOT_SIZE")
-                {
-                    stepSize = Dec(filter.GetProperty("stepSize"));
-                    minQty = Dec(filter.GetProperty("minQty"));
-                }
-                else if (type is "MIN_NOTIONAL" or "NOTIONAL")
-                {
-                    if (filter.TryGetProperty("notional", out var notional))
-                    {
-                        minNotional = Dec(notional);
-                    }
-                    else if (filter.TryGetProperty("minNotional", out var minN))
-                    {
-                        minNotional = Dec(minN);
-                    }
-                }
-            }
-
-            if (symbol.TryGetProperty("quantityPrecision", out var qtyPrec) && qtyPrec.TryGetInt32(out var qp) && qp >= 0)
-            {
-                var fromPrecision = (decimal)Math.Pow(10, -qp);
-                if (fromPrecision > 0m)
-                {
-                    stepSize = fromPrecision;
-                }
-            }
-
+            var name = contract.Symbol;
             universe.Add(new RankedUsdtSpotSymbol(
                 name,
-                baseAsset,
-                quoteAsset,
+                contract.BaseAsset,
+                contract.QuoteAsset,
                 volumes.GetValueOrDefault(name),
                 prices.GetValueOrDefault(name),
                 changes.GetValueOrDefault(name),
-                tickSize,
-                stepSize,
-                minQty,
-                minNotional,
-                CountDecimals(tickSize),
-                CountDecimals(stepSize),
+                contract.TickSize,
+                contract.StepSize,
+                contract.MinQuantity,
+                contract.MinNotional,
+                contract.PricePrecision,
+                contract.QuantityPrecision,
                 highs.GetValueOrDefault(name),
                 lows.GetValueOrDefault(name),
                 trades.GetValueOrDefault(name)));
@@ -280,36 +240,71 @@ public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
         return universe;
     }
 
-    internal static bool IsUsdtPerpetual(JsonElement symbol)
+    public async Task<IReadOnlyList<DiscoveredFuturesContract>> DiscoverUsdtPerpetualsAsync(
+        CancellationToken cancellationToken = default)
     {
-        var name = symbol.TryGetProperty("symbol", out var symbolEl) ? symbolEl.GetString() ?? "" : "";
-        if (string.IsNullOrWhiteSpace(name) || name.Contains('_', StringComparison.Ordinal))
+        var info = await GetJsonOrNullAsync("fapi/v1/exchangeInfo", cancellationToken);
+        if (info is null)
         {
-            return false;
-        }
-
-        var status = symbol.TryGetProperty("status", out var statusEl) ? statusEl.GetString() : null;
-        if (!string.Equals(status, "TRADING", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        var quote = symbol.TryGetProperty("quoteAsset", out var quoteEl) ? quoteEl.GetString() : null;
-        if (!string.Equals(quote, "USDT", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        if (symbol.TryGetProperty("contractType", out var contractEl))
-        {
-            var contract = contractEl.GetString();
-            if (!string.Equals(contract, "PERPETUAL", StringComparison.OrdinalIgnoreCase))
+            if (cancellationToken.IsCancellationRequested)
             {
-                return false;
+                return [];
             }
+
+            throw new HttpRequestException("Binance USD-M exchangeInfo is unavailable.");
         }
 
-        return name.EndsWith("USDT", StringComparison.OrdinalIgnoreCase);
+        var contracts = UsdtPerpetualContractRules.MapExchangeInfo(info.Value);
+        _logger.LogInformation("Discovered {Count} USD-M USDT perpetual contracts from exchangeInfo", contracts.Count);
+        return contracts;
+    }
+
+    public async Task<IReadOnlyList<FuturesBookTicker>> GetBookTickersAsync(CancellationToken cancellationToken = default)
+    {
+        var payload = await GetJsonOrNullAsync("fapi/v1/ticker/bookTicker", cancellationToken);
+        if (payload is null || payload.Value.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        var rows = new List<FuturesBookTicker>();
+        foreach (var item in payload.Value.EnumerateArray())
+        {
+            var name = item.TryGetProperty("symbol", out var symbolEl) ? symbolEl.GetString() ?? "" : "";
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                continue;
+            }
+
+            rows.Add(new FuturesBookTicker(name, Dec(item.GetProperty("bidPrice")), Dec(item.GetProperty("askPrice"))));
+        }
+
+        return rows;
+    }
+
+    public async Task<IReadOnlyList<FuturesPremiumIndex>> GetPremiumIndexAsync(CancellationToken cancellationToken = default)
+    {
+        var payload = await GetJsonOrNullAsync("fapi/v1/premiumIndex", cancellationToken);
+        if (payload is null || payload.Value.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        var rows = new List<FuturesPremiumIndex>();
+        foreach (var item in payload.Value.EnumerateArray())
+        {
+            var name = item.TryGetProperty("symbol", out var symbolEl) ? symbolEl.GetString() ?? "" : "";
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                continue;
+            }
+
+            var mark = item.TryGetProperty("markPrice", out var markEl) ? Dec(markEl) : 0m;
+            var funding = item.TryGetProperty("lastFundingRate", out var fundEl) ? Dec(fundEl) : 0m;
+            rows.Add(new FuturesPremiumIndex(name, mark, funding));
+        }
+
+        return rows;
     }
 
     private static List<MarketCandle> ParseClosedKlines(JsonElement payload)

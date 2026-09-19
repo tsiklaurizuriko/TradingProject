@@ -274,6 +274,25 @@ public sealed class RiskEngineTests
         High().MaxDailyLossPercent.Should().Be(7m);
         High().AllowLive.Should().BeFalse();
     }
+
+    [Fact]
+    public void Sell_while_flat_sizes_a_short()
+    {
+        var result = new RiskEngine().Evaluate(SignalType.Sell, High(), Clear() with { Price = 100m }, DateTimeOffset.UtcNow);
+        result.Decision.Should().Be(RiskDecision.Approved);
+        result.ApprovedQuantity.Should().BeGreaterThan(0m);
+        result.Plan!.StopLossPrice.Should().BeGreaterThan(100m);
+        result.Plan.TakeProfitPrice.Should().BeLessThan(100m);
+    }
+
+    [Fact]
+    public void Exit_does_not_size()
+    {
+        var result = new RiskEngine().Evaluate(SignalType.Exit, High(), Clear(), DateTimeOffset.UtcNow);
+        result.Decision.Should().Be(RiskDecision.Approved);
+        result.ApprovedQuantity.Should().Be(0m);
+        result.Reason.Should().Contain("Exit");
+    }
 }
 
 public sealed class PortfolioRiskTests

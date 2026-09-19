@@ -376,7 +376,8 @@ public sealed class BotEngine : IBotEngine
                 ClosedCandles = candles,
                 CurrentPrice = lastPrice,
                 HasOpenPosition = position is not null,
-                AverageEntryPrice = position?.AverageEntryPrice
+                AverageEntryPrice = position?.AverageEntryPrice,
+                PositionSide = position?.Side ?? PositionSide.Long
             },
             out var reason);
 
@@ -497,53 +498,17 @@ public sealed class BotEngine : IBotEngine
             }
         };
 
-        if (signalType == SignalType.Buy && position is null)
+        if (position is not null)
         {
-            var risk = _risk.Evaluate(signalType, profile, snapshot, now);
-            if (risk.Decision != RiskDecision.Approved)
+            var flatten = signalType is SignalType.Exit
+                || (position.Side == PositionSide.Long && signalType == SignalType.Sell)
+                || (position.Side == PositionSide.Short && signalType == SignalType.Buy);
+            if (!flatten)
             {
-                bot.LastError = risk.HaltAccount
-                    ? $"Risk Lock. {risk.Reason}"
-                    : risk.Reason;
+                bot.LastError = reason;
                 return;
             }
 
-            var quantity = risk.ApprovedQuantity;
-            if (quantity <= 0m)
-            {
-                bot.LastError = "Calculated position size is below exchange minimum and cannot be traded within the configured risk.";
-                return;
-            }
-
-            if (bot.Mode == TradingMode.Live)
-            {
-                var leverage = (int)Math.Max(1m, Math.Floor(risk.Plan?.Leverage ?? profile.MaxLeverage));
-                await connector.PrepareSymbolRiskAsync(bot.Symbol, MarginMode.Isolated, leverage, cancellationToken);
-            }
-
-            await PlaceAndFillAsync(
-                bot,
-                OrderSide.Buy,
-                quantity,
-                clientOrderId,
-                correlationId,
-                usdt,
-                btc,
-                position,
-                lastPrice,
-                profile.StopLossPercent,
-                cancellationToken,
-                plan: risk.Plan);
-            if (bot.Mode != TradingMode.Live)
-            {
-                bot.LastError = "Paper buy filled.";
-            }
-
-            return;
-        }
-
-        if (signalType is SignalType.Exit or SignalType.Sell && position is not null)
-        {
             if (bot.Mode == TradingMode.Live)
             {
                 await CancelLiveProtectiveOrdersAsync(bot, cancellationToken);
@@ -564,7 +529,51 @@ public sealed class BotEngine : IBotEngine
                 cancellationToken,
                 flatten: true);
             bot.LastError = bot.Mode == TradingMode.Live ? "Live exit submitted to Binance." : "Paper exit filled.";
+            return;
         }
+
+        if (signalType is not (SignalType.Buy or SignalType.Sell))
+        {
+            bot.LastError = reason;
+            return;
+        }
+
+        snapshot = snapshot with { Side = signalType == SignalType.Sell ? PositionSide.Short : PositionSide.Long };
+        var risk = _risk.Evaluate(signalType, profile, snapshot, now);
+        if (risk.Decision != RiskDecision.Approved)
+        {
+            bot.LastError = risk.HaltAccount
+                ? $"Risk Lock. {risk.Reason}"
+                : risk.Reason;
+            return;
+        }
+
+        var quantity = risk.ApprovedQuantity;
+        if (quantity <= 0m)
+        {
+            bot.LastError = "Calculated position size is below exchange minimum and cannot be traded within the configured risk.";
+            return;
+        }
+
+        if (bot.Mode == TradingMode.Live)
+        {
+            var leverage = (int)Math.Max(1m, Math.Floor(risk.Plan?.Leverage ?? profile.MaxLeverage));
+            await connector.PrepareSymbolRiskAsync(bot.Symbol, MarginMode.Isolated, leverage, cancellationToken);
+        }
+
+        await PlaceAndFillAsync(
+            bot,
+            signalType == SignalType.Sell ? OrderSide.Sell : OrderSide.Buy,
+            quantity,
+            clientOrderId,
+            correlationId,
+            usdt,
+            btc,
+            position,
+            lastPrice,
+            profile.StopLossPercent,
+            cancellationToken,
+            plan: risk.Plan);
     }
 
     private async Task PlaceAndFillAsync(
@@ -694,8 +703,9 @@ public sealed class BotEngine : IBotEngine
             return;
         }
 
-        if (side == OrderSide.Buy)
+        if (!flatten)
         {
+            var openedSide = side == OrderSide.Sell ? PositionSide.Short : PositionSide.Long;
             var openedMargin = 0m;
             var leverage = plan?.Leverage ?? Math.Max(1m, bot.RiskProfile.MaxLeverage);
             var slPercent = plan?.StopLossPercent ?? stopLossPercent;
@@ -712,15 +722,21 @@ public sealed class BotEngine : IBotEngine
                 openedMargin = plan?.IsolatedMargin ?? PortfolioRisk.IsolatedMargin(notional, leverage);
             }
 
-            var slPrice = plan is null
-                ? fillPrice * (1m - slPercent / 100m)
-                : fillPrice * (1m - slPercent / 100m);
-            var tpPrice = tpPercent > 0m ? fillPrice * (1m + tpPercent / 100m) : 0m;
+            var slPrice = plan?.StopLossPrice
+                ?? (openedSide == PositionSide.Short
+                    ? fillPrice * (1m + slPercent / 100m)
+                    : fillPrice * (1m - slPercent / 100m));
+            var tpPrice = plan?.TakeProfitPrice
+                ?? (tpPercent > 0m
+                    ? openedSide == PositionSide.Short
+                        ? fillPrice * (1m - tpPercent / 100m)
+                        : fillPrice * (1m + tpPercent / 100m)
+                    : 0m);
             var opened = new Position
             {
                 BotId = bot.Id,
                 Symbol = bot.Symbol,
-                Side = PositionSide.Long,
+                Side = openedSide,
                 Quantity = quantity,
                 AverageEntryPrice = fillPrice,
                 CurrentPrice = fillPrice,
@@ -759,7 +775,7 @@ public sealed class BotEngine : IBotEngine
                 StrategyVersionId = bot.StrategyVersionId,
                 EntryOrderId = order.Id,
                 Symbol = bot.Symbol,
-                Side = OrderSide.Buy,
+                Side = side,
                 Quantity = quantity,
                 EntryPrice = fillPrice,
                 Fees = fee,
@@ -777,17 +793,18 @@ public sealed class BotEngine : IBotEngine
                         fillPrice,
                         slPercent,
                         tpPercent,
+                        openedSide,
                         cancellationToken);
                 }
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Binance SL/TP failed after live fill for bot {BotId} — flattening", bot.Id);
-                    bot.LastError = $"Live buy filled. Binance SL/TP FAILED — flattening. {ex.Message}";
+                    bot.LastError = $"Live {(openedSide == PositionSide.Short ? "sell" : "buy")} filled. Binance SL/TP FAILED — flattening. {ex.Message}";
                     var stamp = _clock.UtcNow.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture);
                     var flattenId = $"LF{bot.Id:N}"[..12] + (stamp.Length <= 10 ? stamp : stamp[^10..]);
                     await PlaceAndFillAsync(
                         bot,
-                        OrderSide.Sell,
+                        openedSide == PositionSide.Short ? OrderSide.Buy : OrderSide.Sell,
                         quantity,
                         flattenId,
                         correlationId,
@@ -803,10 +820,14 @@ public sealed class BotEngine : IBotEngine
             }
             else
             {
-                bot.LastError = $"Paper buy filled. Risk {opened.InitialRiskUsdt:0.##} USDT on {notional:0.##} notional.";
+                bot.LastError =
+                    $"Paper {(openedSide == PositionSide.Short ? "short" : "buy")} filled. Risk {opened.InitialRiskUsdt:0.##} USDT on {notional:0.##} notional.";
             }
+
+            return;
         }
-        else if (position is not null)
+
+        if (position is not null)
         {
             await CloseFilledPositionAsync(
                 bot,
@@ -840,19 +861,16 @@ public sealed class BotEngine : IBotEngine
         var pnl = direction * (fillPrice - position.AverageEntryPrice) * quantity - fee;
         if (bot.Mode != TradingMode.Live)
         {
-            if (position.Side == PositionSide.Long)
+            if (position.MarginUsdt > 0m)
             {
-                if (position.MarginUsdt > 0m)
-                {
-                    var margin = Math.Min(position.MarginUsdt, usdt.Locked);
-                    usdt.Locked -= margin;
-                    usdt.Free += margin + pnl;
-                }
-                else
-                {
-                    usdt.Free += notional - fee;
-                    baseAsset.Free = Math.Max(0m, baseAsset.Free - quantity);
-                }
+                var margin = Math.Min(position.MarginUsdt, usdt.Locked);
+                usdt.Locked -= margin;
+                usdt.Free += margin + pnl;
+            }
+            else if (position.Side == PositionSide.Long)
+            {
+                usdt.Free += notional - fee;
+                baseAsset.Free = Math.Max(0m, baseAsset.Free - quantity);
             }
             else
             {
@@ -922,6 +940,7 @@ public sealed class BotEngine : IBotEngine
         decimal fillPrice,
         decimal stopLossPercent,
         decimal takeProfitPercent,
+        PositionSide side,
         CancellationToken cancellationToken)
     {
         await CancelLiveProtectiveOrdersAsync(bot, cancellationToken);
@@ -932,17 +951,18 @@ public sealed class BotEngine : IBotEngine
                 fillPrice,
                 stopLossPercent,
                 takeProfitPercent,
-                symbol?.TickSize ?? 0m);
+                symbol?.TickSize ?? 0m,
+                side);
             await connector.PlaceClosePositionStopsAsync(
                 bot.Symbol,
-                OrderSide.Sell,
+                side == PositionSide.Short ? OrderSide.Buy : OrderSide.Sell,
                 stop,
                 take,
                 LiveProtectivePrices.StopClientOrderId(bot.Id),
                 LiveProtectivePrices.TakeClientOrderId(bot.Id),
                 cancellationToken);
             bot.LastError =
-                $"Live buy filled. Binance SL {stopLossPercent:0.##}% / TP {takeProfitPercent:0.##}% placed.";
+                $"Live {(side == PositionSide.Short ? "short" : "buy")} filled. Binance SL {stopLossPercent:0.##}% / TP {takeProfitPercent:0.##}% placed.";
         }
         catch (Exception ex)
         {

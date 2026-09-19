@@ -1,3 +1,5 @@
+using TradingPlatform.Domain.Positions;
+
 namespace TradingPlatform.Trading;
 
 public static class LiveProtectivePrices
@@ -6,7 +8,8 @@ public static class LiveProtectivePrices
         decimal entryPrice,
         decimal stopLossPercent,
         decimal takeProfitPercent,
-        decimal tickSize)
+        decimal tickSize,
+        PositionSide side = PositionSide.Long)
     {
         if (entryPrice <= 0m)
         {
@@ -14,16 +17,38 @@ public static class LiveProtectivePrices
         }
 
         var tick = tickSize > 0m ? tickSize : 0.00000001m;
-        var stop = RoundToTick(entryPrice * (1m - stopLossPercent / 100m), tick, down: true);
-        var take = RoundToTick(entryPrice * (1m + takeProfitPercent / 100m), tick, down: false);
-        if (stop >= entryPrice)
+        var shortSide = side == PositionSide.Short;
+        var stopRaw = shortSide
+            ? entryPrice * (1m + stopLossPercent / 100m)
+            : entryPrice * (1m - stopLossPercent / 100m);
+        var takeRaw = shortSide
+            ? entryPrice * (1m - takeProfitPercent / 100m)
+            : entryPrice * (1m + takeProfitPercent / 100m);
+        var stop = RoundToTick(stopRaw, tick, down: !shortSide);
+        var take = RoundToTick(takeRaw, tick, down: shortSide);
+        if (shortSide)
         {
-            stop = RoundToTick(entryPrice - tick, tick, down: true);
-        }
+            if (stop <= entryPrice)
+            {
+                stop = RoundToTick(entryPrice + tick, tick, down: false);
+            }
 
-        if (take <= entryPrice)
+            if (take >= entryPrice)
+            {
+                take = RoundToTick(entryPrice - tick, tick, down: true);
+            }
+        }
+        else
         {
-            take = RoundToTick(entryPrice + tick, tick, down: false);
+            if (stop >= entryPrice)
+            {
+                stop = RoundToTick(entryPrice - tick, tick, down: true);
+            }
+
+            if (take <= entryPrice)
+            {
+                take = RoundToTick(entryPrice + tick, tick, down: false);
+            }
         }
 
         return (stop, take);

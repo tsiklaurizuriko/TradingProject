@@ -15,7 +15,7 @@ import { SortBtnComponent } from '../lists/list-tools';
           <a class="tiny" routerLink="/scanner">View all</a>
         </div>
         <div class="tabs" role="tablist">
-          <button type="button" [class.is-on]="tab() === 'top'" (click)="tab.set('top')">Top Coins</button>
+          <button type="button" [class.is-on]="tab() === 'top'" (click)="tab.set('top')">Ranked</button>
           <button type="button" [class.is-on]="tab() === 'watch'" (click)="tab.set('watch')">Watchlist</button>
           <button type="button" [class.is-on]="tab() === 'signals'" (click)="tab.set('signals')">Signals</button>
         </div>

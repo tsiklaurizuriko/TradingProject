@@ -6,6 +6,7 @@
   <ItemGroup>
     <ProjectReference Include="..\TradingPlatform.Application\TradingPlatform.Application.csproj" />
     <ProjectReference Include="..\TradingPlatform.Domain\TradingPlatform.Domain.csproj" />
+    <ProjectReference Include="..\TradingPlatform.Strategies\TradingPlatform.Strategies.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore" />

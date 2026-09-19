@@ -54,5 +54,6 @@ public sealed class BacktestTrade : Entity
     public decimal ExitPrice { get; set; }
     public decimal PnL { get; set; }
     public decimal Fees { get; set; }
+    public string Side { get; set; } = "Long";
     public string Reason { get; set; } = string.Empty;
 }

@@ -376,7 +376,7 @@ export class SettingsPage {
   readonly coins = computed(() => {
     const rows = this.trading.markets();
     const list = (rows.length
-      ? rows.slice(0, 40)
+      ? rows
       : this.trading.tickers()
     ).map((row) => ({ symbol: row.symbol, displayName: row.displayName }));
     const current = this.ui.selectedSymbol();

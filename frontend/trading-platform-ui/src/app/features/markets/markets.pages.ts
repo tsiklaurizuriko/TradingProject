@@ -21,6 +21,7 @@ import { EmptyStateComponent, MetricCardComponent } from '../../shared/ui/ui-kit
   imports: [SortBtnComponent],
   template: `
     <section class="panel">
+      <p class="tiny" style="margin:0 0 12px">Full Binance USDⓈ-M USDT perpetual universe. Ranked by the scanner; Watch is not a trade. Start still requires current eligibility.</p>
       <table class="data-table">
         <thead>
           <tr>
@@ -29,6 +30,10 @@ import { EmptyStateComponent, MetricCardComponent } from '../../shared/ui/ui-kit
             <th class="num"><app-sort-btn column="price" [query]="list" align="end">Price</app-sort-btn></th>
             <th class="num"><app-sort-btn column="change" [query]="list" align="end">24h</app-sort-btn></th>
             <th class="num"><app-sort-btn column="volume" [query]="list" align="end">Quote vol</app-sort-btn></th>
+            <th class="num"><app-sort-btn column="score" [query]="list" align="end">Score</app-sort-btn></th>
+            <th class="num"><app-sort-btn column="spread" [query]="list" align="end">Spread</app-sort-btn></th>
+            <th class="num"><app-sort-btn column="funding" [query]="list" align="end">Funding</app-sort-btn></th>
+            <th><app-sort-btn column="eligible" [query]="list">Trade</app-sort-btn></th>
             <th></th>
           </tr>
         </thead>
@@ -40,6 +45,10 @@ import { EmptyStateComponent, MetricCardComponent } from '../../shared/ui/ui-kit
               <td class="num">{{ price(row.price) }}</td>
               <td class="num" [class]="pnlClass(row.changePercent24h)">{{ pct(row.changePercent24h) }}</td>
               <td class="num">{{ compact(row.quoteVolume) }}</td>
+              <td class="num">{{ (row.scanScore ?? 0).toFixed(2) }}</td>
+              <td class="num">{{ (row.spreadBps ?? 0).toFixed(2) }}</td>
+              <td class="num">{{ ((row.fundingRate ?? 0) * 100).toFixed(4) }}%</td>
+              <td>{{ row.eligible ? 'Eligible' : 'Watch' }}</td>
               <td><button class="btn sm ghost" type="button" (click)="$event.stopPropagation(); ui.toggleWatch(row.symbol)">{{ ui.watchlist().includes(row.symbol) ? 'Watched' : 'Watch' }}</button></td>
             </tr>
           }
@@ -77,6 +86,10 @@ export class ScannerPage {
         price: (row) => row.price,
         change: (row) => row.changePercent24h,
         volume: (row) => row.quoteVolume,
+        score: (row) => row.scanScore ?? 0,
+        spread: (row) => row.spreadBps ?? 0,
+        funding: (row) => row.fundingRate ?? 0,
+        eligible: (row) => (row.eligible ? 1 : 0),
       },
     ),
   );

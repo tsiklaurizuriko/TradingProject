@@ -19,4 +19,7 @@
     <Project Path="tests/TradingPlatform.TradingTests/TradingPlatform.TradingTests.csproj" />
     <Project Path="tests/TradingPlatform.BacktestingTests/TradingPlatform.BacktestingTests.csproj" />
   </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/TradingPlatform.StrategyValidation/TradingPlatform.StrategyValidation.csproj" />
+  </Folder>
 </Solution>

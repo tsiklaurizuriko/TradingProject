@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using TradingPlatform.Domain.Errors;
 using TradingPlatform.Domain.Market;
+using TradingPlatform.Domain.Positions;
 using TradingPlatform.Domain.Trading;
 using TradingPlatform.Strategies.Indicators;
 
@@ -31,8 +32,37 @@ public sealed class StrategyDefinition
     public int Version { get; set; } = 1;
     public string Symbol { get; set; } = "BTCUSDT";
     public string Timeframe { get; set; } = "5m";
+    public string? Template { get; set; }
+    public string? AllowedSide { get; set; }
+    public StrategyDefinitionParams? Params { get; set; }
+    public StrategyDefinitionQuality? Quality { get; set; }
     public ConditionGroup? Entry { get; set; }
     public ConditionGroup? Exit { get; set; }
+}
+
+public sealed class StrategyDefinitionParams
+{
+    public int EmaFast { get; set; } = 20;
+    public int EmaSlow { get; set; } = 50;
+    public int RsiPeriod { get; set; } = 14;
+    public decimal RsiMinimum { get; set; } = 50m;
+    public decimal RsiLongMax { get; set; } = 68m;
+    public decimal RsiOversold { get; set; } = 30m;
+    public decimal RsiOverbought { get; set; } = 70m;
+    public int MacdFast { get; set; } = 12;
+    public int MacdSlow { get; set; } = 26;
+    public int MacdSignal { get; set; } = 9;
+    public int BbPeriod { get; set; } = 20;
+    public decimal BbStdDev { get; set; } = 2m;
+    public int DonchianLength { get; set; } = 20;
+}
+
+public sealed class StrategyDefinitionQuality
+{
+    public bool RequireVolume { get; set; }
+    public int VolumeLookback { get; set; } = 20;
+    public decimal MinAtrPercent { get; set; }
+    public decimal MaxAtrPercent { get; set; }
 }
 
 public sealed class ConditionGroup
@@ -58,6 +88,7 @@ public sealed class StrategyContext
     public decimal? AverageEntryPrice { get; init; }
     public decimal CurrentPrice { get; init; }
     public bool HasOpenPosition { get; init; }
+    public PositionSide PositionSide { get; init; } = PositionSide.Long;
 }
 
 public interface IStrategyEngine
@@ -73,14 +104,18 @@ public sealed class StrategyDefinitionValidator
         {
             throw new DomainException(ErrorCodes.StrategyInvalid, "Strategy name is required.");
         }
-        if (definition.Entry is null)
+
+        var hasTemplate = !string.IsNullOrWhiteSpace(definition.Template);
+        if (!hasTemplate && definition.Entry is null)
         {
             throw new DomainException(ErrorCodes.StrategyInvalid, "Entry conditions are required.");
         }
-        if (definition.Exit is null)
+
+        if (!hasTemplate && definition.Exit is null)
         {
             throw new DomainException(ErrorCodes.StrategyInvalid, "Exit conditions are required.");
         }
+
         if (!TimeframeExtensions.TryParseInterval(definition.Timeframe, out _))
         {
             throw new DomainException(ErrorCodes.StrategyInvalid, $"Unknown timeframe '{definition.Timeframe}'.");
@@ -163,6 +198,11 @@ public sealed class StrategyEngine : IStrategyEngine
             return SignalType.NoAction;
         }
 
+        if (!string.IsNullOrWhiteSpace(definition.Template) || definition.Params is not null)
+        {
+            return StrategyTemplateEvaluator.Evaluate(definition, context, _indicators, out reason);
+        }
+
         if (context.HasOpenPosition)
         {
             if (EvaluateGroup(definition.Exit, context, requirePosition: true))
@@ -182,6 +222,21 @@ public sealed class StrategyEngine : IStrategyEngine
 
         reason = "Entry conditions not matched.";
         return SignalType.NoAction;
+    }
+
+    public SignalType EvaluateAt(
+        StrategyDefinition definition,
+        StrategyContext context,
+        CausalIndicatorCache cache,
+        int index,
+        out string reason)
+    {
+        if (!string.IsNullOrWhiteSpace(definition.Template) || definition.Params is not null)
+        {
+            return StrategyTemplateEvaluator.EvaluateAt(definition, context, cache, index, out reason);
+        }
+
+        return Evaluate(definition, context, out reason);
     }
 
     private bool EvaluateGroup(ConditionGroup? group, StrategyContext context, bool requirePosition)

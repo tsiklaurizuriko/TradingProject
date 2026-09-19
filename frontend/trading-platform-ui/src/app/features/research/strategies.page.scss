@@ -1,0 +1,162 @@
+:host { display: block; }
+
+.strategies-page {
+  display: grid;
+  gap: 12px;
+}
+
+.strategies-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.strategies-toolbar-copy {
+  min-width: 220px;
+  flex: 1;
+}
+
+.strategies-toolbar-copy p {
+  margin: 6px 0 0;
+  max-width: 640px;
+}
+
+.strategies-toolbar-actions {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.strategies-toolbar-actions .field {
+  min-width: 220px;
+  margin: 0;
+}
+
+.strategies-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  gap: 12px;
+}
+
+.strategy-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px 18px;
+}
+
+.strategy-card.is-editing {
+  grid-column: 1 / -1;
+}
+
+.strategy-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.strategy-card-head strong {
+  display: block;
+  font-size: 15px;
+  letter-spacing: -0.02em;
+}
+
+.strategy-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.strategy-blurb {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.strategy-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.strategy-preview {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.strategy-preview-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.strategy-editor {
+  display: grid;
+  gap: 14px;
+  max-width: 880px;
+}
+
+.strategy-hint {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.strategy-filters {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  display: grid;
+  gap: 10px;
+}
+
+.settings-check {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.sig-buy { color: #6dffb0; font-weight: 700; }
+.sig-sell { color: #ff9aaa; font-weight: 700; }
+.sig-exit { color: #ffd58a; font-weight: 700; }
+.sig-hold,
+.sig-none { color: var(--text-secondary); }
+
+@media (max-width: 720px) {
+  .strategies-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .strategy-card-head,
+  .strategies-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .strategy-actions,
+  .strategies-toolbar-actions {
+    width: 100%;
+  }
+
+  .strategy-actions .btn,
+  .strategies-toolbar-actions .field {
+    flex: 1;
+  }
+}

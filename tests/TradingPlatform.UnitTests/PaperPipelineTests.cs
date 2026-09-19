@@ -202,6 +202,116 @@ public sealed class PaperPipelineTests
         usdt.Free.Should().BeGreaterThan(10_000m - position.Quantity * position.AverageEntryPrice);
     }
 
+    [Fact]
+    public async Task Bot_engine_opens_an_isolated_short_on_sell_and_does_not_reverse()
+    {
+        var options = new DbContextOptionsBuilder<TradingDbContext>()
+            .UseInMemoryDatabase($"paper-short-{Guid.NewGuid():N}")
+            .Options;
+        await using var db = new TradingDbContext(options);
+
+        var user = new User { Email = "admin@localhost", NormalizedEmail = "ADMIN@LOCALHOST", DisplayName = "Admin", PasswordHash = "x" };
+        var strategy = new Strategy { User = user, UserId = user.Id, Name = "Donchian Breakout", TemplateKey = "donchian_breakout", AllowedSide = "Short" };
+        var version = new StrategyVersion
+        {
+            Strategy = strategy,
+            VersionNumber = 1,
+            DefinitionJson = """
+                {
+                  "name": "Always short",
+                  "version": 1,
+                  "template": "donchian_breakout",
+                  "timeframe": "5m",
+                  "allowedSide": "Short",
+                  "params": { "donchianLength": 5, "emaFast": 3, "emaSlow": 6 },
+                  "quality": { "requireVolume": false, "volumeLookback": 20, "minAtrPercent": 0, "maxAtrPercent": 0 }
+                }
+                """,
+            Symbol = "BTCUSDT",
+            Timeframe = Timeframe.FiveMinutes
+        };
+        strategy.Versions.Add(version);
+        var risk = new RiskProfile
+        {
+            Name = "LOW",
+            RiskPerTradePercent = 0.5m,
+            StopLossPercent = 2m,
+            TakeProfitPercent = 4m,
+            MaxLeverage = 3m,
+            MaxDailyLossPercent = 3m,
+            AllowLive = true,
+            IsActive = true
+        };
+        var account = new ExchangeAccount { User = user, UserId = user.Id, Name = "Paper Simulator", ApiKeyFingerprint = "paper" };
+        var symbol = new Symbol { Name = "BTCUSDT", BaseAsset = "BTC", QuoteAsset = "USDT", StepSize = 0.00001m, MinQuantity = 0.00001m, MinNotional = 5m };
+        var bot = new Bot
+        {
+            User = user,
+            UserId = user.Id,
+            ExchangeAccount = account,
+            StrategyVersion = version,
+            RiskProfile = risk,
+            Name = "BTCUSDT Donchian Paper",
+            Status = BotStatus.Running,
+            Mode = TradingMode.Paper,
+            Symbol = "BTCUSDT",
+            Timeframe = Timeframe.FiveMinutes,
+            StartedAt = DateTimeOffset.UtcNow
+        };
+        db.Users.Add(user);
+        db.Strategies.Add(strategy);
+        db.RiskProfiles.Add(risk);
+        db.ExchangeAccounts.Add(account);
+        db.Symbols.Add(symbol);
+        db.Bots.Add(bot);
+        db.Balances.Add(new Balance { ExchangeAccount = account, Asset = "USDT", Free = 10_000m, Mode = TradingMode.Paper });
+        await db.SaveChangesAsync();
+
+        var candles = Enumerable.Range(0, 16).Select(i =>
+        {
+            var price = i == 15 ? 90m : 100m;
+            return new MarketCandle
+            {
+                Open = price,
+                High = price,
+                Low = price,
+                Close = price,
+                Volume = 10,
+                OpenTime = DateTimeOffset.UnixEpoch.AddMinutes(i * 5),
+                CloseTime = DateTimeOffset.UnixEpoch.AddMinutes(i * 5 + 5),
+                IsClosed = true,
+                ExchangeTimestamp = DateTimeOffset.UnixEpoch.AddMinutes(i * 5 + 5)
+            };
+        }).ToList();
+        var last = candles[^1].Close;
+        var cache = new MarketDataCache();
+        var store = new TradingStore(db);
+        var engine = new BotEngine(
+            store,
+            new FakeMarket(candles, last),
+            cache,
+            new StrategyEngine(),
+            new StrategyDefinitionValidator(),
+            new RiskEngine(),
+            new ExchangeConnectorFactory(
+                new PaperExchangeConnector(cache, new SystemClock(), Options.Create(new TradingOptions())),
+                Array.Empty<ILiveExchangeConnectorFactory>()),
+            new LiveAccountCache(),
+            new NullTradingRealtimePublisher(),
+            new SystemClock(),
+            new CorrelationIdAccessor(),
+            Options.Create(new TradingOptions()),
+            NullLogger<BotEngine>.Instance);
+
+        await engine.EvaluateRunningBotsAsync();
+
+        var position = await db.Positions.SingleAsync(p => p.ClosedAt == null);
+        position.Side.Should().Be(TradingPlatform.Domain.Positions.PositionSide.Short);
+        (await db.Orders.CountAsync()).Should().Be(1);
+        var order = await db.Orders.SingleAsync();
+        order.Side.Should().Be(OrderSide.Sell);
+    }
+
     private static List<MarketCandle> CrossingCandles()
     {
         var candles = new List<MarketCandle>();
@@ -258,5 +368,17 @@ public sealed class PaperPipelineTests
         public Task<IReadOnlyList<RankedUsdtSpotSymbol>> GetPaperUniverseAsync(
             CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<RankedUsdtSpotSymbol>>([]);
+
+        public Task<IReadOnlyList<DiscoveredFuturesContract>> DiscoverUsdtPerpetualsAsync(
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<DiscoveredFuturesContract>>([]);
+
+        public Task<IReadOnlyList<FuturesBookTicker>> GetBookTickersAsync(
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<FuturesBookTicker>>([]);
+
+        public Task<IReadOnlyList<FuturesPremiumIndex>> GetPremiumIndexAsync(
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<FuturesPremiumIndex>>([]);
     }
 }

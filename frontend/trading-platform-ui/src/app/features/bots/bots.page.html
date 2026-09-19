@@ -31,7 +31,7 @@
           Strategy
           <select [ngModel]="selectedStrategy()?.id ?? ''" (ngModelChange)="strategyId.set($event)">
             @for (row of trading.strategies(); track row.id) {
-              <option [value]="row.id">{{ row.name }} · {{ row.appliesToAllSymbols ? 'All coins' : row.allowedSymbols.length + ' coins' }}</option>
+              <option [value]="row.id">{{ row.name }}{{ row.isEnabled === false ? ' · disabled' : '' }} · {{ row.appliesToAllSymbols ? 'All coins' : row.allowedSymbols.length + ' coins' }}</option>
             }
           </select>
         </label>
@@ -59,6 +59,8 @@
             <span>{{ row.symbol }} <em>{{ row.displayName }}</em></span>
             @if (alreadyCreated(row.symbol)) {
               <span class="tiny">exists</span>
+            } @else if (row.eligible === false) {
+              <span class="tiny">watch</span>
             }
           </label>
         }

@@ -1,0 +1,1799 @@
+# Strategy audit report
+
+Factual historical simulation only. **Not** a profit forecast. Nothing here enables LIVE.
+Execution: signal on closed bar T, fill at **T+1 open**, Isolated Risk book sizing/SL/TP, fees and slippage included.
+Funding: labeled per template. Paper/LIVE still fill at last price; this report uses the backtest next-open model.
+Parameters are frozen defaults. No search for maximum historical profit.
+
+- Harness mode: discovered universe × 5m/15m/1h × LONG+SHORT × all templates × IS/VAL/OOS × walk-forward. Candle cache is reused. Checkpoint resume is on. MaxParallelDatasets=2.
+- Discovered 528 USDT-M perpetual symbols (1584 datasets). Database operations: 0.
+- 0GUSDT 15m: 2025-09-17 → 2026-09-18 (35140 bars); eval 1976 ms; 17780 bars/s; trades 1934; cache miss; downloaded 35140
+- 0GUSDT 1h: 2025-09-17 → 2026-09-18 (8785 bars); eval 608 ms; 14439 bars/s; trades 573; cache miss; downloaded 8785
+- 0GUSDT 5m: 2025-09-17 → 2026-09-18 (105420 bars); eval 2348 ms; 44886 bars/s; trades 4742; cache miss; downloaded 105420
+- 1000000BOBUSDT 15m: 2025-06-05 → 2026-09-18 (45153 bars); eval 1086 ms; 41576 bars/s; trades 2401; cache miss; downloaded 45153
+- 1000000BOBUSDT 1h: 2025-06-05 → 2026-09-18 (11288 bars); eval 384 ms; 29332 bars/s; trades 697; cache miss; downloaded 11288
+- 1000000BOBUSDT 5m: 2025-06-05 → 2026-09-18 (135459 bars); eval 2983 ms; 45402 bars/s; trades 6017; cache miss; downloaded 135459
+- 1000000MOGUSDT 15m: 2024-11-07 → 2026-09-18 (65297 bars); eval 1656 ms; 39425 bars/s; trades 3846; cache miss; downloaded 65297
+- 1000000MOGUSDT 1h: 2024-11-07 → 2026-09-18 (16324 bars); eval 403 ms; 40463 bars/s; trades 1227; cache miss; downloaded 16324
+- 1000BONKUSDT 5m: failed (Response status code does not indicate success: 429 (Too Many Requests).). Will retry on resume.
+- 1000000MOGUSDT 5m: failed (Response status code does not indicate success: 429 (Too Many Requests).). Will retry on resume.
+- 1000BONKUSDT 1h: 2024-09-18 → 2026-09-18 (17519 bars); eval 480 ms; 36442 bars/s; trades 1386; cache miss; downloaded 17519
+- 1000BONKUSDT 15m: 2024-09-18 → 2026-09-18 (70079 bars); eval 1948 ms; 35966 bars/s; trades 4246; cache miss; downloaded 70079
+- 1000CATUSDT 15m: 2024-10-21 → 2026-09-18 (66929 bars); eval 1589 ms; 42099 bars/s; trades 3812; cache miss; downloaded 66929
+- 1000CATUSDT 1h: 2024-10-21 → 2026-09-18 (16732 bars); eval 511 ms; 32709 bars/s; trades 1142; cache miss; downloaded 16732
+- 1000CATUSDT 5m: 2024-10-21 → 2026-09-18 (200787 bars); eval 4020 ms; 49943 bars/s; trades 9274; cache miss; downloaded 200787
+- 1000CHEEMSUSDT 15m: 2024-11-25 → 2026-09-18 (63572 bars); eval 1377 ms; 46156 bars/s; trades 3462; cache miss; downloaded 63572
+- 1000CHEEMSUSDT 1h: 2024-11-25 → 2026-09-18 (15893 bars); eval 371 ms; 42832 bars/s; trades 998; cache miss; downloaded 15893
+- 1000CHEEMSUSDT 5m: 2024-11-25 → 2026-09-18 (190717 bars); eval 3907 ms; 48809 bars/s; trades 8349; cache miss; downloaded 190717
+- 1000FLOKIUSDT 15m: 2024-09-18 → 2026-09-18 (70079 bars); eval 1720 ms; 40730 bars/s; trades 4002; cache miss; downloaded 70079
+- 1000FLOKIUSDT 1h: 2024-09-18 → 2026-09-18 (17519 bars); eval 403 ms; 43456 bars/s; trades 1331; cache miss; downloaded 17519
+- 1000FLOKIUSDT 5m: 2024-09-18 → 2026-09-18 (210240 bars); eval 4454 ms; 47201 bars/s; trades 9601; cache miss; downloaded 210240
+- 1000LUNCUSDT 15m: 2024-09-18 → 2026-09-18 (70079 bars); eval 1580 ms; 44353 bars/s; trades 3799; cache miss; downloaded 70079
+- 1000LUNCUSDT 1h: 2024-09-18 → 2026-09-18 (17519 bars); eval 421 ms; 41578 bars/s; trades 1174; cache miss; downloaded 17519
+- 1000LUNCUSDT 5m: 2024-09-18 → 2026-09-18 (210240 bars); eval 4385 ms; 47939 bars/s; trades 9399; cache miss; downloaded 210240
+- 1000PEPEUSDT 15m: 2024-09-18 → 2026-09-18 (70079 bars); eval 1565 ms; 44756 bars/s; trades 4267; cache miss; downloaded 70079
+- 1000PEPEUSDT 1h: 2024-09-18 → 2026-09-18 (17519 bars); eval 442 ms; 39561 bars/s; trades 1404; cache miss; downloaded 17519
+- 1000PEPEUSDT 5m: 2024-09-18 → 2026-09-18 (210240 bars); eval 4323 ms; 48633 bars/s; trades 10311; cache miss; downloaded 210240
+- 1000RATSUSDT 15m: 2024-09-18 → 2026-09-18 (70079 bars); eval 1560 ms; 44902 bars/s; trades 4246; cache miss; downloaded 70079
+- 1000RATSUSDT 1h: 2024-09-18 → 2026-09-18 (17519 bars); eval 413 ms; 42415 bars/s; trades 1273; cache miss; downloaded 17519
+- 1000RATSUSDT 5m: 2024-09-18 → 2026-09-18 (210240 bars); eval 4450 ms; 47236 bars/s; trades 10377; cache miss; downloaded 210240
+- 1000SATSUSDT 15m: 2024-09-18 → 2026-09-18 (70079 bars); eval 1367 ms; 51236 bars/s; trades 4000; cache miss; downloaded 70079
+- 1000SATSUSDT 1h: 2024-09-18 → 2026-09-18 (17519 bars); eval 660 ms; 26508 bars/s; trades 1209; cache miss; downloaded 17519
+- 1000SATSUSDT 5m: 2024-09-18 → 2026-09-18 (210240 bars); eval 4418 ms; 47585 bars/s; trades 9847; cache miss; downloaded 210240
+- 1000SHIBUSDT 15m: 2024-09-18 → 2026-09-18 (70079 bars); eval 1487 ms; 47106 bars/s; trades 3710; cache miss; downloaded 70079
+- 1000SHIBUSDT 1h: 2024-09-18 → 2026-09-18 (17519 bars); eval 381 ms; 45865 bars/s; trades 1177; cache miss; downloaded 17519
+- 1000SHIBUSDT 5m: 2024-09-18 → 2026-09-18 (210240 bars); eval 4420 ms; 47558 bars/s; trades 9027; cache miss; downloaded 210240
+- 1000XECUSDT 15m: 2024-09-18 → 2026-09-18 (70079 bars); eval 1530 ms; 45793 bars/s; trades 3531; cache miss; downloaded 70079
+- 1000XECUSDT 1h: 2024-09-18 → 2026-09-18 (17519 bars); eval 402 ms; 43486 bars/s; trades 1051; cache miss; downloaded 17519
+- 1000XECUSDT 5m: 2024-09-18 → 2026-09-18 (210240 bars); eval 4426 ms; 47498 bars/s; trades 8746; cache miss; downloaded 210240
+- 1INCHUSDT 15m: 2024-09-18 → 2026-09-18 (70079 bars); eval 1623 ms; 43152 bars/s; trades 3647; cache miss; downloaded 70079
+- 1INCHUSDT 1h: 2024-09-18 → 2026-09-18 (17519 bars); eval 445 ms; 39313 bars/s; trades 1131; cache miss; downloaded 17519
+- 1INCHUSDT 5m: 2024-09-18 → 2026-09-18 (210240 bars); eval 4677 ms; 44946 bars/s; trades 8967; cache miss; downloaded 210240
+- 1MBABYDOGEUSDT 15m: 2024-09-18 → 2026-09-18 (70080 bars); eval 1494 ms; 46905 bars/s; trades 3943; cache miss; downloaded 70080
+- 1MBABYDOGEUSDT 1h: 2024-09-18 → 2026-09-18 (17520 bars); eval 415 ms; 42157 bars/s; trades 1235; cache miss; downloaded 17520
+- 1MBABYDOGEUSDT 5m: 2024-09-18 → 2026-09-18 (210240 bars); eval 4450 ms; 47244 bars/s; trades 9679; cache miss; downloaded 210240
+- 2ZUSDT 15m: 2025-10-02 → 2026-09-18 (33714 bars); eval 842 ms; 40036 bars/s; trades 1832; cache miss; downloaded 33714
+- 2ZUSDT 5m: 2025-10-02 → 2026-09-18 (101140 bars); eval 2145 ms; 47139 bars/s; trades 4457; cache miss; downloaded 101140
+- 2ZUSDT 1h: 2025-10-02 → 2026-09-18 (8429 bars); eval 206 ms; 40795 bars/s; trades 588; cache miss; downloaded 8429
+- 4USDT 15m: 2025-10-08 → 2026-09-18 (33142 bars); eval 857 ms; 38637 bars/s; trades 2177; cache miss; downloaded 33142
+- 4USDT 1h: 2025-10-08 → 2026-09-18 (8286 bars); eval 198 ms; 41754 bars/s; trades 507; cache miss; downloaded 8286
+- 4USDT 5m: 2025-10-08 → 2026-09-18 (99424 bars); eval 2283 ms; 43547 bars/s; trades 5174; cache miss; downloaded 99424
+- AAVEUSDT 15m: 2024-09-18 → 2026-09-18 (70080 bars); eval 1672 ms; 41898 bars/s; trades 3995; cache miss; downloaded 70080
+- AAVEUSDT 1h: 2024-09-18 → 2026-09-18 (17520 bars); eval 455 ms; 38473 bars/s; trades 1316; cache miss; downloaded 17520
+- AAVEUSDT 5m: 2024-09-18 → 2026-09-18 (210240 bars); eval 4600 ms; 45696 bars/s; trades 9736; cache miss; downloaded 210240
+- ACEUSDT 15m: 2024-09-18 → 2026-09-18 (70080 bars); eval 1524 ms; 45970 bars/s; trades 3895; cache miss; downloaded 70080
+- ACEUSDT 1h: 2024-09-18 → 2026-09-18 (17520 bars); eval 426 ms; 41116 bars/s; trades 1163; cache miss; downloaded 17520
+- ACEUSDT 5m: 2024-09-18 → 2026-09-18 (210240 bars); eval 4245 ms; 49521 bars/s; trades 9616; cache miss; downloaded 210240
+- ACHUSDT 15m: 2024-09-18 → 2026-09-18 (70080 bars); eval 1400 ms; 50027 bars/s; trades 3799; cache miss; downloaded 70080
+- ACHUSDT 1h: 2024-09-18 → 2026-09-18 (17520 bars); eval 439 ms; 39854 bars/s; trades 1207; cache miss; downloaded 17520
+- ACHUSDT 5m: 2024-09-18 → 2026-09-18 (210240 bars); eval 4294 ms; 48953 bars/s; trades 9107; cache miss; downloaded 210240
+- ACTUSDT 15m: 2024-11-11 → 2026-09-18 (64915 bars); eval 1328 ms; 48879 bars/s; trades 3852; cache miss; downloaded 64915
+- ACTUSDT 1h: 2024-11-11 → 2026-09-18 (16229 bars); eval 383 ms; 42269 bars/s; trades 1138; cache miss; downloaded 16229
+- ACTUSDT 5m: 2024-11-11 → 2026-09-18 (194743 bars); eval 4370 ms; 44554 bars/s; trades 9107; cache miss; downloaded 194743
+- ACUUSDT 5m: 2026-01-21 → 2026-09-18 (69169 bars); eval 1400 ms; 49373 bars/s; trades 3285; cache miss; downloaded 69169
+- ACUUSDT 1h: 2026-01-21 → 2026-09-18 (5765 bars); eval 163 ms; 35366 bars/s; trades 374; cache miss; downloaded 5765
+- ACUUSDT 15m: 2026-01-21 → 2026-09-18 (23057 bars); eval 731 ms; 31519 bars/s; trades 1264; cache miss; downloaded 23057
+- ADAUSDT 15m: 2024-09-18 → 2026-09-18 (70087 bars); eval 1688 ms; 41499 bars/s; trades 3862; cache miss; downloaded 7
+- ADAUSDT 1h: 2024-09-18 → 2026-09-18 (17519 bars); eval 417 ms; 41929 bars/s; trades 1259; cache hit; downloaded 0
+- ADAUSDT 5m: 2024-09-18 → 2026-09-18 (210256 bars); eval 4698 ms; 44745 bars/s; trades 9698; cache miss; downloaded 16
+- AEROUSDT 15m: 2024-12-04 → 2026-09-18 (62699 bars); eval 1239 ms; 50582 bars/s; trades 3413; cache miss; downloaded 62699
+- AEROUSDT 1h: 2024-12-04 → 2026-09-18 (15675 bars); eval 381 ms; 41085 bars/s; trades 1176; cache miss; downloaded 15675
+- AEROUSDT 5m: 2024-12-04 → 2026-09-18 (188095 bars); eval 4013 ms; 46871 bars/s; trades 8095; cache miss; downloaded 188095
+- AEVOUSDT 15m: 2024-09-18 → 2026-09-18 (70080 bars); eval 1401 ms; 50020 bars/s; trades 3905; cache miss; downloaded 70080
+- AEVOUSDT 1h: 2024-09-18 → 2026-09-18 (17520 bars); eval 468 ms; 37368 bars/s; trades 1250; cache miss; downloaded 17520
+- AEVOUSDT 5m: 2024-09-18 → 2026-09-18 (210240 bars); eval 7241 ms; 29032 bars/s; trades 9434; cache miss; downloaded 210240
+- AGLDUSDT 15m: 2024-09-18 → 2026-09-18 (70080 bars); eval 1844 ms; 37987 bars/s; trades 3804; cache miss; downloaded 70080
+- AGLDUSDT 1h: 2024-09-18 → 2026-09-18 (17520 bars); eval 445 ms; 39354 bars/s; trades 1161; cache miss; downloaded 17520
+- AGLDUSDT 5m: 2024-09-18 → 2026-09-18 (210240 bars); eval 4564 ms; 46062 bars/s; trades 9419; cache miss; downloaded 210240
+- AGTUSDT 15m: 2025-05-20 → 2026-09-18 (46682 bars); eval 1046 ms; 44621 bars/s; trades 2876; cache miss; downloaded 46682
+- AGTUSDT 1h: 2025-05-20 → 2026-09-18 (11671 bars); eval 361 ms; 32314 bars/s; trades 718; cache miss; downloaded 11671
+- AGTUSDT 5m: 2025-05-20 → 2026-09-18 (140044 bars); eval 3186 ms; 43949 bars/s; trades 6844; cache miss; downloaded 140044
+- AIAUSDT 15m: 2026-01-20 → 2026-09-18 (23159 bars); eval 637 ms; 36334 bars/s; trades 1454; cache miss; downloaded 23159
+- AIAUSDT 1h: 2026-01-20 → 2026-09-18 (5790 bars); eval 164 ms; 35236 bars/s; trades 361; cache miss; downloaded 5790
+- AIAUSDT 5m: 2026-01-20 → 2026-09-18 (69475 bars); eval 1415 ms; 49074 bars/s; trades 3494; cache miss; downloaded 69475
+- AIGENSYNUSDT 5m: 2026-04-29 → 2026-09-18 (40927 bars); eval 887 ms; 46122 bars/s; trades 1977; cache miss; downloaded 40927
+- AIGENSYNUSDT 15m: 2026-04-29 → 2026-09-18 (13643 bars); eval 322 ms; 42355 bars/s; trades 785; cache miss; downloaded 13643
+- AIGENSYNUSDT 1h: 2026-04-29 → 2026-09-18 (3411 bars); eval 117 ms; 28941 bars/s; trades 238; cache miss; downloaded 3411
+- AINUSDT 15m: 2025-07-10 → 2026-09-18 (41785 bars); eval 1093 ms; 38200 bars/s; trades 2414; cache miss; downloaded 41785
+- AINUSDT 1h: 2025-07-10 → 2026-09-18 (10447 bars); eval 606 ms; 17237 bars/s; trades 648; cache miss; downloaded 10447
+- AINUSDT 5m: 2025-07-10 → 2026-09-18 (125353 bars); eval 2507 ms; 49998 bars/s; trades 5957; cache miss; downloaded 125353
+- AIOTUSDT 15m: 2025-04-30 → 2026-09-18 (48594 bars); eval 1109 ms; 43797 bars/s; trades 2852; cache miss; downloaded 48594
+- AIOTUSDT 1h: 2025-04-30 → 2026-09-18 (12149 bars); eval 288 ms; 42059 bars/s; trades 750; cache miss; downloaded 12149
+- AIOTUSDT 5m: 2025-04-30 → 2026-09-18 (145780 bars); eval 2993 ms; 48699 bars/s; trades 6938; cache miss; downloaded 145780
+- AIOUSDT 15m: 2025-08-13 → 2026-09-18 (38518 bars); eval 889 ms; 43315 bars/s; trades 2354; cache miss; downloaded 38518
+- AIOUSDT 1h: 2025-08-13 → 2026-09-18 (9630 bars); eval 234 ms; 41132 bars/s; trades 581; cache miss; downloaded 9630
+- AIOUSDT 5m: 2025-08-13 → 2026-09-18 (115552 bars); eval 2415 ms; 47829 bars/s; trades 5784; cache miss; downloaded 115552
+- AIXBTUSDT 15m: 2024-12-20 → 2026-09-18 (61146 bars); eval 1740 ms; 35141 bars/s; trades 3840; cache miss; downloaded 61146
+- AIXBTUSDT 1h: 2024-12-20 → 2026-09-18 (15287 bars); eval 387 ms; 39425 bars/s; trades 1119; cache miss; downloaded 15287
+- AIXBTUSDT 5m: 2024-12-20 → 2026-09-18 (183436 bars); eval 4025 ms; 45572 bars/s; trades 8932; cache miss; downloaded 183436
+- AKEUSDT 15m: 2025-09-26 → 2026-09-18 (34290 bars); eval 713 ms; 48070 bars/s; trades 2079; cache miss; downloaded 34290
+- AKEUSDT 1h: 2025-09-26 → 2026-09-18 (8573 bars); eval 224 ms; 38267 bars/s; trades 437; cache miss; downloaded 8573
+- AKEUSDT 5m: 2025-09-26 → 2026-09-18 (102868 bars); eval 2121 ms; 48493 bars/s; trades 5112; cache miss; downloaded 102868
+- AKTUSDT 15m: 2024-11-18 → 2026-09-18 (64246 bars); eval 1243 ms; 51674 bars/s; trades 3490; cache miss; downloaded 64246
+- AKTUSDT 1h: 2024-11-18 → 2026-09-18 (16062 bars); eval 404 ms; 39675 bars/s; trades 1135; cache miss; downloaded 16062
+- AKTUSDT 5m: 2024-11-18 → 2026-09-18 (192736 bars); eval 3844 ms; 50128 bars/s; trades 8412; cache miss; downloaded 192736
+- ALCHUSDT 15m: 2025-01-07 → 2026-09-18 (59445 bars); eval 1219 ms; 48761 bars/s; trades 3373; cache miss; downloaded 59445
+- ALCHUSDT 1h: 2025-01-07 → 2026-09-18 (14862 bars); eval 385 ms; 38600 bars/s; trades 821; cache miss; downloaded 14862
+- ALCHUSDT 5m: 2025-01-07 → 2026-09-18 (178333 bars); eval 3598 ms; 49563 bars/s; trades 8426; cache miss; downloaded 178333
+- ALGOUSDT 15m: 2024-09-18 → 2026-09-18 (70080 bars); eval 2054 ms; 34114 bars/s; trades 3789; cache miss; downloaded 70080
+- ALGOUSDT 1h: 2024-09-18 → 2026-09-18 (17520 bars); eval 464 ms; 37704 bars/s; trades 1185; cache miss; downloaded 17520
+- ALGOUSDT 5m: 2024-09-18 → 2026-09-18 (210240 bars); eval 4558 ms; 46120 bars/s; trades 9161; cache miss; downloaded 210240
+- ALICEUSDT 15m: 2024-09-18 → 2026-09-18 (70080 bars); eval 1492 ms; 46966 bars/s; trades 3857; cache miss; downloaded 70080
+- ALICEUSDT 5m: 2024-09-18 → 2026-09-18 (210240 bars); eval 4650 ms; 45205 bars/s; trades 9715; cache miss; downloaded 210240
+- ALICEUSDT 1h: 2024-09-18 → 2026-09-18 (17520 bars); eval 442 ms; 39568 bars/s; trades 1149; cache miss; downloaded 17520
+- ALLOUSDT 15m: 2025-11-11 → 2026-09-18 (29868 bars); eval 741 ms; 40254 bars/s; trades 1800; cache miss; downloaded 29868
+- ALLOUSDT 1h: 2025-11-11 → 2026-09-18 (7467 bars); eval 181 ms; 41123 bars/s; trades 492; cache miss; downloaded 7467
+- ALLOUSDT 5m: 2025-11-11 → 2026-09-18 (89602 bars); eval 2178 ms; 41128 bars/s; trades 4452; cache miss; downloaded 89602
+- ALLUSDT 15m: 2025-08-06 → 2026-09-18 (39198 bars); eval 977 ms; 40105 bars/s; trades 1630; cache miss; downloaded 39198
+- ALLUSDT 5m: 2025-08-06 → 2026-09-18 (117592 bars); eval 2565 ms; 45829 bars/s; trades 3393; cache miss; downloaded 117592
+- ALLUSDT 1h: 2025-08-06 → 2026-09-18 (9800 bars); eval 244 ms; 40087 bars/s; trades 514; cache miss; downloaded 9800
+- ALPINEUSDT 15m: 2025-05-06 → 2026-09-18 (48029 bars); eval 1114 ms; 43078 bars/s; trades 2434; cache miss; downloaded 48029
+- ALPINEUSDT 1h: 2025-05-06 → 2026-09-18 (12008 bars); eval 305 ms; 39334 bars/s; trades 702; cache miss; downloaded 12008
+- ALTUSDT 5m: failed (Response status code does not indicate success: 429 (Too Many Requests).). Will retry on resume.
+- ALPINEUSDT 5m: failed (Response status code does not indicate success: 429 (Too Many Requests).). Will retry on resume.
+- ALTUSDT 15m: failed (Response status code does not indicate success: 429 (Too Many Requests).). Will retry on resume.
+- ALTUSDT 1h: failed (Response status code does not indicate success: 429 (Too Many Requests).). Will retry on resume.
+- ANIMEUSDT 5m: failed (Response status code does not indicate success: 429 (Too Many Requests).). Will retry on resume.
+- ANIMEUSDT 15m: failed (Response status code does not indicate success: 429 (Too Many Requests).). Will retry on resume.
+- ANIMEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ANKRUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ANKRUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ANKRUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- APEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- APEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- APEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- API3USDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- API3USDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- API3USDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- APRUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- APRUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- APRUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- APTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- APTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- APTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ARBUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ARBUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ARBUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ARCUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ARCUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ARCUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ARIAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ARIAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ARIAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ARKMUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ARKMUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ARKMUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ARKUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ARKUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ARKUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ARPAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ARPAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ARPAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ARUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ARUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ARUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ARXUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ARXUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ARXUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ASRUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ASRUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ASTERUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ASRUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ASTERUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ASTERUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ASTRUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ASTRUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ASTRUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ATHUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ATHUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ATHUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ATOMUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ATOMUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ATOMUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ATUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ATUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ATUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- AUCTIONUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- AUCTIONUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- AUCTIONUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- AUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- AUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- AUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- AVAAIUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- AVAAIUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- AVAAIUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- AVAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- AVAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- AVAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- AVAXUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- AVAXUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- AVAXUSDT 1h: 2024-09-18 → 2026-09-18 (17519 bars); eval 464 ms; 37741 bars/s; trades 1284; cache hit; downloaded 0
+- AVNTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- AVNTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- AVNTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- AWEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- AWEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- AWEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- AXLUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- AXLUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- AXLUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- AXSUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- AXSUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- AXSUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- AZTECUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- AZTECUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- AZTECUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- B2USDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- B2USDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- B2USDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BABYUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BABYUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BABYUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BANANAS31USDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BANANAS31USDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BANANAS31USDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BANANAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BANANAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BANANAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BANDUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BANDUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BANDUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BANKUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BANKUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BANKUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BANUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BANUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BANUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BARDUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BARDUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BASEDUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BARDUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BASEDUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BASEDUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BASUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BASUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BASUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BATUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BATUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BATUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BBUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BBUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BBUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BCHUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BCHUSDT 1h: 2024-09-18 → 2026-09-18 (17519 bars); eval 594 ms; 29446 bars/s; trades 1140; cache hit; downloaded 0
+- BCHUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BEAMXUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BEAMXUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BEAMXUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BEATUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BEATUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BEATUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BELUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BELUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BELUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BERAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BERAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BERAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BICOUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BICOUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BICOUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BIGTIMEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BIGTIMEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BIGTIMEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BILLUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BILLUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BILLUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BIOUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BIOUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BIOUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BIRBUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BIRBUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BIRBUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BLESSUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BLESSUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BLESSUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BLUAIUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BLUAIUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BLUAIUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BLURUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BLURUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BLURUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BMTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BMTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BMTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BNBUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BNBUSDT 1h: 2024-09-18 → 2026-09-18 (17519 bars); eval 442 ms; 39605 bars/s; trades 1062; cache hit; downloaded 0
+- BNBUSDT 5m: 2024-09-18 → 2026-09-18 (210259 bars); eval 4577 ms; 45932 bars/s; trades 5684; cache miss; downloaded 19
+- BNTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BNTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BNTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BOMEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BOMEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BOMEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BRETTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BRETTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BRETTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BREVUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BREVUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BROCCOLI714USDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BREVUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BROCCOLI714USDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BROCCOLI714USDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BROCCOLIF3BUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BROCCOLIF3BUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BROCCOLIF3BUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BRUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BRUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BRUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BSBUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BSBUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BSVUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BSBUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BSVUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BSVUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BTCDOMUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BTCDOMUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BTCDOMUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BTCUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BTCUSDT 15m: 2024-09-18 → 2026-09-18 (70087 bars); eval 1623 ms; 43183 bars/s; trades 3176; cache miss; downloaded 7
+- BTCUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BTRUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BTRUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BTRUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BTWUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BTWUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BTWUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BULLAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BULLAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BULLAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- BUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- C98USDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- C98USDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- C98USDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CAKEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CAKEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CAKEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CAPUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CAPUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CAPUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CARVUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CARVUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CATIUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CARVUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CATIUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CATIUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CCUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CCUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CCUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CELOUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CELOUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CELOUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CELRUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CELRUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CELRUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CETUSUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CETUSUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CETUSUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CFGUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CFGUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CFGUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CFXUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CFXUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CFXUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CGPTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CGPTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CGPTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CHILLGUYUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CHILLGUYUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CHILLGUYUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CHIPUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CHIPUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CHIPUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CHRUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CHRUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CHRUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CHZUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CHZUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CHZUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CKBUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CKBUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CKBUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CLANKERUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CLANKERUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CLOUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CLANKERUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CLOUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CLOUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- COAIUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- COAIUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- COAIUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- COLLECTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- COLLECTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- COLLECTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- COMPUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- COMPUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- COMPUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- COOKIEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- COOKIEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- COOKIEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- COTIUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- COTIUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- COTIUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- COWUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- COWUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- COWUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CROSSUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CROSSUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CROSSUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CRVUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CRVUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CRVUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CTKUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CTKUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CTKUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CTRUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CTRUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CTRUSDT 1h: 2026-05-28 → 2026-09-18 (2720 bars); eval 105 ms; 25714 bars/s; trades 151; cache miss; downloaded 2720
+- CTSIUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CTSIUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CTSIUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CVCUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CVCUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CVCUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CVXUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CVXUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CVXUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CYBERUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CYBERUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CYBERUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CYSUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CYSUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- CYSUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DASHUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DASHUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DASHUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DATAIPUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DATAIPUSDT 1h: 2026-07-03 → 2026-09-18 (1859 bars); eval 98 ms; 18811 bars/s; trades 112; cache miss; downloaded 1859
+- DATAIPUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DEEPUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DEEPUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DEEPUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DEXEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DEXEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DEXEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DIAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DIAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DIAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DODOXUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DODOXUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DODOXUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DOGEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DOGEUSDT 1h: 2024-09-18 → 2026-09-18 (17519 bars); eval 421 ms; 41533 bars/s; trades 1264; cache hit; downloaded 0
+- DOGSUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DOGEUSDT 5m: 2024-09-18 → 2026-09-18 (210259 bars); eval 4440 ms; 47351 bars/s; trades 9290; cache miss; downloaded 19
+- DOGSUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DOGSUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DOLOUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DOLOUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DOLOUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DOODUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DOODUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DOODUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DOSUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DOSUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DOSUSDT 1h: 2026-08-11 → 2026-09-18 (914 bars); eval 78 ms; 11582 bars/s; trades 53; cache miss; downloaded 914
+- DOTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DOTUSDT 1h: 2024-09-18 → 2026-09-18 (17519 bars); eval 445 ms; 39326 bars/s; trades 1202; cache hit; downloaded 0
+- DOTUSDT 15m: 2024-09-18 → 2026-09-18 (70087 bars); eval 1585 ms; 44203 bars/s; trades 3737; cache miss; downloaded 7
+- DRIFTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DRIFTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DRIFTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DUSKUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DUSKUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DUSKUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DYDXUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DYDXUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DYDXUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DYMUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DYMUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- DYMUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- EDENUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- EDENUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- EDGEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- EDENUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- EDGEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- EDGEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- EDUUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- EDUUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- EGLDUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- EDUUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- EGLDUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- EGLDUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- EIGENUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- EIGENUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- EIGENUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ELSAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ELSAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ELSAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ENAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ENAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ENJUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ENAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ENJUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ENJUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ENSOUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ENSOUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ENSUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ENSOUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ENSUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ENSUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- EPICUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- EPICUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- EPICUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ERAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ERAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ERAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ESPORTSUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ESPORTSUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ESPUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ESPORTSUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ESPUSDT 1h: 2026-02-10 → 2026-09-18 (5289 bars); eval 157 ms; 33557 bars/s; trades 338; cache miss; downloaded 5289
+- ESPUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ETCUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ETCUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ETCUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ETHFIUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ETHFIUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ETHFIUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ETHUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ETHUSDT 1h: 2024-09-18 → 2026-09-18 (17519 bars); eval 445 ms; 39357 bars/s; trades 1183; cache hit; downloaded 0
+- ETHUSDT 15m: 2024-09-18 → 2026-09-18 (70087 bars); eval 1638 ms; 42773 bars/s; trades 3621; cache miss; downloaded 7
+- ETHWUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ETHWUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ETHWUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- EULUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- EULUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- EULUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- EVAAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- EVAAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FARTCOINUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- EVAAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FARTCOINUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FARTCOINUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FETUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FETUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FETUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FFUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FFUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FFUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FHEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FHEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FHEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FIDAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FIDAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FIDAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FIGHTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FIGHTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FIGHTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FILUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FILUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FILUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FLOCKUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FLOCKUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FLOCKUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FLOWUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FLOWUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FLOWUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FLUIDUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FLUIDUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FLUIDUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FLUXUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FLUXUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FOGOUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FLUXUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FOGOUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FOGOUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FOLKSUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FOLKSUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FOLKSUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FORMUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FORMUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FORMUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FRAXUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FRAXUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FRAXUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- FUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GALAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GALAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GASUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GASUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GASUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GALAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GENIUSUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GENIUSUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GENIUSUSDT 1h: 2026-04-16 → 2026-09-18 (3734 bars); eval 129 ms; 28768 bars/s; trades 243; cache miss; downloaded 3734
+- GIGGLEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GIGGLEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GIGGLEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GLMUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GLMUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GLMUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GMTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GMTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GMTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GMXUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GMXUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GOATUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GMXUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GOATUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GOATUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GPSUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GPSUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GPSUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GRAMUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GRAMUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GRAMUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GRASSUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GRASSUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GRASSUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GRIFFAINUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GRIFFAINUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GRIFFAINUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GRTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GRTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GRTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GRVTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GRVTUSDT 1h: 2026-07-31 → 2026-09-18 (1181 bars); eval 75 ms; 15608 bars/s; trades 79; cache miss; downloaded 1181
+- GRVTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GTCUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GTCUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GUAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GTCUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GUAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GUAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GUNUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GUNUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GUNUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GWEIUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GWEIUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- GWEIUSDT 1h: 2026-01-29 → 2026-09-18 (5580 bars); eval 151 ms; 36718 bars/s; trades 335; cache miss; downloaded 5580
+- HAEDALUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HAEDALUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HAEDALUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HANAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HANAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HANAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HBARUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HBARUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HBARUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HEIUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HEIUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HEMIUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HEIUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HEMIUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HIVEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HEMIUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HIVEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HIVEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HMSTRUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HMSTRUSDT 15m: failed (Response status code does not indicate success: 429 (Too Many Requests).). Will retry on resume.
+- HMSTRUSDT 1h: failed (Response status code does not indicate success: 429 (Too Many Requests).). Will retry on resume.
+- HOLOUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HOLOUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HOLOUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HOMEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HOMEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HOMEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HOTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HOTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HOTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HUMAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HUMAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HUMAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HYPERUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HYPERUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HYPEUSDT 5m: failed (Response status code does not indicate success: 429 (Too Many Requests).). Will retry on resume.
+- HYPERUSDT 15m: failed (Response status code does not indicate success: 429 (Too Many Requests).). Will retry on resume.
+- HYPEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- HYPEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ICNTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ICNTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ICNTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ICPUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ICPUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ICPUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- IDOLUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- IDOLUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- IDOLUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- IDUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- IDUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- IDUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ILVUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ILVUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- IMXUSDT 5m: failed (Response status code does not indicate success: 429 (Too Many Requests).). Will retry on resume.
+- ILVUSDT 1h: failed (Response status code does not indicate success: 429 (Too Many Requests).). Will retry on resume.
+- IMXUSDT 15m: failed (Response status code does not indicate success: 429 (Too Many Requests).). Will retry on resume.
+- IMXUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- INITUSDT 5m: failed (Response status code does not indicate success: 429 (Too Many Requests).). Will retry on resume.
+- INITUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- INITUSDT 1h: failed (Response status code does not indicate success: 429 (Too Many Requests).). Will retry on resume.
+- INJUSDT 5m: failed (Response status code does not indicate success: 429 (Too Many Requests).). Will retry on resume.
+- INJUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- INJUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- INUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- INUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- INXUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- INUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- INXUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- INXUSDT 1h: 2026-01-30 → 2026-09-18 (5542 bars); eval 152 ms; 36297 bars/s; trades 390; cache miss; downloaded 5542
+- IOSTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- IOSTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- IOSTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- IOTAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- IOTAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- IOTAUSDT 15m: failed (Response status code does not indicate success: 429 (Too Many Requests).). Will retry on resume.
+- IOTXUSDT 5m: failed (Response status code does not indicate success: 429 (Too Many Requests).). Will retry on resume.
+- IOTXUSDT 15m: failed (Response status code does not indicate success: 429 (Too Many Requests).). Will retry on resume.
+- IOTXUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- IOUSDT 5m: failed (Response status code does not indicate success: 429 (Too Many Requests).). Will retry on resume.
+- IOUSDT 15m: failed (Response status code does not indicate success: 429 (Too Many Requests).). Will retry on resume.
+- IOUSDT 1h: failed (Response status code does not indicate success: 429 (Too Many Requests).). Will retry on resume.
+- IRYSUSDT 5m: failed (Response status code does not indicate success: 429 (Too Many Requests).). Will retry on resume.
+- IRYSUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- IRYSUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- JASMYUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- JASMYUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- JASMYUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- JCTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- JCTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- JCTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- JELLYJELLYUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- JELLYJELLYUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- JELLYJELLYUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- JOEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- JOEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- JSTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- JOEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- JSTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- JSTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- JTOUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- JTOUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- JUPUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- JTOUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- JUPUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- JUPUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KAIAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KAIAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KAIAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KAITOUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KAITOUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KAITOUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KASUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KASUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KASUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KATUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KATUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KATUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KAVAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KAVAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KERNELUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KAVAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KERNELUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KERNELUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KGENUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KGENUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KGENUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KITEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KITEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KITEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KMNOUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KMNOUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KMNOUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KNCUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KNCUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KNCUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KOMAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KOMAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KOMAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KSMUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KSMUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- KSMUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LABUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LABUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LABUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LAYERUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LAYERUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LAYERUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LDOUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LDOUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LDOUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LIGHTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LIGHTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LIGHTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LINEAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LINEAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LINEAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LINKUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LINKUSDT 1h: 2024-09-18 → 2026-09-18 (17519 bars); eval 421 ms; 41557 bars/s; trades 1276; cache hit; downloaded 0
+- LINKUSDT 5m: 2024-09-18 → 2026-09-18 (210256 bars); eval 4562 ms; 46084 bars/s; trades 9346; cache miss; downloaded 16
+- LISTAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LISTAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LISTAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LITUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LITUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LPTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LITUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LPTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LPTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LQTYUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LQTYUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LQTYUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LSKUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LSKUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LSKUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LTCUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LTCUSDT 15m: 2024-09-18 → 2026-09-18 (70087 bars); eval 1759 ms; 39842 bars/s; trades 3738; cache miss; downloaded 7
+- LTCUSDT 1h: 2024-09-18 → 2026-09-18 (17519 bars); eval 554 ms; 31569 bars/s; trades 1189; cache hit; downloaded 0
+- LUMIAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LUMIAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LUMIAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LUNA2USDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LUNA2USDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LUNA2USDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LYNUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LYNUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MAGICUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- LYNUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MAGICUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MAGICUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MAGMAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MAGMAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MANAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MAGMAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MANAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MANAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MANTAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MANTAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MANTAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MANTRAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MANTRAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MANTRAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MARSCOINUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MARSCOINUSDT 1h: 2026-09-01 → 2026-09-18 (416 bars); eval 40 ms; 10308 bars/s; trades 2; cache miss; downloaded 416
+- MARSCOINUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MASKUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MASKUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MAVIAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MASKUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MAVIAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MAVIAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MAVUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MAVUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MEGAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MAVUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MEGAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MEGAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MELANIAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MELANIAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MELANIAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MEMEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MEMEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MEMEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MERLUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MERLUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MERLUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- METISUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- METISUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- METISUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- METUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- METUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- METUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MEWUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MEWUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MEWUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MINAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MINAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MINAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MIRAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MIRAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MIRAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MITOUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MITOUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MMTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MITOUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MMTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MMTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MOCAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MOCAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MOCAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MONUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MONUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MONUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MOODENGUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MOODENGUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MOODENGUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MORPHOUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MORPHOUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MORPHOUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MOVEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MOVEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MOVEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MOVRUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MOVRUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MOVRUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MTLUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MTLUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MTLUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MUBARAKUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MUBARAKUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MUBARAKUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MYXUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MYXUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- MYXUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NAORISUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NAORISUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NEARUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NAORISUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NEARUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NEARUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NEIROUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NEIROUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NEIROUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NEOUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NEOUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NEOUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NEWTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NEWTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NEWTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NIGHTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NIGHTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NIGHTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NILUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NILUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NILUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NMRUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NMRUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NMRUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NOMUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NOMUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NOMUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NOTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NOTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NOTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NXPCUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NXPCUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- NXPCUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- OGNUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- OGNUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- OGNUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- OGUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- OGUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- OGUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ONDOUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ONDOUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ONEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ONDOUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ONEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ONEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ONGUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ONGUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ONGUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ONTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ONTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ONTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ONUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ONUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ONUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- OPENUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- OPENUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- OPENUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- OPGUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- OPGUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- OPGUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- OPNUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- OPNUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- OPUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- OPNUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- OPUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- OPUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ORCAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ORCAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ORCAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ORDERUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ORDERUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ORDERUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ORDIUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ORDIUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- OUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ORDIUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- OUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- OUSDT 15m: 2026-06-24 → 2026-09-18 (8277 bars); eval 189 ms; 43669 bars/s; trades 509; cache miss; downloaded 8277
+- PARTIUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PARTIUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PARTIUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PAXGUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PAXGUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PAXGUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PENDLEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PENDLEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PENDLEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PENGUUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PENGUUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PENGUUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PEOPLEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PEOPLEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PEOPLEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PHAROSUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PHAROSUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PHAROSUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PHAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PHAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PHAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PIEVERSEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PIEVERSEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PIEVERSEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PIPPINUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PIPPINUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PIXELUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PIPPINUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PIXELUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PIXELUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PLAYUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PLAYUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PLAYUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PLUMEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PLUMEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PLUMEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PNUTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PNUTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PNUTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- POLUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- POLUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- POLYXUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- POLUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- POLYXUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PONSUSDT 5m: 2026-09-06 → 2026-09-18 (3577 bars); eval 96 ms; 37216 bars/s; trades 214; cache miss; downloaded 3577
+- POLYXUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PONSUSDT 1h: 2026-09-06 → 2026-09-18 (299 bars); eval 36 ms; 8247 bars/s; trades 13; cache miss; downloaded 299
+- PONSUSDT 15m: 2026-09-06 → 2026-09-18 (1193 bars); eval 56 ms; 21196 bars/s; trades 99; cache miss; downloaded 1193
+- POPCATUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- POPCATUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- POPCATUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PORTALUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PORTALUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PORTALUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- POWERUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- POWERUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- POWERUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- POWRUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- POWRUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- POWRUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PRLUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PRLUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PRLUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PROMPTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PROMPTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PROMPTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PROMUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PROMUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PROMUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PROVEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PROVEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PTBUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PROVEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PTBUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PTBUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PUMPBTCUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PUMPBTCUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PUMPBTCUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PUMPUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PUMPUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PUMPUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PUNDIXUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PUNDIXUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PUNDIXUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PYTHUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PYTHUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- PYTHUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- QNTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- QNTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- QNTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- QTUMUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- QTUMUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- QTUMUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- QUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- QUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- QUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RAREUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RAREUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RAREUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RAVEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RAVEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RAVEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RAYSOLUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RAYSOLUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RAYSOLUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RECALLUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RECALLUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RECALLUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- REDUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- REDUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- REDUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RENDERUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RENDERUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RENDERUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RESOLVUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RESOLVUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RESOLVUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- REUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- REUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- REUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- REZUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- REZUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- REZUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RIFUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RIFUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RIFUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RIVERUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RIVERUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RIVERUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RLCUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RLCUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ROBOUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RLCUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ROBOUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ROBOUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RONINUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RONINUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RONINUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ROSEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ROSEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ROSEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RPLUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RPLUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RPLUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RSRUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RSRUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RSRUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RUNEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RUNEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RUNEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RVNUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RVNUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SAFEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- RVNUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SAFEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SAFEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SAGAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SAGAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SAGAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SAHARAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SAHARAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SAHARAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SANDUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SANDUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SANTOSUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SANDUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SANTOSUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SANTOSUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SAPIENUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SAPIENUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SAPIENUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SCRUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SCRUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SCRUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SEIUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SEIUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SEIUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SENTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SENTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SENTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SFPUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SFPUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SFPUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SHELLUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SHELLUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SHELLUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SIGNUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SIGNUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SIGNUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SIRENUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SIRENUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SIRENUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SKLUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SKLUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SKLUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SKRUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SKRUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SKRUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SKYAIUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SKYAIUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SKYAIUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SKYUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SKYUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SLPUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SKYUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SLPUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SLPUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SLXUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SLXUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SLXUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SNXUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SNXUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SNXUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SOLUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SOLUSDT 1h: 2024-09-18 → 2026-09-18 (17519 bars); eval 459 ms; 38164 bars/s; trades 1188; cache hit; downloaded 0
+- SOLUSDT 5m: 2024-09-18 → 2026-09-18 (210259 bars); eval 4737 ms; 44379 bars/s; trades 9277; cache miss; downloaded 19
+- SOLVUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SOLVUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SOLVUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SOMIUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SOMIUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SOMIUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SONICUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SONICUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SONICUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SOONUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SOONUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SOONUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SOPHUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SOPHUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SOPHUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SPACEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SPACEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SPACEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SPELLUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SPELLUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SPELLUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SPKUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SPKUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SPKUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SPORTFUNUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SPORTFUNUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SPORTFUNUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SPXUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SPXUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SPXUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SQDUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SQDUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SQDUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SSVUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SSVUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SSVUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- STABLEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- STABLEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- STARUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- STABLEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- STARUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- STARUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- STBLUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- STBLUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- STBLUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- STEEMUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- STEEMUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- STEEMUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- STGUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- STGUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- STGUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- STOUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- STOUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- STOUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- STRKUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- STRKUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- STRKUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- STXUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- STXUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- STXUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SUIUSDT 15m: 2024-09-18 → 2026-09-18 (70087 bars); eval 1552 ms; 45140 bars/s; trades 4173; cache miss; downloaded 7
+- SUIUSDT 1h: 2024-09-18 → 2026-09-18 (17519 bars); eval 442 ms; 39621 bars/s; trades 1316; cache hit; downloaded 0
+- SUIUSDT 5m: 2024-09-18 → 2026-09-18 (210256 bars); eval 4629 ms; 45412 bars/s; trades 9792; cache miss; downloaded 17
+- SUNUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SUNUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SUNUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SUPERUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SUPERUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SUPERUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SUSHIUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SUSHIUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SUSHIUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SWARMSUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SWARMSUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SWARMSUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SXTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SXTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SXTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SYNUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SYNUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SYRUPUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SYNUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SYRUPUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- SYRUPUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TACUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TACUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TACUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TAGUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TAGUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TAGUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TAIKOUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TAIKOUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TAKEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TAIKOUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TAKEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TAKEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TAOUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TAOUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TAOUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- THETAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- THETAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- THETAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- THEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- THEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- THEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TIAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TIAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TIAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TLMUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TLMUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TLMUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TNSRUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TNSRUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TNSRUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TOSHIUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TOSHIUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TOSHIUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TOWNSUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TOWNSUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TOWNSUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TRADOORUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TRADOORUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TRADOORUSDT 1h: 2025-09-19 → 2026-09-18 (8741 bars); eval 232 ms; 37559 bars/s; trades 517; cache miss; downloaded 8741
+- TRBUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TRBUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TRBUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TREEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TREEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TRIAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TREEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TRIAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TRIAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TRUMPUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TRUMPUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TRUMPUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TRUSTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TRUSTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TRUSTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TRUTHUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TRUTHUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TRUTHUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TRXUSDT 15m: 2024-09-18 → 2026-09-18 (70087 bars); eval 1694 ms; 41356 bars/s; trades 2242; cache miss; downloaded 7
+- TRXUSDT 1h: 2024-09-18 → 2026-09-18 (17519 bars); eval 496 ms; 35257 bars/s; trades 868; cache hit; downloaded 0
+- TRXUSDT 5m: 2024-09-18 → 2026-09-18 (210259 bars); eval 4835 ms; 43485 bars/s; trades 2454; cache miss; downloaded 19
+- TSTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TSTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TSTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TURBOUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TURBOUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TURBOUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TURTLEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TURTLEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TURTLEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TUTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TUTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TUTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TWTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TWTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- TWTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- UAIUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- UAIUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- UBUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- UAIUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- UBUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- UBUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- UMAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- UMAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- UMAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- UNIUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- UNIUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- UNIUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- USDCUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- USDCUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- USDCUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- USELESSUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- USELESSUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- USELESSUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- USTCUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- USTCUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- USUALUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- USTCUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- USUALUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- USUALUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- USUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- USUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- USUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- VANAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- VANAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- VANAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- VELODROMEUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- VELODROMEUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- VELODROMEUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- VELVETUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- VELVETUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- VELVETUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- VETUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- VETUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- VETUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- VIRTUALUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- VIRTUALUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- VIRTUALUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- VTHOUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- VTHOUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- VTHOUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- VVVUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- VVVUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- VVVUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- WALUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- WALUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- WALUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- WAXPUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- WAXPUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- WAXPUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- WCTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- WCTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- WCTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- WETUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- WETUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- WETUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- WIFUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- WIFUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- WIFUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- WLDUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- WLDUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- WLDUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- WLFIUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- WLFIUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- WLFIUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- WOOUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- WOOUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- WOOUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- WUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- WUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XAIUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- WUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XAIUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XAIUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XANUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XANUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XANUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XAUTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XAUTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XAUTUSDT 1h: 2026-03-26 → 2026-09-18 (4227 bars); eval 120 ms; 35095 bars/s; trades 162; cache miss; downloaded 4227
+- XLMUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XLMUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XLMUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XMRUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XMRUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XMRUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XNYUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XNYUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XNYUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XPINUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XPINUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XPINUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XPLUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XPLUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XPLUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XRPUSDT 15m: 2024-09-18 → 2026-09-18 (70087 bars); eval 1546 ms; 45306 bars/s; trades 3782; cache miss; downloaded 7
+- XRPUSDT 1h: 2024-09-18 → 2026-09-18 (17519 bars); eval 414 ms; 42220 bars/s; trades 1141; cache hit; downloaded 0
+- XRPUSDT 5m: 2024-09-18 → 2026-09-18 (210259 bars); eval 4742 ms; 44334 bars/s; trades 8464; cache miss; downloaded 19
+- XTZUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XTZUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XTZUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XVGUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XVGUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XVGUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XVSUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XVSUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- XVSUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- YBUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- YBUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- YBUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- YFIUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- YFIUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- YGGUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- YFIUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- YGGUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- YGGUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZAMAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZAMAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZAMAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZBTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZBTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZBTUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZECUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZECUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZECUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZENUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZENUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZENUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZEREBROUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZEREBROUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZESTUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZEREBROUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZESTUSDT 1h: 2026-06-04 → 2026-09-18 (2547 bars); eval 93 ms; 27246 bars/s; trades 164; cache miss; downloaded 2547
+- ZESTUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZETAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZETAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZETAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZILUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZILUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZILUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZKCUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZKCUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZKCUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZKPUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZKPUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZKPUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZKUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZKUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZORAUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZKUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZORAUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZORAUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZROUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZROUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZROUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZRXUSDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZRXUSDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- 哈基米USDT 5m: 2026-09-06 → 2026-09-18 (3570 bars); eval 103 ms; 34446 bars/s; trades 180; cache miss; downloaded 3570
+- 哈基米USDT 15m: 2026-09-06 → 2026-09-18 (1191 bars); eval 53 ms; 22101 bars/s; trades 81; cache miss; downloaded 1191
+- 哈基米USDT 1h: 2026-09-06 → 2026-09-18 (298 bars); eval 15 ms; 19497 bars/s; trades 2; cache miss; downloaded 298
+- 币安人生USDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- 币安人生USDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- ZRXUSDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- 币安人生USDT 1h: 2025-10-20 → 2026-09-18 (7998 bars); eval 186 ms; 42856 bars/s; trades 475; cache miss; downloaded 7998
+- 我踏马来了USDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- 我踏马来了USDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- 我踏马来了USDT 1h: 2026-01-21 → 2026-09-18 (5763 bars); eval 175 ms; 32928 bars/s; trades 346; cache miss; downloaded 5763
+- 牛来USDT 15m: 2026-08-30 → 2026-09-18 (1846 bars); eval 95 ms; 19335 bars/s; trades 123; cache miss; downloaded 1846
+- 牛来USDT 1h: 2026-08-30 → 2026-09-18 (462 bars); eval 21 ms; 21429 bars/s; trades 3; cache miss; downloaded 462
+- 牛来USDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- 龙虾USDT 5m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- 龙虾USDT 15m: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- 龙虾USDT 1h: failed (Response status code does not indicate success: 418 (I'm a teapot).). Will retry on resume.
+- Job runtime 01:16:15.4932108. Datasets completed 169/1584. Bars loaded 11490188. Cache hits 13, misses 156, klines downloaded 9019882. Peak WS 769 MB. DB operations 0. Network only for uncached klines + exchangeInfo.
+
+## Bollinger Reversion
+
+1. Implementation correctness: Close returns inside the current bands with a slow-EMA side filter. Closed candles only.
+2. LONG correctness: Previous close below the lower band, this close back inside, still above slow EMA.
+3. SHORT correctness: Previous close above the upper band, this close back inside, still below slow EMA.
+4. Look-ahead status: No future bars. Donchian excludes the current high/low. Bollinger includes the current close.
+5. Repainting status: Closed-bar prefix signals stay stable when later bars are appended (unit tests).
+6. Backtest period: 2024-09-18 → 2026-09-18
+7. Timeframes: 15m, 1h, 5m
+8. Symbols: 0GUSDT, 1000000BOBUSDT, 1000000MOGUSDT, 1000BONKUSDT, 1000CATUSDT, 1000CHEEMSUSDT, 1000FLOKIUSDT, 1000LUNCUSDT, 1000PEPEUSDT, 1000RATSUSDT, 1000SATSUSDT, 1000SHIBUSDT, 1000XECUSDT, 1INCHUSDT, 1MBABYDOGEUSDT, 2ZUSDT, 4USDT, AAVEUSDT, ACEUSDT, ACHUSDT, ACTUSDT, ACUUSDT, ADAUSDT, AEROUSDT, AEVOUSDT, AGLDUSDT, AGTUSDT, AIAUSDT, AIGENSYNUSDT, AINUSDT, AIOTUSDT, AIOUSDT, AIXBTUSDT, AKEUSDT, AKTUSDT, ALCHUSDT, ALGOUSDT, ALICEUSDT, ALLOUSDT, ALLUSDT, ALPINEUSDT, AVAXUSDT, BCHUSDT, BNBUSDT, BTCUSDT, CTRUSDT, DATAIPUSDT, DOGEUSDT, DOSUSDT, DOTUSDT, ESPUSDT, ETHUSDT, GENIUSUSDT, GRVTUSDT, GWEIUSDT, INXUSDT, LINKUSDT, LTCUSDT, MARSCOINUSDT, OUSDT, PONSUSDT, SOLUSDT, SUIUSDT, TRADOORUSDT, TRXUSDT, XAUTUSDT, XRPUSDT, ZESTUSDT, 哈基米USDT, 币安人生USDT, 我踏马来了USDT, 牛来USDT
+LONG:
+- Trades: 10752
+- Win rate: 53,59%
+- Profit factor: 0,81
+- Expectancy: -8,34
+- Max DD: 24,90%
+SHORT:
+- Trades: 13505
+- Win rate: 53,83%
+- Profit factor: 0,60
+- Expectancy: -10,14
+- Max DD: 32,82%
+Combined:
+9. Gross performance: not reported separately; net is after fees and slippage.
+10. Net performance: -226589,52 USDT (-2265,90%)
+11. Fees: 85520,52 USDT
+12. Funding: EXCLUDING_FUNDING
+13. Slippage: included in net (0.02% default in this harness)
+14. Maximum drawdown: 44,52%
+15. Profit factor: 0,58
+16. Expectancy: -9,34
+17. Trade count: 24257
+18. Walk-forward results: 1343 windows; median PF 0,12; worst 0GUSDT 15m 2025-09-17 PF 0,00; best 1000000BOBUSDT 15m 2026-07-09 PF 470,32
+19. Out-of-sample results: n=4502 PF=0,57 DD=18,69% net=-39200,62 (IS n=14852 PF=0,58 DD=29,66% net=-152085,13; validation n=5002 PF=0,54 DD=19,60% net=-52634,09)
+20. Parameter stability: BbStdDev+0.2: PF 0,67→0,84
+21. Regime performance: extended_trend: 70 windows, 70 trades, median PF 99,00; fast_reversal: 145 windows, 180 trades, median PF 99,00; high_vol_bear: 29 windows, 23 trades, median PF 99,00; high_vol_bull: 12 windows, 14 trades, median PF 99,00; high_volatility: 10 windows, 14 trades, median PF 0,68; low_volatility: 280 windows, 311 trades, median PF 99,00; sideways: 537 windows, 811 trades, median PF 99,00; strong_bear: 160 windows, 241 trades, median PF 99,00; strong_bull: 100 windows, 123 trades, median PF 99,00
+22. Main failure modes: Expected to struggle in strong trends; the slow-EMA filter is not ADX. Status VALIDATION_PENDING is historical only.
+23. Current validation status: `VALIDATION_PENDING`
+24. Recommended next action: Leave VALIDATION_PENDING. No LIVE. User decides whether to paper-test.
+
+## Donchian Breakout
+
+1. Implementation correctness: Break event on prior-N channel (current high/low excluded). Closed candles only.
+2. LONG correctness: Previous bar inside the prior-N high, this close breaks above it.
+3. SHORT correctness: Previous bar inside the prior-N low, this close breaks below it.
+4. Look-ahead status: No future bars. Donchian excludes the current high/low. Bollinger includes the current close.
+5. Repainting status: Closed-bar prefix signals stay stable when later bars are appended (unit tests).
+6. Backtest period: 2024-09-18 → 2026-09-18
+7. Timeframes: 15m, 1h, 5m
+8. Symbols: 0GUSDT, 1000000BOBUSDT, 1000000MOGUSDT, 1000BONKUSDT, 1000CATUSDT, 1000CHEEMSUSDT, 1000FLOKIUSDT, 1000LUNCUSDT, 1000PEPEUSDT, 1000RATSUSDT, 1000SATSUSDT, 1000SHIBUSDT, 1000XECUSDT, 1INCHUSDT, 1MBABYDOGEUSDT, 2ZUSDT, 4USDT, AAVEUSDT, ACEUSDT, ACHUSDT, ACTUSDT, ACUUSDT, ADAUSDT, AEROUSDT, AEVOUSDT, AGLDUSDT, AGTUSDT, AIAUSDT, AIGENSYNUSDT, AINUSDT, AIOTUSDT, AIOUSDT, AIXBTUSDT, AKEUSDT, AKTUSDT, ALCHUSDT, ALGOUSDT, ALICEUSDT, ALLOUSDT, ALLUSDT, ALPINEUSDT, AVAXUSDT, BCHUSDT, BNBUSDT, BTCUSDT, CTRUSDT, DATAIPUSDT, DOGEUSDT, DOSUSDT, DOTUSDT, ESPUSDT, ETHUSDT, GENIUSUSDT, GRVTUSDT, GWEIUSDT, INXUSDT, LINKUSDT, LTCUSDT, MARSCOINUSDT, OUSDT, PONSUSDT, SOLUSDT, SUIUSDT, TRADOORUSDT, TRXUSDT, XAUTUSDT, XRPUSDT, ZESTUSDT, 哈基米USDT, 币安人生USDT, 我踏马来了USDT, 牛来USDT
+LONG:
+- Trades: 119504
+- Win rate: 30,60%
+- Profit factor: 0,73
+- Expectancy: -5,82
+- Max DD: 87,98%
+SHORT:
+- Trades: 124981
+- Win rate: 31,60%
+- Profit factor: 0,73
+- Expectancy: -5,26
+- Max DD: 75,50%
+Combined:
+9. Gross performance: not reported separately; net is after fees and slippage.
+10. Net performance: -1352723,57 USDT (-13527,24%)
+11. Fees: 310172,97 USDT
+12. Funding: EXCLUDING_FUNDING
+13. Slippage: included in net (0.02% default in this harness)
+14. Maximum drawdown: 100,00%
+15. Profit factor: 0,73
+16. Expectancy: -5,53
+17. Trade count: 244485
+18. Walk-forward results: 1343 windows; median PF 0,63; worst 1000000MOGUSDT 15m 2026-06-09 PF 0,00; best ACUUSDT 1h 2026-01-21 PF 99,00
+19. Out-of-sample results: n=43873 PF=0,63 DD=95,15% net=-643317,92 (IS n=155319 PF=0,73 DD=99,97% net=-1154181,80; validation n=45081 PF=0,74 DD=92,75% net=-507374,54)
+20. Parameter stability: DonchianLength+1: PF 0,65→0,66
+21. Regime performance: extended_trend: 70 windows, 922 trades, median PF 2,56; fast_reversal: 145 windows, 2138 trades, median PF 4,44; high_vol_bear: 29 windows, 298 trades, median PF 2,80; high_vol_bull: 12 windows, 142 trades, median PF 1,52; high_volatility: 10 windows, 108 trades, median PF 99,00; low_volatility: 280 windows, 2261 trades, median PF 11,38; sideways: 537 windows, 6870 trades, median PF 10,78; strong_bear: 160 windows, 2632 trades, median PF 8,89; strong_bull: 100 windows, 1487 trades, median PF 7,84
+22. Main failure modes: Expected to struggle in ranges; SL can flatten a valid breakout then wait for a new arm. Status VALIDATION_PENDING is historical only.
+23. Current validation status: `VALIDATION_PENDING`
+24. Recommended next action: Leave VALIDATION_PENDING. No LIVE. User decides whether to paper-test.
+
+## EMA RSI Trend
+
+1. Implementation correctness: EMA cross plus RSI band. Closed candles only. Not RSI>50 as the entry.
+2. LONG correctness: Fast EMA crosses above slow, close above slow, RSI in the long band.
+3. SHORT correctness: Fast EMA crosses below slow, close below slow, mirrored RSI band.
+4. Look-ahead status: No future bars. Donchian excludes the current high/low. Bollinger includes the current close.
+5. Repainting status: Closed-bar prefix signals stay stable when later bars are appended (unit tests).
+6. Backtest period: 2024-09-18 → 2026-09-18
+7. Timeframes: 15m, 1h, 5m
+8. Symbols: 0GUSDT, 1000000BOBUSDT, 1000000MOGUSDT, 1000BONKUSDT, 1000CATUSDT, 1000CHEEMSUSDT, 1000FLOKIUSDT, 1000LUNCUSDT, 1000PEPEUSDT, 1000RATSUSDT, 1000SATSUSDT, 1000SHIBUSDT, 1000XECUSDT, 1INCHUSDT, 1MBABYDOGEUSDT, 2ZUSDT, 4USDT, AAVEUSDT, ACEUSDT, ACHUSDT, ACTUSDT, ACUUSDT, ADAUSDT, AEROUSDT, AEVOUSDT, AGLDUSDT, AGTUSDT, AIAUSDT, AIGENSYNUSDT, AINUSDT, AIOTUSDT, AIOUSDT, AIXBTUSDT, AKEUSDT, AKTUSDT, ALCHUSDT, ALGOUSDT, ALICEUSDT, ALLOUSDT, ALLUSDT, ALPINEUSDT, AVAXUSDT, BCHUSDT, BNBUSDT, BTCUSDT, CTRUSDT, DATAIPUSDT, DOGEUSDT, DOSUSDT, DOTUSDT, ESPUSDT, ETHUSDT, GENIUSUSDT, GRVTUSDT, GWEIUSDT, INXUSDT, LINKUSDT, LTCUSDT, MARSCOINUSDT, OUSDT, PONSUSDT, SOLUSDT, SUIUSDT, TRADOORUSDT, TRXUSDT, XAUTUSDT, XRPUSDT, ZESTUSDT, 哈基米USDT, 币安人生USDT, 我踏马来了USDT, 牛来USDT
+LONG:
+- Trades: 33220
+- Win rate: 26,84%
+- Profit factor: 0,75
+- Expectancy: -9,42
+- Max DD: 56,08%
+SHORT:
+- Trades: 32483
+- Win rate: 28,00%
+- Profit factor: 0,76
+- Expectancy: -8,83
+- Max DD: 65,62%
+Combined:
+9. Gross performance: not reported separately; net is after fees and slippage.
+10. Net performance: -599825,64 USDT (-5998,26%)
+11. Fees: 181586,89 USDT
+12. Funding: EXCLUDING_FUNDING
+13. Slippage: included in net (0.02% default in this harness)
+14. Maximum drawdown: 93,62%
+15. Profit factor: 0,75
+16. Expectancy: -9,13
+17. Trade count: 65703
+18. Walk-forward results: 1343 windows; median PF 0,45; worst 0GUSDT 15m 2025-09-17 PF 0,00; best 0GUSDT 5m 2025-09-17 PF 99,00
+19. Out-of-sample results: n=12402 PF=0,67 DD=53,08% net=-171733,54 (IS n=40961 PF=0,76 DD=84,89% net=-417515,68; validation n=12240 PF=0,77 DD=42,77% net=-127777,35)
+20. Parameter stability: RsiPeriod+1: PF 0,58→0,60
+21. Regime performance: extended_trend: 70 windows, 144 trades, median PF 99,00; fast_reversal: 145 windows, 347 trades, median PF 99,00; high_vol_bear: 29 windows, 37 trades, median PF 99,00; high_vol_bull: 12 windows, 21 trades, median PF 99,00; high_volatility: 10 windows, 22 trades, median PF 2,80; low_volatility: 280 windows, 650 trades, median PF 99,00; sideways: 537 windows, 1547 trades, median PF 99,00; strong_bear: 160 windows, 453 trades, median PF 99,00; strong_bull: 100 windows, 299 trades, median PF 99,00
+22. Main failure modes: Crosses are infrequent; RSI band can skip the actual cross. Status VALIDATION_PENDING is historical only.
+23. Current validation status: `VALIDATION_PENDING`
+24. Recommended next action: Leave VALIDATION_PENDING. No LIVE. User decides whether to paper-test.
+
+## MACD Trend
+
+1. Implementation correctness: MACD/signal crossover plus histogram sign and slow EMA. Closed candles only.
+2. LONG correctness: MACD crosses above signal, histogram > 0, close above slow EMA.
+3. SHORT correctness: MACD crosses below signal, histogram < 0, close below slow EMA.
+4. Look-ahead status: No future bars. Donchian excludes the current high/low. Bollinger includes the current close.
+5. Repainting status: Closed-bar prefix signals stay stable when later bars are appended (unit tests).
+6. Backtest period: 2024-09-18 → 2026-09-18
+7. Timeframes: 15m, 1h, 5m
+8. Symbols: 0GUSDT, 1000000BOBUSDT, 1000000MOGUSDT, 1000BONKUSDT, 1000CATUSDT, 1000CHEEMSUSDT, 1000FLOKIUSDT, 1000LUNCUSDT, 1000PEPEUSDT, 1000RATSUSDT, 1000SATSUSDT, 1000SHIBUSDT, 1000XECUSDT, 1INCHUSDT, 1MBABYDOGEUSDT, 2ZUSDT, 4USDT, AAVEUSDT, ACEUSDT, ACHUSDT, ACTUSDT, ACUUSDT, ADAUSDT, AEROUSDT, AEVOUSDT, AGLDUSDT, AGTUSDT, AIAUSDT, AIGENSYNUSDT, AINUSDT, AIOTUSDT, AIOUSDT, AIXBTUSDT, AKEUSDT, AKTUSDT, ALCHUSDT, ALGOUSDT, ALICEUSDT, ALLOUSDT, ALLUSDT, ALPINEUSDT, AVAXUSDT, BCHUSDT, BNBUSDT, BTCUSDT, CTRUSDT, DATAIPUSDT, DOGEUSDT, DOSUSDT, DOTUSDT, ESPUSDT, ETHUSDT, GENIUSUSDT, GRVTUSDT, GWEIUSDT, INXUSDT, LINKUSDT, LTCUSDT, MARSCOINUSDT, OUSDT, PONSUSDT, SOLUSDT, SUIUSDT, TRADOORUSDT, TRXUSDT, XAUTUSDT, XRPUSDT, ZESTUSDT, 哈基米USDT, 币安人生USDT, 我踏马来了USDT, 牛来USDT
+LONG:
+- Trades: 105780
+- Win rate: 27,70%
+- Profit factor: 0,68
+- Expectancy: -5,23
+- Max DD: 71,54%
+SHORT:
+- Trades: 115173
+- Win rate: 29,11%
+- Profit factor: 0,72
+- Expectancy: -4,29
+- Max DD: 65,69%
+Combined:
+9. Gross performance: not reported separately; net is after fees and slippage.
+10. Net performance: -1048056,30 USDT (-10480,56%)
+11. Fees: 386060,84 USDT
+12. Funding: EXCLUDING_FUNDING
+13. Slippage: included in net (0.02% default in this harness)
+14. Maximum drawdown: 99,61%
+15. Profit factor: 0,71
+16. Expectancy: -4,74
+17. Trade count: 220953
+18. Walk-forward results: 1343 windows; median PF 0,59; worst 0GUSDT 1h 2025-09-17 PF 0,00; best ACUUSDT 1h 2026-01-21 PF 99,00
+19. Out-of-sample results: n=41836 PF=0,62 DD=77,68% net=-389919,96 (IS n=135253 PF=0,72 DD=97,20% net=-811576,52; validation n=43699 PF=0,68 DD=63,26% net=-342281,17)
+20. Parameter stability: MacdSignal+1: PF 0,62→0,62
+21. Regime performance: extended_trend: 70 windows, 531 trades, median PF 99,00; fast_reversal: 145 windows, 1246 trades, median PF 22,68; high_vol_bear: 29 windows, 176 trades, median PF 17,52; high_vol_bull: 12 windows, 85 trades, median PF 2,77; high_volatility: 10 windows, 56 trades, median PF 0,73; low_volatility: 280 windows, 2497 trades, median PF 3,42; sideways: 537 windows, 5303 trades, median PF 3,74; strong_bear: 160 windows, 1773 trades, median PF 11,94; strong_bull: 100 windows, 1033 trades, median PF 5,72
+22. Main failure modes: Late crosses in extended moves; histogram filter can skip the cross. Status VALIDATION_PENDING is historical only.
+23. Current validation status: `VALIDATION_PENDING`
+24. Recommended next action: Leave VALIDATION_PENDING. No LIVE. User decides whether to paper-test.
+
+## RSI Pullback
+
+1. Implementation correctness: RSI oversold/overbought cross with local slow-EMA trend filter. Closed candles only.
+2. LONG correctness: Close above slow EMA, RSI crosses up through oversold.
+3. SHORT correctness: Close below slow EMA, RSI crosses down through overbought.
+4. Look-ahead status: No future bars. Donchian excludes the current high/low. Bollinger includes the current close.
+5. Repainting status: Closed-bar prefix signals stay stable when later bars are appended (unit tests).
+6. Backtest period: 2024-09-18 → 2026-09-18
+7. Timeframes: 15m, 1h, 5m
+8. Symbols: 0GUSDT, 1000000BOBUSDT, 1000000MOGUSDT, 1000BONKUSDT, 1000CATUSDT, 1000CHEEMSUSDT, 1000FLOKIUSDT, 1000LUNCUSDT, 1000PEPEUSDT, 1000RATSUSDT, 1000SATSUSDT, 1000SHIBUSDT, 1000XECUSDT, 1INCHUSDT, 1MBABYDOGEUSDT, 2ZUSDT, 4USDT, AAVEUSDT, ACEUSDT, ACHUSDT, ACTUSDT, ACUUSDT, ADAUSDT, AEROUSDT, AEVOUSDT, AGLDUSDT, AGTUSDT, AIAUSDT, AIGENSYNUSDT, AINUSDT, AIOTUSDT, AIOUSDT, AIXBTUSDT, AKEUSDT, AKTUSDT, ALCHUSDT, ALGOUSDT, ALICEUSDT, ALLOUSDT, ALLUSDT, ALPINEUSDT, AVAXUSDT, BCHUSDT, BNBUSDT, BTCUSDT, CTRUSDT, DATAIPUSDT, DOGEUSDT, DOSUSDT, DOTUSDT, ESPUSDT, ETHUSDT, GENIUSUSDT, GRVTUSDT, GWEIUSDT, INXUSDT, LINKUSDT, LTCUSDT, MARSCOINUSDT, OUSDT, PONSUSDT, SOLUSDT, SUIUSDT, TRADOORUSDT, TRXUSDT, XAUTUSDT, XRPUSDT, ZESTUSDT, 哈基米USDT, 币安人生USDT, 我踏马来了USDT, 牛来USDT
+LONG:
+- Trades: 345
+- Win rate: 28,41%
+- Profit factor: 4,10
+- Expectancy: -10,59
+- Max DD: 9,88%
+SHORT:
+- Trades: 466
+- Win rate: 30,04%
+- Profit factor: 5,04
+- Expectancy: -27,41
+- Max DD: 17,05%
+Combined:
+9. Gross performance: not reported separately; net is after fees and slippage.
+10. Net performance: -16427,33 USDT (-164,27%)
+11. Fees: 3215,07 USDT
+12. Funding: EXCLUDING_FUNDING
+13. Slippage: included in net (0.02% default in this harness)
+14. Maximum drawdown: 16,90%
+15. Profit factor: 0,62
+16. Expectancy: -20,26
+17. Trade count: 811
+18. Walk-forward results: 1343 windows; median PF 0,00; worst 0GUSDT 15m 2025-09-17 PF 0,00; best 0GUSDT 5m 2026-07-26 PF 99,00
+19. Out-of-sample results: n=237 PF=0,85 DD=11,08% net=-1744,10 (IS n=433 PF=0,56 DD=11,13% net=-11402,17; validation n=226 PF=0,75 DD=12,23% net=-2509,81)
+20. Parameter stability: RsiPeriod+1: PF 1,55→1,50
+21. Regime performance: extended_trend: 70 windows, 21 trades, median PF 99,00; fast_reversal: 145 windows, 43 trades, median PF 99,00; high_vol_bear: 29 windows, 4 trades, median PF 99,00; high_vol_bull: 12 windows, 1 trades, median PF 0,00; high_volatility: 10 windows, 4 trades, median PF 1,17; low_volatility: 280 windows, 73 trades, median PF 99,00; sideways: 537 windows, 189 trades, median PF 99,00; strong_bear: 160 windows, 62 trades, median PF 99,00; strong_bull: 100 windows, 39 trades, median PF 99,00
+22. Main failure modes: Pullback may never print if RSI does not recross the threshold in trend. Status VALIDATION_PENDING is historical only.
+23. Current validation status: `VALIDATION_PENDING`
+24. Recommended next action: Leave VALIDATION_PENDING. No LIVE. User decides whether to paper-test.
+
+## Disposition
+
+All five templates remain in the catalog. None were deleted. None are auto-started. LIVE is not enabled by this report.
+`VALIDATED_FOR_PAPER` means implementation tests passed and the frozen-default OOS/walk-forward slice was not broken under the documented cost model. It is not a guarantee.

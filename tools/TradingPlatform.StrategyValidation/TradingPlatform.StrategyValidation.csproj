@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>TradingPlatform.StrategyValidation</RootNamespace>
+    <AssemblyName>TradingPlatform.StrategyValidation</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\TradingPlatform.Backtesting\TradingPlatform.Backtesting.csproj" />
+    <ProjectReference Include="..\..\src\TradingPlatform.Application\TradingPlatform.Application.csproj" />
+    <ProjectReference Include="..\..\src\TradingPlatform.Domain\TradingPlatform.Domain.csproj" />
+    <ProjectReference Include="..\..\src\TradingPlatform.Strategies\TradingPlatform.Strategies.csproj" />
+  </ItemGroup>
+</Project>

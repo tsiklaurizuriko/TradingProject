@@ -176,6 +176,7 @@ public sealed class BacktestService : IBacktestService
                 PnL = trade.PnL,
                 Fees = trade.Fees,
                 Reason = trade.Reason,
+                Side = trade.Side,
             });
         }
 
@@ -219,6 +220,7 @@ public sealed class BacktestService : IBacktestService
                 t.ExitPrice,
                 t.PnL,
                 t.Fees,
-                t.Reason)).ToList());
+                t.Reason,
+                t.Side)).ToList());
     }
 }

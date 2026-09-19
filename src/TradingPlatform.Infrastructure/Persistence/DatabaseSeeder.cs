@@ -8,6 +8,7 @@ using TradingPlatform.Domain.Operations;
 using TradingPlatform.Domain.Risk;
 using TradingPlatform.Domain.Strategies;
 using TradingPlatform.Domain.Trading;
+using TradingPlatform.Strategies.Engine;
 
 namespace TradingPlatform.Infrastructure.Persistence;
 
@@ -202,39 +203,90 @@ public sealed class DatabaseSeeder
         await UpsertSystemRiskAsync("MEDIUM", ["Medium Risk", "Moderate"], MediumBook(), cancellationToken);
         await UpsertSystemRiskAsync("HIGH", ["High Risk", "Aggressive"], HighBook(), cancellationToken);
         await EnsureOneActiveAsync(cancellationToken);
+        await SeedStrategiesAsync(cancellationToken);
+    }
 
-        if (!await _db.Strategies.AnyAsync(cancellationToken))
+    private async Task SeedStrategiesAsync(CancellationToken cancellationToken)
+    {
+        var admin = await _db.Users.FirstAsync(cancellationToken);
+        var existing = await _db.Strategies.ToListAsync(cancellationToken);
+        foreach (var strategy in existing)
         {
-            var admin = await _db.Users.FirstAsync(cancellationToken);
+            if (!strategy.AppliesToAllSymbols && string.IsNullOrWhiteSpace(strategy.AllowedSymbolsCsv))
+            {
+                strategy.AppliesToAllSymbols = true;
+            }
+
+            if (string.Equals(strategy.Name, "EMA RSI Strategy", StringComparison.OrdinalIgnoreCase))
+            {
+                strategy.TemplateKey = StrategyTemplateKeys.EmaRsiTrend;
+                strategy.AllowedSide = StrategySides.Long;
+            }
+        }
+
+        var known = existing
+            .Select(s => s.TemplateKey)
+            .Where(k => !string.IsNullOrWhiteSpace(k))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (existing.Any(s => string.Equals(s.Name, "EMA RSI Strategy", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(s.Name, "EMA RSI Trend", StringComparison.OrdinalIgnoreCase)))
+        {
+            known.Add(StrategyTemplateKeys.EmaRsiTrend);
+        }
+
+        foreach (var row in Catalog)
+        {
+            if (known.Contains(row.Key))
+            {
+                continue;
+            }
+
+            var parameters = StrategyTemplates.DefaultsFor(row.Key, row.QualityOn) with
+            {
+                AllowedSide = StrategySides.Long,
+                Timeframe = "5m"
+            };
             var strategy = new Strategy
             {
                 UserId = admin.Id,
                 User = admin,
-                Name = "EMA RSI Strategy",
-                Description = "Sample strategy. Can run on every USD-M USDT perpetual, or only coins you assign.",
-                AppliesToAllSymbols = true
+                Name = row.Name,
+                Description = row.Description,
+                AppliesToAllSymbols = true,
+                TemplateKey = row.Key,
+                AllowedSide = StrategySides.Long
             };
             strategy.Versions.Add(new StrategyVersion
             {
                 Strategy = strategy,
                 VersionNumber = 1,
-                DefinitionJson = SampleEmaRsiDefinition,
+                DefinitionJson = StrategyTemplates.Build(strategy.Name, 1, parameters),
                 Symbol = "BTCUSDT",
                 Timeframe = Timeframe.FiveMinutes
             });
             _db.Strategies.Add(strategy);
-        }
-        else
-        {
-            foreach (var strategy in await _db.Strategies.ToListAsync(cancellationToken))
-            {
-                if (!strategy.AppliesToAllSymbols && string.IsNullOrWhiteSpace(strategy.AllowedSymbolsCsv))
-                {
-                    strategy.AppliesToAllSymbols = true;
-                }
-            }
+            known.Add(row.Key);
         }
     }
+
+    private static readonly (string Key, string Name, string Description, bool QualityOn)[] Catalog =
+    [
+        (StrategyTemplateKeys.EmaRsiTrend, "EMA RSI Trend",
+            "Closed-candle EMA cross with an RSI band. Quality filters skip some noisy setups; they do not cap loss at Planned Risk.",
+            false),
+        (StrategyTemplateKeys.MacdTrend, "MACD Trend",
+            "Closed-candle MACD cross with histogram and slow EMA confirmation. Filters skip some noisy setups; they are not a profit claim.",
+            true),
+        (StrategyTemplateKeys.RsiPullback, "RSI Pullback",
+            "Trend-aligned RSI pullback. LONG only above the slow EMA at oversold. Filters skip some noisy setups; they are not a profit claim.",
+            true),
+        (StrategyTemplateKeys.BollingerReversion, "Bollinger Reversion",
+            "Close returns inside the Bollinger band while still on the slow EMA side. Filters skip some noisy setups; they are not a profit claim.",
+            true),
+        (StrategyTemplateKeys.DonchianBreakout, "Donchian Breakout",
+            "Close breaks the N-bar Donchian high or low. Filters skip some noisy setups; they are not a profit claim.",
+            true)
+    ];
 
     private async Task UpsertSystemRiskAsync(
         string name,

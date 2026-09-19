@@ -17,6 +17,8 @@ public sealed class TradingController : ControllerBase
     private readonly IBotLifecycleService _lifecycle;
     private readonly IBotEngine _engine;
     private readonly IPublicMarketDataClient _market;
+    private readonly IMarketScanner _scanner;
+    private readonly ITradeEligibility _eligibility;
     private readonly IBacktestService _backtests;
 
     public TradingController(
@@ -24,12 +26,16 @@ public sealed class TradingController : ControllerBase
         IBotLifecycleService lifecycle,
         IBotEngine engine,
         IPublicMarketDataClient market,
+        IMarketScanner scanner,
+        ITradeEligibility eligibility,
         IBacktestService backtests)
     {
         _query = query;
         _lifecycle = lifecycle;
         _engine = engine;
         _market = market;
+        _scanner = scanner;
+        _eligibility = eligibility;
         _backtests = backtests;
     }
 
@@ -64,21 +70,71 @@ public sealed class TradingController : ControllerBase
     [HttpGet("markets")]
     public async Task<ActionResult<IReadOnlyList<MarketQuoteDto>>> Markets(CancellationToken cancellationToken)
     {
-        var universe = await _market.GetPaperUniverseAsync(cancellationToken);
-        var quotes = universe
-            .Select((s, index) => new MarketQuoteDto(
-                s.Symbol,
-                UsdtSpotUniverse.DisplayNameOf(s.Symbol),
-                index + 1,
-                s.LastPrice,
-                s.PriceChangePercent,
-                s.QuoteVolume,
+        IReadOnlyList<MarketScanRow> scan;
+        try
+        {
+            scan = await _scanner.ScanAsync(cancellationToken);
+        }
+        catch
+        {
+            scan = [];
+        }
+
+        if (scan.Count == 0)
+        {
+            var universe = await _market.GetPaperUniverseAsync(cancellationToken);
+            var quotes = universe
+                .Select((s, index) =>
+                {
+                    var decision = _eligibility.Evaluate(s);
+                    return new MarketQuoteDto(
+                        s.Symbol,
+                        UsdtSpotUniverse.DisplayNameOf(s.Symbol),
+                        index + 1,
+                        s.LastPrice,
+                        s.PriceChangePercent,
+                        s.QuoteVolume,
+                        DateTimeOffset.UtcNow,
+                        s.HighPrice,
+                        s.LowPrice,
+                        s.Trades24h,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        decision.Eligible,
+                        decision.Reason,
+                        decision.Watchable);
+                })
+                .ToList();
+            return Ok(quotes);
+        }
+
+        return Ok(scan.Select(row =>
+        {
+            var decision = _eligibility.Evaluate(row);
+            return new MarketQuoteDto(
+                row.Contract.Symbol,
+                UsdtSpotUniverse.DisplayNameOf(row.Contract.Symbol),
+                row.ScanRank,
+                row.LastPrice,
+                row.PriceChangePercent,
+                row.QuoteVolume24h,
                 DateTimeOffset.UtcNow,
-                s.HighPrice,
-                s.LowPrice,
-                s.Trades24h))
-            .ToList();
-        return Ok(quotes);
+                row.High24h,
+                row.Low24h,
+                row.Trades24h,
+                row.ScanScore,
+                row.SpreadBps,
+                row.FundingRate,
+                row.VolatilityPercent,
+                row.OpenInterest,
+                decision.Eligible,
+                decision.Reason,
+                decision.Watchable,
+                row.Contract.ContractType);
+        }).ToList());
     }
 
     [HttpGet("klines")]
@@ -155,6 +211,18 @@ public sealed class TradingController : ControllerBase
     [HttpPut("strategies/{strategyId:guid}")]
     public Task<StrategyDto> UpdateStrategy(Guid strategyId, [FromBody] SaveStrategyRequest request, CancellationToken cancellationToken) =>
         _query.UpdateStrategyAsync(strategyId, request, cancellationToken);
+
+    [HttpPut("strategies/{strategyId:guid}/enabled")]
+    public Task<StrategyDto> SetStrategyEnabled(Guid strategyId, [FromBody] SetStrategyEnabledRequest request, CancellationToken cancellationToken) =>
+        _query.SetStrategyEnabledAsync(strategyId, request.Enabled, cancellationToken);
+
+    [HttpGet("strategies/{strategyId:guid}/preview")]
+    public Task<StrategyPreviewDto> PreviewStrategy(
+        Guid strategyId,
+        [FromQuery] string? symbol,
+        [FromQuery] int? limit,
+        CancellationToken cancellationToken) =>
+        _query.PreviewStrategyAsync(strategyId, symbol, limit, cancellationToken);
 
     [HttpGet("risk-profiles")]
     public Task<IReadOnlyList<RiskProfileDto>> RiskProfiles(CancellationToken cancellationToken) =>

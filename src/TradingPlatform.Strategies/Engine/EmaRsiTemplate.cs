@@ -18,24 +18,14 @@ public static class EmaRsiTemplate
 
     public static EmaRsiParameters Validate(EmaRsiParameters parameters)
     {
-        if (parameters.EmaFast < 2 || parameters.EmaSlow <= parameters.EmaFast)
-        {
-            throw new DomainException(ErrorCodes.StrategyInvalid, "EMA slow period must be greater than the fast period.");
-        }
-
-        if (parameters.RsiPeriod < 2)
-        {
-            throw new DomainException(ErrorCodes.StrategyInvalid, "RSI period must be at least 2.");
-        }
-
-        if (parameters.RsiMinimum is < 0 or > 100)
-        {
-            throw new DomainException(ErrorCodes.StrategyInvalid, "RSI minimum must be between 0 and 100.");
-        }
-
+        StrategyTemplates.Validate(new StrategyTemplateParams(
+            EmaFast: parameters.EmaFast,
+            EmaSlow: parameters.EmaSlow,
+            RsiPeriod: parameters.RsiPeriod,
+            RsiMinimum: parameters.RsiMinimum));
         if (parameters.StopLossPercent <= 0 || parameters.TakeProfitPercent <= 0)
         {
-            throw new DomainException(ErrorCodes.StrategyInvalid, "Stop loss and take profit must be greater than zero.");
+            throw new DomainException(ErrorCodes.StrategyInvalid, "Stop loss and take profit belong on the Isolated risk book and must stay positive in legacy JSON.");
         }
 
         return parameters;
@@ -44,49 +34,34 @@ public static class EmaRsiTemplate
     public static string Build(string name, int version, string timeframe, EmaRsiParameters parameters)
     {
         var p = Validate(parameters);
-        var json = $$"""
-            {
-              "name": {{JsonSerializer.Serialize(name)}},
-              "version": {{version}},
-              "symbol": "BTCUSDT",
-              "timeframe": {{JsonSerializer.Serialize(timeframe)}},
-              "entry": {
-                "operator": "AND",
-                "conditions": [
-                  {
-                    "indicator": "EMA",
-                    "period": {{p.EmaFast}},
-                    "comparison": "CROSSES_ABOVE",
-                    "value": { "indicator": "EMA", "period": {{p.EmaSlow}} }
-                  },
-                  {
-                    "indicator": "RSI",
-                    "period": {{p.RsiPeriod}},
-                    "comparison": "GREATER_THAN",
-                    "value": {{Invariant(p.RsiMinimum)}}
-                  }
-                ]
-              },
-              "exit": {
-                "operator": "OR",
-                "conditions": [
-                  {
-                    "indicator": "EMA",
-                    "period": {{p.EmaFast}},
-                    "comparison": "CROSSES_BELOW",
-                    "value": { "indicator": "EMA", "period": {{p.EmaSlow}} }
-                  },
-                  { "type": "STOP_LOSS", "percent": {{Invariant(p.StopLossPercent)}} },
-                  { "type": "TAKE_PROFIT", "percent": {{Invariant(p.TakeProfitPercent)}} }
-                ]
-              }
-            }
-            """;
-        new StrategyDefinitionValidator().Parse(json);
-        return json;
+        return StrategyTemplates.Build(
+            name,
+            version,
+            new StrategyTemplateParams(
+                StrategyTemplateKeys.EmaRsiTrend,
+                StrategySides.Long,
+                timeframe,
+                p.EmaFast,
+                p.EmaSlow,
+                p.RsiPeriod,
+                p.RsiMinimum,
+                Quality: new StrategyQualityParams()));
     }
 
     public static EmaRsiParameters Read(string? json)
+    {
+        var parsed = StrategyTemplates.Read(json);
+        var legacy = ReadLegacy(json);
+        return new EmaRsiParameters(
+            parsed.EmaFast,
+            parsed.EmaSlow,
+            parsed.RsiPeriod,
+            parsed.RsiMinimum,
+            legacy.StopLossPercent,
+            legacy.TakeProfitPercent);
+    }
+
+    internal static EmaRsiParameters ReadLegacy(string? json)
     {
         if (string.IsNullOrWhiteSpace(json))
         {
@@ -119,8 +94,6 @@ public static class EmaRsiTemplate
             return Defaults;
         }
     }
-
-    private static string Invariant(decimal value) => value.ToString(CultureInfo.InvariantCulture);
 
     private static IReadOnlyList<JsonElement> FirstConditions(JsonElement root, string group)
     {

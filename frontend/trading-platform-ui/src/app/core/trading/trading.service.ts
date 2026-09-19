@@ -21,6 +21,7 @@ import {
   SaveRiskProfileRequest,
   SaveStrategyRequest,
   StrategyDto,
+  StrategyPreviewDto,
   SystemHealthDto,
   TradeDto,
   PerformanceDto,
@@ -225,6 +226,20 @@ export class TradingService {
 
   updateStrategy(id: string, body: SaveStrategyRequest): Promise<StrategyDto> {
     return firstValueFrom(this.http.put<StrategyDto>(`${environment.apiBaseUrl}/trading/strategies/${id}`, body));
+  }
+
+  setStrategyEnabled(id: string, enabled: boolean): Promise<StrategyDto> {
+    return firstValueFrom(
+      this.http.put<StrategyDto>(`${environment.apiBaseUrl}/trading/strategies/${id}/enabled`, { enabled }),
+    );
+  }
+
+  previewStrategy(id: string, symbol: string, limit = 80): Promise<StrategyPreviewDto> {
+    return firstValueFrom(
+      this.http.get<StrategyPreviewDto>(`${environment.apiBaseUrl}/trading/strategies/${id}/preview`, {
+        params: { symbol, limit },
+      }),
+    );
   }
 
   createRiskProfile(body: SaveRiskProfileRequest): Promise<RiskProfileDto> {

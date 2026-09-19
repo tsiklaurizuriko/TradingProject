@@ -17,6 +17,15 @@ export interface MarketQuoteDto {
   highPrice24h?: number;
   lowPrice24h?: number;
   trades24h?: number;
+  scanScore?: number;
+  spreadBps?: number;
+  fundingRate?: number;
+  volatilityPercent?: number;
+  openInterest?: number;
+  eligible?: boolean;
+  eligibilityReason?: string;
+  watchable?: boolean;
+  contractType?: string;
 }
 
 export interface KlineBarDto {
@@ -93,13 +102,32 @@ export interface StrategyDto {
   timeframe: string;
   appliesToAllSymbols: boolean;
   allowedSymbols: string[];
+  templateKey: string;
+  templateLabel: string;
+  allowedSide: string;
+  blurb: string;
   emaFast: number;
   emaSlow: number;
   rsiPeriod: number;
   rsiMinimum: number;
-  stopLossPercent: number;
-  takeProfitPercent: number;
+  rsiLongMax: number;
+  rsiOversold: number;
+  rsiOverbought: number;
+  macdFast: number;
+  macdSlow: number;
+  macdSignal: number;
+  bbPeriod: number;
+  bbStdDev: number;
+  donchianLength: number;
+  requireVolume: boolean;
+  volumeLookback: number;
+  minAtrPercent: number;
+  maxAtrPercent: number;
   versionUsed: boolean;
+  isEnabled: boolean;
+  validationStatus: string;
+  supportedTimeframes: string[];
+  supportedDirections: string[];
 }
 
 export interface SaveStrategyRequest {
@@ -108,12 +136,43 @@ export interface SaveStrategyRequest {
   timeframe: string;
   appliesToAllSymbols: boolean;
   symbols: string[];
+  templateKey: string;
+  allowedSide: string;
   emaFast: number;
   emaSlow: number;
   rsiPeriod: number;
   rsiMinimum: number;
-  stopLossPercent: number;
-  takeProfitPercent: number;
+  rsiLongMax: number;
+  rsiOversold: number;
+  rsiOverbought: number;
+  macdFast: number;
+  macdSlow: number;
+  macdSignal: number;
+  bbPeriod: number;
+  bbStdDev: number;
+  donchianLength: number;
+  requireVolume: boolean;
+  volumeLookback: number;
+  minAtrPercent: number;
+  maxAtrPercent: number;
+}
+
+export interface StrategyPreviewBarDto {
+  time: string;
+  signal: string;
+  close: number;
+  reason: string;
+}
+
+export interface StrategyPreviewDto {
+  strategyId: string;
+  name: string;
+  templateKey: string;
+  symbol: string;
+  timeframe: string;
+  lastSignal: string;
+  lastReason: string;
+  bars: StrategyPreviewBarDto[];
 }
 
 export interface ExchangeConnectionDto {

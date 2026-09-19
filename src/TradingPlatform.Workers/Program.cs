@@ -31,7 +31,7 @@ try
             .WriteTo.File("logs/workers-.log", rollingInterval: RollingInterval.Day));
 
     builder.Services.AddInfrastructure(builder.Configuration);
-    builder.Services.AddApplication();
+    builder.Services.AddApplication(builder.Configuration);
     builder.Services.AddStrategies();
     builder.Services.AddRisk();
     builder.Services.AddExecution();

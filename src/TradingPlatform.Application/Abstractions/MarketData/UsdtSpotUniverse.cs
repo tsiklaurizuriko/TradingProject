@@ -1,43 +1,35 @@
 namespace TradingPlatform.Application.Abstractions.MarketData;
 
-public sealed record MarketCapCoin(int Rank, string Symbol, string DisplayName);
-
+/// <summary>
+/// Optional pretty labels for well-known bases. This is NOT the trading universe.
+/// Discovery comes from Binance USDⓈ-M exchangeInfo.
+/// </summary>
 public static class UsdtSpotUniverse
 {
-    public static readonly IReadOnlyList<MarketCapCoin> ByMarketCap =
-    [
-        new(1, "BTCUSDT", "Bitcoin"),
-        new(2, "ETHUSDT", "Ethereum"),
-        new(3, "BNBUSDT", "BNB"),
-        new(4, "SOLUSDT", "Solana"),
-        new(5, "XRPUSDT", "XRP"),
-        new(6, "DOGEUSDT", "Dogecoin"),
-        new(7, "SUIUSDT", "Sui"),
-        new(8, "ADAUSDT", "Cardano"),
-        new(9, "LINKUSDT", "Chainlink"),
-        new(10, "AVAXUSDT", "Avalanche"),
-        new(11, "TRXUSDT", "TRON"),
-        new(12, "TONUSDT", "Toncoin"),
-        new(13, "DOTUSDT", "Polkadot"),
-        new(14, "LTCUSDT", "Litecoin"),
-        new(15, "BCHUSDT", "Bitcoin Cash")
-    ];
-
-    public static IReadOnlySet<string> Symbols { get; } =
-        ByMarketCap.Select(c => c.Symbol).ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-    public static int RankOf(string symbol)
+    private static readonly Dictionary<string, string> DisplayNames = new(StringComparer.OrdinalIgnoreCase)
     {
-        var match = ByMarketCap.FirstOrDefault(c => c.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase));
-        return match?.Rank ?? int.MaxValue;
-    }
+        ["BTCUSDT"] = "Bitcoin",
+        ["ETHUSDT"] = "Ethereum",
+        ["BNBUSDT"] = "BNB",
+        ["SOLUSDT"] = "Solana",
+        ["XRPUSDT"] = "XRP",
+        ["DOGEUSDT"] = "Dogecoin",
+        ["SUIUSDT"] = "Sui",
+        ["ADAUSDT"] = "Cardano",
+        ["LINKUSDT"] = "Chainlink",
+        ["AVAXUSDT"] = "Avalanche",
+        ["TRXUSDT"] = "TRON",
+        ["TONUSDT"] = "Toncoin",
+        ["DOTUSDT"] = "Polkadot",
+        ["LTCUSDT"] = "Litecoin",
+        ["BCHUSDT"] = "Bitcoin Cash"
+    };
 
     public static string DisplayNameOf(string symbol)
     {
-        var match = ByMarketCap.FirstOrDefault(c => c.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase));
-        if (match is not null)
+        if (DisplayNames.TryGetValue(symbol, out var name))
         {
-            return match.DisplayName;
+            return name;
         }
 
         if (symbol.EndsWith("USDT", StringComparison.OrdinalIgnoreCase) && symbol.Length > 4)
@@ -48,6 +40,6 @@ public static class UsdtSpotUniverse
         return symbol;
     }
 
-    public static IReadOnlyList<T> OrderByMarketCap<T>(IEnumerable<T> items, Func<T, string> symbolSelector) =>
-        items.OrderBy(item => RankOf(symbolSelector(item))).ThenBy(item => symbolSelector(item)).ToList();
+    public static IReadOnlyList<T> OrderBySymbol<T>(IEnumerable<T> items, Func<T, string> symbolSelector) =>
+        items.OrderBy(item => symbolSelector(item), StringComparer.OrdinalIgnoreCase).ToList();
 }

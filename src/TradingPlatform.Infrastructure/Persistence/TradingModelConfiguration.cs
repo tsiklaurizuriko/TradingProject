@@ -109,6 +109,10 @@ internal static class TradingModelConfiguration
             b.HasQueryFilter(x => x.DeletedAt == null);
             b.Property(x => x.Name).HasMaxLength(128).IsRequired();
             b.Property(x => x.AllowedSymbolsCsv).HasMaxLength(4000);
+            b.Property(x => x.TemplateKey).HasMaxLength(32).IsRequired();
+            b.Property(x => x.AllowedSide).HasMaxLength(16).IsRequired();
+            b.Property(x => x.IsEnabled).IsRequired();
+            b.Property(x => x.ValidationStatus).HasMaxLength(32).IsRequired();
         });
         model.Entity<StrategyVersion>(b =>
         {
@@ -284,6 +288,7 @@ internal static class TradingModelConfiguration
             Money(b.Property(x => x.ExitPrice));
             Money(b.Property(x => x.PnL));
             Money(b.Property(x => x.Fees));
+            b.Property(x => x.Side).HasMaxLength(8).IsRequired();
         });
         model.Entity<Notification>().ToTable("Notifications");
         model.Entity<AuditLog>(b =>

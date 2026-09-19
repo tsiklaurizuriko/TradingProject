@@ -50,7 +50,7 @@ public static class ServiceCollectionExtensions
             .AddCheck("self", () => HealthCheckResult.Healthy(), tags: ["live", "ready"])
             .AddCheck<ComponentHealthCheck>("trading-components", tags: ["ready"]);
 
-        services.AddApplication();
+        services.AddApplication(configuration);
         services.AddInfrastructure(configuration);
         AddJwtAuthentication(services, configuration);
         services.AddStrategies();

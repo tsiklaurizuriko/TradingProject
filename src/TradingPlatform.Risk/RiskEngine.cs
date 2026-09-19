@@ -222,7 +222,7 @@ public sealed class RiskEngine : IRiskEngine
             return Reject("No trade signal.");
         }
 
-        if (signal is not SignalType.Buy)
+        if (signal is SignalType.Exit)
         {
             return new RiskEvaluation { Decision = RiskDecision.Approved, Reason = "Exit allowed." };
         }
@@ -265,11 +265,14 @@ public sealed class RiskEngine : IRiskEngine
             return Reject("Maximum simultaneous Isolated positions reached.");
         }
 
+        var side = signal == SignalType.Sell || snapshot.Side == PositionSide.Short
+            ? PositionSide.Short
+            : PositionSide.Long;
         var plan = Plan(
             profile,
             available,
             snapshot.Price,
-            snapshot.Side == PositionSide.Short ? PositionSide.Short : PositionSide.Long,
+            side,
             snapshot.OpenRiskPercent,
             snapshot.Sizing);
         if (!plan.Allowed)

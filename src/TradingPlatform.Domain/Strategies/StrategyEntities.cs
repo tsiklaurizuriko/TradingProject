@@ -12,6 +12,10 @@ public sealed class Strategy : SoftDeletableEntity
     public bool IsArchived { get; set; }
     public bool AppliesToAllSymbols { get; set; } = true;
     public string? AllowedSymbolsCsv { get; set; }
+    public string TemplateKey { get; set; } = "ema_rsi_trend";
+    public string AllowedSide { get; set; } = "Long";
+    public bool IsEnabled { get; set; } = true;
+    public string ValidationStatus { get; set; } = StrategyValidationStatuses.ValidationPending;
     public ICollection<StrategyVersion> Versions { get; set; } = new List<StrategyVersion>();
 }
 
