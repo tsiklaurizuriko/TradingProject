@@ -38,6 +38,8 @@ public sealed class MarketCandle : Entity
     public int? TradeCount { get; set; }
     public bool IsClosed { get; set; }
     public DateTimeOffset ExchangeTimestamp { get; set; }
+    /// <summary>Binance kline taker buy base volume when parsed. Not stored in EF. 0 means unavailable.</summary>
+    public decimal TakerBuyVolume { get; set; }
 }
 
 public sealed class MarketTrade : Entity

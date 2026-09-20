@@ -195,7 +195,27 @@ public sealed record StrategyDto(
     bool IsEnabled,
     string ValidationStatus,
     IReadOnlyList<string> SupportedTimeframes,
-    IReadOnlyList<string> SupportedDirections);
+    IReadOnlyList<string> SupportedDirections,
+    string DataDependencies = "Closed kline candles only.",
+    int EntryLookback = 20,
+    int ExitLookback = 10,
+    int AtrPeriod = 14,
+    decimal AtrStopMultiplier = 2m,
+    int TrendEmaPeriod = 50,
+    bool VolumeFilterEnabled = true,
+    int RelativeVolumePeriod = 20,
+    decimal MinimumRelativeVolume = 1m,
+    decimal MaxVwapDistanceAtr = 0.75m,
+    decimal StopAtrMultiplier = 1.5m,
+    int VolatilityLookback = 100,
+    decimal CompressionPercentile = 0.20m,
+    int AtrExpansionLookback = 20,
+    decimal BreakoutRelativeVolume = 1.2m,
+    int SupertrendPeriod = 10,
+    decimal SupertrendMultiplier = 3m,
+    int AdxPeriod = 14,
+    decimal MinimumAdx = 20m,
+    string Family = "TREND");
 
 public sealed record SaveStrategyRequest(
     string Name,
@@ -221,7 +241,25 @@ public sealed record SaveStrategyRequest(
     bool RequireVolume = true,
     int VolumeLookback = 20,
     decimal MinAtrPercent = 0.15m,
-    decimal MaxAtrPercent = 4m);
+    decimal MaxAtrPercent = 4m,
+    int EntryLookback = 20,
+    int ExitLookback = 10,
+    int AtrPeriod = 14,
+    decimal AtrStopMultiplier = 2m,
+    int TrendEmaPeriod = 50,
+    bool VolumeFilterEnabled = true,
+    int RelativeVolumePeriod = 20,
+    decimal MinimumRelativeVolume = 1m,
+    decimal MaxVwapDistanceAtr = 0.75m,
+    decimal StopAtrMultiplier = 1.5m,
+    int VolatilityLookback = 100,
+    decimal CompressionPercentile = 0.20m,
+    int AtrExpansionLookback = 20,
+    decimal BreakoutRelativeVolume = 1.2m,
+    int SupertrendPeriod = 10,
+    decimal SupertrendMultiplier = 3m,
+    int AdxPeriod = 14,
+    decimal MinimumAdx = 20m);
 
 public sealed record SetStrategyEnabledRequest(bool Enabled);
 

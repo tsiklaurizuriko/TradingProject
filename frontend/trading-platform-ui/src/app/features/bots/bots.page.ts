@@ -3,6 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { TradingService } from '../../core/trading/trading.service';
 import { BotDto, botStatus, modeBadge, signedMoney } from '../../core/trading/trading.models';
+import { ratingFor, ratingSortValue, starText, verdictLabel } from '../../core/trading/strategy-ratings';
 import { ToastService } from '../../core/ui/toast.service';
 import { UiStateService } from '../../core/ui/ui-state.service';
 import { IconComponent } from '../../shared/icon/icon';
@@ -70,12 +71,23 @@ export class BotsPage {
     });
   });
   readonly selectedStrategy = computed(() =>
-    this.trading.strategies().find((row) => row.id === this.strategyId()) ?? this.trading.strategies()[0] ?? null,
+    this.rankedStrategies().find((row) => row.id === this.strategyId()) ?? this.rankedStrategies()[0] ?? null,
   );
+  readonly rankedStrategies = computed(() =>
+    [...this.trading.strategies()].sort((a, b) => ratingSortValue(b.templateKey) - ratingSortValue(a.templateKey)),
+  );
+  readonly ratingFor = ratingFor;
+
+  strategyOptionLabel(row: { name: string; templateKey: string; isEnabled: boolean; appliesToAllSymbols: boolean; allowedSymbols: string[] }): string {
+    const rate = ratingFor(row.templateKey);
+    const coins = row.appliesToAllSymbols ? 'All coins' : `${row.allowedSymbols.length} coins`;
+    const disabled = row.isEnabled === false ? ' · disabled' : '';
+    return `${row.name} · ${starText(rate.stars)} ${verdictLabel(row.templateKey)}${disabled} · ${coins}`;
+  }
   readonly coins = computed(() => {
     const markets = this.trading.markets();
-    const all = markets.length
-      ? markets
+    const all: { symbol: string; displayName: string; eligible?: boolean }[] = markets.length
+      ? markets.map((row) => ({ symbol: row.symbol, displayName: row.displayName, eligible: row.eligible }))
       : this.trading.tickers().map((row) => ({ symbol: row.symbol, displayName: row.displayName }));
     const strategy = this.selectedStrategy();
     const scoped = all.filter((row) => {

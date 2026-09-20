@@ -16,11 +16,11 @@ if (args.Any(a => string.Equals(a, "--benchmark", StringComparison.OrdinalIgnore
 var smoke = args.Any(a => string.Equals(a, "--smoke", StringComparison.OrdinalIgnoreCase));
 var root = FindRepoRoot();
 var cacheDir = Path.Combine(root, "artifacts", "strategy-validation-cache");
-var jobDir = Path.Combine(cacheDir, "job-b");
+var jobDir = Path.Combine(cacheDir, "job-b-metrics-fixed");
 Directory.CreateDirectory(cacheDir);
 Directory.CreateDirectory(jobDir);
 var reportPath = Path.Combine(jobDir, "strategy-audit-report.md");
-var publishedReportPath = Path.Combine(root, "docs", "strategy-audit-report-model-b.md");
+var publishedReportPath = Path.Combine(root, "docs", "strategy-audit-report-model-b-final.md");
 var checkpointPath = Path.Combine(jobDir, "checkpoint.json");
 var perfPath = Path.Combine(jobDir, "perf.jsonl");
 var failuresPath = Path.Combine(jobDir, "failures.jsonl");
@@ -42,13 +42,13 @@ var fetchNotes = new List<string>
         ? "Harness mode: smoke (BTCUSDT 1h). Discovery is unused."
         : $"Harness mode: discovered universe × {string.Join("/", timeframes)} × LONG+SHORT × all templates × IS/VAL/OOS × walk-forward. Candle cache is reused. Checkpoint resume is on. MaxParallelDatasets={maxParallel}."
 };
-fetchNotes.Add("Indicator model: B (causal full-history indicators, independent execution windows). Model A slice-reseeded checkpoints in job/ are stale and must not be resumed.");
+fetchNotes.Add("Indicator model: B (causal full-history indicators, independent execution windows). MetricsVersion=fixed. Exact PnlTotals persisted. Model A job/ and pre-metrics-fix job-b checkpoints must not be resumed.");
 
 var checkpoint = LoadCheckpoint(checkpointPath);
 var pending = datasets
     .Where(ds => !IsDone(checkpoint, ds.Symbol, ds.Timeframe))
     .ToArray();
-Console.WriteLine($"Model B validation. IndicatorModel=B. Checkpoint {jobDir}. EXCLUDING_FUNDING. LIVE disabled. MaxParallelDatasets={maxParallel}.");
+Console.WriteLine($"Model B validation. IndicatorModel=B. MetricsVersion=fixed. Checkpoint {jobDir}. EXCLUDING_FUNDING. LIVE disabled. MaxParallelDatasets={maxParallel}.");
 Console.WriteLine($"Validation universe: {coins.Length} coins, {datasets.Length} datasets, {checkpoint.Done.Count} checkpoint keys, {pending.Length} remaining, MaxParallelDatasets={maxParallel}.");
 
 var jobSw = Stopwatch.StartNew();
@@ -247,13 +247,15 @@ static Checkpoint LoadCheckpoint(string path)
     try
     {
         var loaded = JsonSerializer.Deserialize<Checkpoint>(File.ReadAllText(path)) ?? new Checkpoint();
-        if (!string.Equals(loaded.IndicatorModel, "B", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(loaded.IndicatorModel, "B", StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(loaded.MetricsVersion, "fixed", StringComparison.OrdinalIgnoreCase))
         {
-            Console.WriteLine("Ignoring stale Model A checkpoint. Full-universe validation must be rerun under Model B.");
-            return new Checkpoint { IndicatorModel = "B" };
+            Console.WriteLine("Ignoring stale checkpoint. This run requires IndicatorModel=B and MetricsVersion=fixed.");
+            return new Checkpoint();
         }
 
         loaded.IndicatorModel = "B";
+        loaded.MetricsVersion = "fixed";
         return loaded;
     }
     catch
@@ -286,6 +288,7 @@ static void MergeInto(Checkpoint checkpoint, IReadOnlyList<TemplateValidationRes
 internal sealed class Checkpoint
 {
     public string IndicatorModel { get; set; } = "B";
+    public string MetricsVersion { get; set; } = "fixed";
     public List<string> Done { get; set; } = [];
     public Dictionary<string, TemplateValidationResult> Templates { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }

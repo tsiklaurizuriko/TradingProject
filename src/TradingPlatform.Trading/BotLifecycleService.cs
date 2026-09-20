@@ -1566,7 +1566,25 @@ public sealed class TradingQueryService : ITradingQueryService
                 request.RequireVolume,
                 request.VolumeLookback,
                 request.MinAtrPercent,
-                request.MaxAtrPercent));
+                request.MaxAtrPercent),
+            request.EntryLookback,
+            request.ExitLookback,
+            request.AtrPeriod,
+            request.AtrStopMultiplier,
+            request.TrendEmaPeriod,
+            request.VolumeFilterEnabled,
+            request.RelativeVolumePeriod,
+            request.MinimumRelativeVolume,
+            request.MaxVwapDistanceAtr,
+            request.StopAtrMultiplier,
+            request.VolatilityLookback,
+            request.CompressionPercentile,
+            request.AtrExpansionLookback,
+            request.BreakoutRelativeVolume,
+            request.SupertrendPeriod,
+            request.SupertrendMultiplier,
+            request.AdxPeriod,
+            request.MinimumAdx);
 
     private static void EnsureStrategyEnabled(Strategy strategy)
     {
@@ -1622,7 +1640,27 @@ public sealed class TradingQueryService : ITradingQueryService
                 ? StrategyValidationStatuses.ValidationPending
                 : strategy.ValidationStatus,
             StrategyTemplateKeys.SupportedTimeframes,
-            StrategyTemplateKeys.SupportedDirections);
+            StrategyTemplateKeys.SupportedDirections,
+            StrategyTemplates.DataDependencies(template),
+            parsed.EntryLookback,
+            parsed.ExitLookback,
+            parsed.AtrPeriod,
+            parsed.AtrStopMultiplier,
+            parsed.TrendEmaPeriod,
+            parsed.VolumeFilterEnabled,
+            parsed.RelativeVolumePeriod,
+            parsed.MinimumRelativeVolume,
+            parsed.MaxVwapDistanceAtr,
+            parsed.StopAtrMultiplier,
+            parsed.VolatilityLookback,
+            parsed.CompressionPercentile,
+            parsed.AtrExpansionLookback,
+            parsed.BreakoutRelativeVolume,
+            parsed.SupertrendPeriod,
+            parsed.SupertrendMultiplier,
+            parsed.AdxPeriod,
+            parsed.MinimumAdx,
+            StrategyTemplateKeys.Family(template));
     }
 
     private static RiskProfileDto MapRisk(RiskProfile risk) =>

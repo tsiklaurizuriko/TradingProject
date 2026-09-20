@@ -329,6 +329,7 @@ public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
                 Close = Dec(row[4]),
                 Volume = Dec(row[5]),
                 TradeCount = row[8].GetInt32(),
+                TakerBuyVolume = row.GetArrayLength() > 9 ? Dec(row[9]) : 0m,
                 IsClosed = true,
                 ExchangeTimestamp = closeTime
             });

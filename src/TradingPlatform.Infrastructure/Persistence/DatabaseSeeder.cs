@@ -209,83 +209,203 @@ public sealed class DatabaseSeeder
     private async Task SeedStrategiesAsync(CancellationToken cancellationToken)
     {
         var admin = await _db.Users.FirstAsync(cancellationToken);
-        var existing = await _db.Strategies.ToListAsync(cancellationToken);
-        foreach (var strategy in existing)
-        {
-            if (!strategy.AppliesToAllSymbols && string.IsNullOrWhiteSpace(strategy.AllowedSymbolsCsv))
-            {
-                strategy.AppliesToAllSymbols = true;
-            }
-
-            if (string.Equals(strategy.Name, "EMA RSI Strategy", StringComparison.OrdinalIgnoreCase))
-            {
-                strategy.TemplateKey = StrategyTemplateKeys.EmaRsiTrend;
-                strategy.AllowedSide = StrategySides.Long;
-            }
-        }
-
-        var known = existing
-            .Select(s => s.TemplateKey)
-            .Where(k => !string.IsNullOrWhiteSpace(k))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (existing.Any(s => string.Equals(s.Name, "EMA RSI Strategy", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(s.Name, "EMA RSI Trend", StringComparison.OrdinalIgnoreCase)))
-        {
-            known.Add(StrategyTemplateKeys.EmaRsiTrend);
-        }
-
+        var existing = await _db.Strategies.Include(s => s.Versions).ToListAsync(cancellationToken);
         foreach (var row in Catalog)
         {
-            if (known.Contains(row.Key))
+            var strategy = existing.FirstOrDefault(s => MatchesCatalog(s, row.Key, row.Name));
+            var parameters = StrategyTemplates.DefaultsFor(row.Key, qualityOn: !row.Research) with
             {
+                AllowedSide = StrategySides.Both,
+                Timeframe = "5m"
+            };
+            if (strategy is null)
+            {
+                strategy = new Strategy
+                {
+                    UserId = admin.Id,
+                    User = admin,
+                    Name = row.Name,
+                    Description = row.Description,
+                    AppliesToAllSymbols = true,
+                    TemplateKey = row.Key,
+                    AllowedSide = StrategySides.Both,
+                    IsEnabled = !row.Research,
+                    ValidationStatus = row.Research
+                        ? StrategyTemplates.ResearchStatus(row.Key)
+                        : StrategyValidationStatuses.ValidationPending
+                };
+                strategy.Versions.Add(new StrategyVersion
+                {
+                    Strategy = strategy,
+                    VersionNumber = 1,
+                    DefinitionJson = StrategyTemplates.Build(strategy.Name, 1, parameters),
+                    Symbol = "BTCUSDT",
+                    Timeframe = Timeframe.FiveMinutes
+                });
+                _db.Strategies.Add(strategy);
                 continue;
             }
 
-            var parameters = StrategyTemplates.DefaultsFor(row.Key, row.QualityOn) with
-            {
-                AllowedSide = StrategySides.Long,
-                Timeframe = "5m"
-            };
-            var strategy = new Strategy
-            {
-                UserId = admin.Id,
-                User = admin,
-                Name = row.Name,
-                Description = row.Description,
-                AppliesToAllSymbols = true,
-                TemplateKey = row.Key,
-                AllowedSide = StrategySides.Long
-            };
-            strategy.Versions.Add(new StrategyVersion
-            {
-                Strategy = strategy,
-                VersionNumber = 1,
-                DefinitionJson = StrategyTemplates.Build(strategy.Name, 1, parameters),
-                Symbol = "BTCUSDT",
-                Timeframe = Timeframe.FiveMinutes
-            });
-            _db.Strategies.Add(strategy);
-            known.Add(row.Key);
+            AlignCatalogStrategy(strategy, row, parameters);
         }
     }
 
-    private static readonly (string Key, string Name, string Description, bool QualityOn)[] Catalog =
+    private static bool MatchesCatalog(Strategy strategy, string templateKey, string name) =>
+        string.Equals(strategy.TemplateKey, templateKey, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(strategy.Name, name, StringComparison.OrdinalIgnoreCase)
+        || (templateKey == StrategyTemplateKeys.EmaRsiTrend
+            && string.Equals(strategy.Name, "EMA RSI Strategy", StringComparison.OrdinalIgnoreCase));
+
+    private static void AlignCatalogStrategy(
+        Strategy strategy,
+        (string Key, string Name, string Description, bool Research) row,
+        StrategyTemplateParams parameters)
+    {
+        strategy.TemplateKey = row.Key;
+        strategy.AllowedSide = StrategySides.Both;
+        strategy.AppliesToAllSymbols = true;
+        if (!row.Research)
+        {
+            strategy.IsEnabled = true;
+            strategy.ValidationStatus = StrategyValidationStatuses.ValidationPending;
+        }
+        else if (string.IsNullOrWhiteSpace(strategy.ValidationStatus)
+            || strategy.ValidationStatus == StrategyValidationStatuses.ValidationPending)
+        {
+            strategy.IsEnabled = false;
+            strategy.ValidationStatus = StrategyTemplates.ResearchStatus(row.Key);
+        }
+        if (string.IsNullOrWhiteSpace(strategy.Description))
+        {
+            strategy.Description = row.Description;
+        }
+
+        var latest = strategy.Versions.OrderByDescending(v => v.VersionNumber).FirstOrDefault();
+        var current = latest is null ? null : StrategyTemplates.Read(latest.DefinitionJson);
+        var legacy = latest is not null && LooksLegacyDefinition(latest.DefinitionJson);
+        var mismatch = latest is null
+            || legacy
+            || current is null
+            || current.TemplateKey != parameters.TemplateKey
+            || current.AllowedSide != parameters.AllowedSide
+            || current.Timeframe != parameters.Timeframe
+            || current.Quality?.RequireVolume != true
+            || current.Quality?.VolumeLookback != 20
+            || current.Quality?.MinAtrPercent != 0.15m
+            || current.Quality?.MaxAtrPercent != 4m
+            || current.EmaFast != parameters.EmaFast
+            || current.EmaSlow != parameters.EmaSlow
+            || current.RsiPeriod != parameters.RsiPeriod
+            || current.RsiMinimum != parameters.RsiMinimum
+            || current.RsiLongMax != parameters.RsiLongMax
+            || current.RsiOversold != parameters.RsiOversold
+            || current.RsiOverbought != parameters.RsiOverbought
+            || current.MacdFast != parameters.MacdFast
+            || current.MacdSlow != parameters.MacdSlow
+            || current.MacdSignal != parameters.MacdSignal
+            || current.BbPeriod != parameters.BbPeriod
+            || current.BbStdDev != parameters.BbStdDev
+            || current.DonchianLength != parameters.DonchianLength;
+        if (!mismatch)
+        {
+            return;
+        }
+
+        if (latest is null || latest.IsImmutable)
+        {
+            var versionNumber = (latest?.VersionNumber ?? 0) + 1;
+            strategy.Versions.Add(new StrategyVersion
+            {
+                Strategy = strategy,
+                VersionNumber = versionNumber,
+                DefinitionJson = StrategyTemplates.Build(strategy.Name, versionNumber, parameters),
+                Symbol = "BTCUSDT",
+                Timeframe = Timeframe.FiveMinutes
+            });
+            return;
+        }
+
+        latest.DefinitionJson = StrategyTemplates.Build(strategy.Name, latest.VersionNumber, parameters);
+        latest.Timeframe = Timeframe.FiveMinutes;
+        latest.UpdatedAt = DateTimeOffset.UtcNow;
+    }
+
+    private static bool LooksLegacyDefinition(string json) =>
+        json.Contains("\"entry\"", StringComparison.OrdinalIgnoreCase)
+        && !json.Contains("\"template\"", StringComparison.OrdinalIgnoreCase);
+
+    private static readonly (string Key, string Name, string Description, bool Research)[] Catalog =
     [
         (StrategyTemplateKeys.EmaRsiTrend, "EMA RSI Trend",
-            "Closed-candle EMA cross with an RSI band. Quality filters skip some noisy setups; they do not cap loss at Planned Risk.",
-            false),
+            "Closed-candle EMA cross with an RSI band. Quality filters skip some noisy setups; they do not cap loss at Planned Risk.", false),
         (StrategyTemplateKeys.MacdTrend, "MACD Trend",
-            "Closed-candle MACD cross with histogram and slow EMA confirmation. Filters skip some noisy setups; they are not a profit claim.",
-            true),
+            "Closed-candle MACD cross with histogram and slow EMA confirmation. Filters skip some noisy setups; they are not a profit claim.", false),
         (StrategyTemplateKeys.RsiPullback, "RSI Pullback",
-            "Trend-aligned RSI pullback. LONG only above the slow EMA at oversold. Filters skip some noisy setups; they are not a profit claim.",
-            true),
+            "Trend-aligned RSI pullback. LONG above the slow EMA at oversold, SHORT below at overbought. Filters skip some noisy setups; they are not a profit claim.", false),
         (StrategyTemplateKeys.BollingerReversion, "Bollinger Reversion",
-            "Close returns inside the Bollinger band while still on the slow EMA side. Filters skip some noisy setups; they are not a profit claim.",
-            true),
+            "Close returns inside the Bollinger band while still on the slow EMA side. Filters skip some noisy setups; they are not a profit claim.", false),
         (StrategyTemplateKeys.DonchianBreakout, "Donchian Breakout",
-            "Close breaks the N-bar Donchian high or low. Filters skip some noisy setups; they are not a profit claim.",
-            true)
+            "Close breaks the N-bar Donchian high or low. Filters skip some noisy setups; they are not a profit claim.", false),
+        (StrategyTemplateKeys.TurtleTsm, "Turtle Time-Series Momentum",
+            "Systematic trend-following strategy using prior-range breakouts, EMA trend confirmation and ATR-based volatility control.", true),
+        (StrategyTemplateKeys.VwapPullbackTrend, "VWAP Pullback Trend",
+            "Trend-following pullback strategy using VWAP, EMA structure, RSI confirmation and volatility-aware stops.", true),
+        (StrategyTemplateKeys.VolatilityBreakout, "Volatility Breakout",
+            "Volatility-compression breakout strategy using Bollinger width, ATR expansion and relative volume.", true),
+        (StrategyTemplateKeys.SupertrendEmaTrend, "Supertrend EMA Trend",
+            "Trend-following strategy using Supertrend direction, EMA structure and ADX trend-strength confirmation.", true),
+        (StrategyTemplateKeys.OiPriceMomentum, "Open Interest Price Momentum",
+            "Futures-specific strategy researching conditional relationships between price movement, open interest, volume and trend.", true),
+        (StrategyTemplateKeys.FundingOiRegime, "Funding Rate Price OI Regime",
+            "Perpetual-futures strategy researching funding extremes together with price momentum and open-interest regimes.", true),
+        (StrategyTemplateKeys.VpVwapReversion, "Volume Profile VWAP Mean Reversion",
+            "Research whether VAL/VAH rejections revert toward POC/VWAP outside strong-trend regimes.", true),
+        (StrategyTemplateKeys.LiqSweepReversal, "Liquidity Sweep Reversal",
+            "Research failed breaks of causally confirmed swing highs/lows followed by a close back through the level.", true),
+        (StrategyTemplateKeys.LiqSweepContinuation, "Liquidity Sweep Breakout Continuation",
+            "Research sweeps that hold beyond the level with volume as breakout continuation, separate from reversal.", true),
+        (StrategyTemplateKeys.FundingBasisRv, "Funding Basis Carry Relative Value",
+            "Research funding and basis extremes. Requires aligned funding/index. Not fabricated.", true),
+        (StrategyTemplateKeys.FundingOiReversal, "Funding Extreme OI Price Reversal",
+            "Research extreme funding plus OI and price displacement as a reversal hypothesis.", true),
+        (StrategyTemplateKeys.TakerFlowMomentum, "Taker Flow Volume Imbalance Momentum",
+            "Research persistent taker buy/sell imbalance with price and volume confirmation.", true),
+        (StrategyTemplateKeys.OiPriceVolumeRegime, "OI Price Volume Regime",
+            "Research conditional expectancy of price/OI/volume states without pre-assigned labels.", true),
+        (StrategyTemplateKeys.VwapDeviationReversion, "VWAP Deviation Reversion",
+            "Research ATR-scaled VWAP deviations with rejection and a trend-regime filter.", true),
+        (StrategyTemplateKeys.VwapBreakoutVolume, "VWAP Breakout Volume",
+            "Research VWAP-aligned local breakouts with relative volume, on transition only.", true),
+        (StrategyTemplateKeys.FailedBreakoutReversal, "Failed Breakout Reversal",
+            "Research Donchian breakouts that fail to hold and close back inside the range.", true),
+        (StrategyTemplateKeys.VolSqueezeStructure, "Volatility Squeeze Structure Break",
+            "Research Bollinger/Keltner compression then expansion with a structure break and volume.", true),
+        (StrategyTemplateKeys.MarketStructureTrend, "Market Structure Trend Continuation",
+            "Research causal HH/HL or LH/LL continuation on a new confirmed swing.", true),
+        (StrategyTemplateKeys.MarketStructurePullback, "Market Structure Pullback",
+            "Research pullbacks to EMA/VWAP while causal market structure stays intact.", true),
+        (StrategyTemplateKeys.AtrNormalizedMomentum, "ATR-Normalized Momentum",
+            "Research (Close[t]-Close[t-N])/ATR with trend and a persistence transition.", true),
+        (StrategyTemplateKeys.MtfTrendStructure, "Multi-Timeframe Trend LTF Structure",
+            "Research last-completed HTF EMA trend with LTF structure/pullback entry.", true),
+        (StrategyTemplateKeys.ZscoreMeanReversion, "Z-Score Statistical Mean Reversion",
+            "Research rolling close Z-score extremes with mean reversion disabled in strong ADX.", true),
+        (StrategyTemplateKeys.CryptoPairsArb, "Crypto Pairs Statistical Arbitrage",
+            "Research rolling cointegrated crypto spreads. Causal pair selection only.", true),
+        (StrategyTemplateKeys.XsRelativeStrength, "Cross-Sectional Relative Strength Momentum",
+            "Research cross-sectional momentum ranks. Requires a universe snapshot.", true),
+        (StrategyTemplateKeys.RegimeStrategyRouter, "Regime-Adaptive Strategy Router",
+            "Deferred interpretable router. Must not be fit on OOS.", true),
+        (StrategyTemplateKeys.FundingPriceMomentum, "Funding Price Momentum",
+            "Research funding with price momentum as continuation vs contrarian. Not LIVE.", true),
+        (StrategyTemplateKeys.FundingExtremeMomentumExhaustion, "Funding Extreme Momentum Exhaustion",
+            "Research funding extremes with weakening momentum. Not LIVE.", true),
+        (StrategyTemplateKeys.BasisMeanReversion, "Basis Mean Reversion",
+            "Research normalized basis z-score as reversion and continuation separately. Not LIVE.", true),
+        (StrategyTemplateKeys.FundingBasisVwap, "Funding Basis VWAP",
+            "Research funding + basis + VWAP deviation. Not LIVE.", true),
+        (StrategyTemplateKeys.OiBreakoutConfirmation, "OI Breakout Confirmation",
+            "Research whether OI expansion adds information to a volume breakout. OI_SAMPLE_LIMITED. Not LIVE.", true)
     ];
 
     private async Task UpsertSystemRiskAsync(

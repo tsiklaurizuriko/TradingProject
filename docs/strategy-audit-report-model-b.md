@@ -1,3 +1,9 @@
+# PRE-METRICS-FIX
+
+This file is the original Model B full-universe report. Universe-level LONG/SHORT profit factors, combined return %, max-of-max drawdown, Sharpe copy, walk-forward median PF (including empty windows and the 99 sentinel), and regime median PFs in this file are **not** to be reused.
+
+Corrected aggregation is documented in `docs/strategy-audit-report-model-b-metrics-fixed.md`. Combined net PnL, fees, and trade counts in this file remain usable as sums of independent books.
+
 # Strategy audit report
 
 Factual historical simulation only. **Not** a profit forecast. Nothing here enables LIVE.

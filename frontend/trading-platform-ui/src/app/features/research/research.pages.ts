@@ -15,6 +15,14 @@ import {
 import { ListQuery, timeValue } from '../../shared/lists/list-query';
 import { SortBtnComponent } from '../../shared/lists/list-tools';
 import { ToastService } from '../../core/ui/toast.service';
+import { IconComponent } from '../../shared/icon/icon';
+import {
+  ratingFor,
+  ratingMeta,
+  ratingSortValue,
+  starSlots,
+  verdictLabel,
+} from '../../core/trading/strategy-ratings';
 
 interface StrategyDraft {
   name: string;
@@ -41,6 +49,24 @@ interface StrategyDraft {
   volumeLookback: number;
   minAtrPercent: number;
   maxAtrPercent: number;
+  entryLookback: number;
+  exitLookback: number;
+  atrPeriod: number;
+  atrStopMultiplier: number;
+  trendEmaPeriod: number;
+  volumeFilterEnabled: boolean;
+  relativeVolumePeriod: number;
+  minimumRelativeVolume: number;
+  maxVwapDistanceAtr: number;
+  stopAtrMultiplier: number;
+  volatilityLookback: number;
+  compressionPercentile: number;
+  atrExpansionLookback: number;
+  breakoutRelativeVolume: number;
+  supertrendPeriod: number;
+  supertrendMultiplier: number;
+  adxPeriod: number;
+  minimumAdx: number;
 }
 
 const timeframes = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '1d'];
@@ -50,6 +76,36 @@ const templateOptions = [
   { key: 'rsi_pullback', label: 'RSI Pullback' },
   { key: 'bollinger_reversion', label: 'Bollinger Reversion' },
   { key: 'donchian_breakout', label: 'Donchian Breakout' },
+  { key: 'turtle_tsm', label: 'Turtle Time-Series Momentum' },
+  { key: 'vwap_pullback_trend', label: 'VWAP Pullback Trend' },
+  { key: 'volatility_breakout', label: 'Volatility Breakout' },
+  { key: 'supertrend_ema_trend', label: 'Supertrend EMA Trend' },
+  { key: 'oi_price_momentum', label: 'Open Interest Price Momentum' },
+  { key: 'funding_oi_regime', label: 'Funding Rate Price OI Regime' },
+  { key: 'vp_vwap_reversion', label: 'Volume Profile VWAP Mean Reversion' },
+  { key: 'liq_sweep_reversal', label: 'Liquidity Sweep Reversal' },
+  { key: 'liq_sweep_continuation', label: 'Liquidity Sweep Breakout Continuation' },
+  { key: 'funding_basis_rv', label: 'Funding Basis Carry Relative Value' },
+  { key: 'funding_oi_reversal', label: 'Funding Extreme OI Price Reversal' },
+  { key: 'taker_flow_momentum', label: 'Taker Flow Volume Imbalance Momentum' },
+  { key: 'oi_price_volume_regime', label: 'OI Price Volume Regime' },
+  { key: 'vwap_deviation_reversion', label: 'VWAP Deviation Reversion' },
+  { key: 'vwap_breakout_volume', label: 'VWAP Breakout Volume' },
+  { key: 'failed_breakout_reversal', label: 'Failed Breakout Reversal' },
+  { key: 'vol_squeeze_structure', label: 'Volatility Squeeze Structure Break' },
+  { key: 'market_structure_trend', label: 'Market Structure Trend Continuation' },
+  { key: 'market_structure_pullback', label: 'Market Structure Pullback' },
+  { key: 'atr_normalized_momentum', label: 'ATR-Normalized Momentum' },
+  { key: 'mtf_trend_structure', label: 'Multi-Timeframe Trend LTF Structure' },
+  { key: 'zscore_mean_reversion', label: 'Z-Score Statistical Mean Reversion' },
+  { key: 'crypto_pairs_arb', label: 'Crypto Pairs Statistical Arbitrage' },
+  { key: 'xs_relative_strength', label: 'Cross-Sectional Relative Strength Momentum' },
+  { key: 'regime_strategy_router', label: 'Regime-Adaptive Strategy Router' },
+  { key: 'funding_price_momentum', label: 'Funding Price Momentum' },
+  { key: 'funding_extreme_momentum_exhaustion', label: 'Funding Extreme Momentum Exhaustion' },
+  { key: 'basis_mean_reversion', label: 'Basis Mean Reversion' },
+  { key: 'funding_basis_vwap', label: 'Funding Basis VWAP' },
+  { key: 'oi_breakout_confirmation', label: 'OI Breakout Confirmation' },
 ] as const;
 const sideOptions = [
   { key: 'Long', label: 'Long' },
@@ -58,20 +114,162 @@ const sideOptions = [
 ] as const;
 const templateLogic: Record<string, string> = {
   ema_rsi_trend:
-    'LONG: სწრაფი EMA ნელს ზემოთ კვეთს, ფასი ნელ EMA-ზე მაღალია და RSI min–max შუალედშია (ნაგულისხმევი 50–68). SHORT: პირიქით. გამოსვლა: საპირისპირო EMA გადაკვეთა.',
+    'ახალ ტრენდს იწყებს: სწრაფი EMA ნელს კვეთს, RSI ადასტურებს. მიზანი — მიმართულების ცვლილება, სუსტი გადაკვეთების გარეშე.',
   macd_trend:
-    'LONG: MACD სიგნალს ზემოთ კვეთს, ჰისტოგრამა დადებითია და ფასი ნელ EMA-ზე მაღალია. SHORT: პირიქით. გამოსვლა: საპირისპირო MACD გადაკვეთა.',
+    'იმპულსის გადაკვეთას მიყვება (MACD × სიგნალი, ჰისტოგრამა, ნელი EMA). მიზანი — ტრენდის გაგრძელება, არა მოკლე ხმაური.',
   rsi_pullback:
-    'LONG მხოლოდ აღმავალ ტრენდში (ფასი ნელ EMA-ზე მაღალია), როცა RSI oversold-ს ქვემოდან კვეთს. SHORT მხოლოდ დაღმავალ ტრენდში overbought-ზე. გამოსვლა: RSI ისევ 50-ს კვეთს.',
+    'ტრენდში უკან დახევას იჭერს: RSI oversold/overbought-იდან ბრუნდება. მიზანი — ტრენდში იაფ შესვლა, არა წვერზე ნადირობა.',
   bollinger_reversion:
-    'LONG: ფასი ქვედა ბოლინჯერის ზოლში ისევ იხურება და ნელ EMA-ზე მაღალი რჩება. SHORT: სარკისებურად. გამოსვლა: შუა ზოლზე.',
+    'ზოლიდან გადახრილ ფასს შუაში აბრუნებს. მიზანი — ექსტრემის კორექცია, არა გარღვევა.',
   donchian_breakout:
-    'LONG: დახურვა N-სანთლის მაქსიმუმს არღვევს. SHORT: დახურვა N-სანთლის მინიმუმს არღვევს. გამოსვლა: საპირისპირო ზოლზე.',
+    'ბოლო N სანთლის მაღალ/დაბალ ზოლს არღვევს და იმ მიმართულებით შედის. მიზანი — ახალი ექსტრემის გაგრძელება.',
+  turtle_tsm:
+    'Systematic trend-following strategy using prior-range breakouts, EMA trend confirmation and ATR-based volatility control.',
+  vwap_pullback_trend:
+    'Trend-following pullback strategy using VWAP, EMA structure, RSI confirmation and volatility-aware stops.',
+  volatility_breakout:
+    'Volatility-compression breakout strategy using Bollinger width, ATR expansion and relative volume.',
+  supertrend_ema_trend:
+    'Trend-following strategy using Supertrend direction, EMA structure and ADX trend-strength confirmation.',
+  oi_price_momentum:
+    'Futures-specific strategy researching conditional relationships between price movement, open interest, volume and trend.',
+  funding_oi_regime:
+    'Perpetual-futures strategy researching funding extremes together with price momentum and open-interest regimes.',
+  vp_vwap_reversion:
+    'Research whether VAL/VAH rejections revert toward POC/VWAP outside strong-trend regimes.',
+  liq_sweep_reversal:
+    'Research failed breaks of causally confirmed swing highs/lows followed by a close back through the level.',
+  liq_sweep_continuation:
+    'Research sweeps that hold beyond the level with volume as breakout continuation, separate from reversal.',
+  funding_basis_rv:
+    'Research funding and basis extremes. Requires aligned funding/index. Not fabricated.',
+  funding_oi_reversal:
+    'Research extreme funding plus OI and price displacement as a reversal hypothesis.',
+  taker_flow_momentum:
+    'Research persistent taker buy/sell imbalance with price and volume confirmation.',
+  oi_price_volume_regime:
+    'Research conditional expectancy of price/OI/volume states without pre-assigned labels.',
+  vwap_deviation_reversion:
+    'Research ATR-scaled VWAP deviations with rejection and a trend-regime filter.',
+  vwap_breakout_volume:
+    'Research VWAP-aligned local breakouts with relative volume, on transition only.',
+  failed_breakout_reversal:
+    'Research Donchian breakouts that fail to hold and close back inside the range.',
+  vol_squeeze_structure:
+    'Research Bollinger/Keltner compression then expansion with a structure break and volume.',
+  market_structure_trend:
+    'Research causal HH/HL or LH/LL continuation on a new confirmed swing.',
+  market_structure_pullback:
+    'Research pullbacks to EMA/VWAP while causal market structure stays intact.',
+  atr_normalized_momentum:
+    'Research (Close[t]-Close[t-N])/ATR with trend and a persistence transition.',
+  mtf_trend_structure:
+    'Research last-completed HTF EMA trend with LTF structure/pullback entry.',
+  zscore_mean_reversion:
+    'Research rolling close Z-score extremes with mean reversion disabled in strong ADX.',
+  crypto_pairs_arb:
+    'Research rolling cointegrated crypto spreads. Causal pair selection only.',
+  xs_relative_strength:
+    'Research cross-sectional momentum ranks. Requires a universe snapshot.',
+  regime_strategy_router:
+    'Deferred interpretable router. Must not be fit on OOS.',
+  funding_price_momentum:
+    'Research funding with price momentum as continuation vs contrarian. Not LIVE.',
+  funding_extreme_momentum_exhaustion:
+    'Research funding extremes with weakening momentum. Not LIVE.',
+  basis_mean_reversion:
+    'Research normalized basis z-score as reversion and continuation separately. Not LIVE.',
+  funding_basis_vwap:
+    'Research funding + basis + VWAP deviation. Not LIVE.',
+  oi_breakout_confirmation:
+    'Research whether OI expansion adds information to a volume breakout. OI_SAMPLE_LIMITED. Not LIVE.',
 };
+
+const dataDependencies: Record<string, string> = {
+  oi_price_momentum: 'Historical open interest, timestamp-aligned. Missing series = DATA_UNAVAILABLE.',
+  funding_oi_regime: 'Historical funding + open interest, timestamp-aligned. Missing series = DATA_UNAVAILABLE.',
+  funding_basis_rv: 'Historical funding, mark, and index/basis. Missing series = DATA_UNAVAILABLE.',
+  funding_oi_reversal: 'Historical funding and open interest. Missing series = DATA_UNAVAILABLE.',
+  taker_flow_momentum: 'Kline taker buy volume. Missing field = DATA_UNAVAILABLE.',
+  oi_price_volume_regime: 'Historical open interest plus OHLCV. Missing OI = DATA_UNAVAILABLE.',
+  crypto_pairs_arb: 'Multi-symbol OHLCV with causal pair windows. Single-book = DATA_UNAVAILABLE.',
+  xs_relative_strength: 'Universe snapshot at each timestamp. Single-book = DATA_UNAVAILABLE.',
+  mtf_trend_structure: 'Entry OHLCV plus last completed HTF candles only.',
+  vp_vwap_reversion: 'OHLCV and volume. Volume profile reconstructed from typical-price × volume.',
+  funding_price_momentum: 'OHLCV + settled funding. Missing = DATA_UNAVAILABLE.',
+  funding_extreme_momentum_exhaustion: 'OHLCV + settled funding. Missing = DATA_UNAVAILABLE.',
+  basis_mean_reversion: 'OHLCV + mark/index/basis. Missing = DATA_UNAVAILABLE.',
+  funding_basis_vwap: 'OHLCV + funding + basis. Missing = DATA_UNAVAILABLE.',
+  oi_breakout_confirmation: 'OHLCV + OI. OI_SAMPLE_LIMITED (~29d).',
+};
+
+const frozenKeys = new Set([
+  'ema_rsi_trend',
+  'macd_trend',
+  'rsi_pullback',
+  'bollinger_reversion',
+  'donchian_breakout',
+]);
+
+function isResearchOnly(key: string | undefined): boolean {
+  return !!key && !frozenKeys.has(key);
+}
+
+function familyFor(key: string | undefined, fallback?: string): string {
+  if (fallback) {
+    return fallback;
+  }
+  switch (key) {
+    case 'vp_vwap_reversion':
+    case 'vwap_deviation_reversion':
+    case 'zscore_mean_reversion':
+    case 'crypto_pairs_arb':
+    case 'bollinger_reversion':
+      return 'MEAN REVERSION';
+    case 'liq_sweep_reversal':
+    case 'failed_breakout_reversal':
+    case 'funding_oi_reversal':
+      return 'REVERSAL';
+    case 'turtle_tsm':
+    case 'volatility_breakout':
+    case 'vol_squeeze_structure':
+    case 'atr_normalized_momentum':
+    case 'liq_sweep_continuation':
+    case 'vwap_breakout_volume':
+    case 'donchian_breakout':
+      return 'BREAKOUT / TREND';
+    case 'vwap_pullback_trend':
+    case 'supertrend_ema_trend':
+    case 'market_structure_trend':
+    case 'market_structure_pullback':
+    case 'mtf_trend_structure':
+      return 'TREND / STRUCTURE';
+    case 'regime_strategy_router':
+      return 'ROUTER';
+    case 'oi_price_momentum':
+    case 'funding_oi_regime':
+    case 'funding_basis_rv':
+    case 'taker_flow_momentum':
+    case 'oi_price_volume_regime':
+    case 'xs_relative_strength':
+    case 'funding_price_momentum':
+    case 'funding_extreme_momentum_exhaustion':
+    case 'basis_mean_reversion':
+    case 'funding_basis_vwap':
+    case 'oi_breakout_confirmation':
+      return 'FUTURES / FLOW';
+    default:
+      return 'TREND';
+  }
+}
+
+function depsFor(key: string): string {
+  return dataDependencies[key] || 'Closed kline candles only.';
+}
 
 @Component({
   selector: 'app-strategies-page',
-  imports: [FormsModule, NgTemplateOutlet, SortBtnComponent],
+  imports: [FormsModule, NgTemplateOutlet, SortBtnComponent, IconComponent],
   styleUrl: './strategies.page.scss',
   template: `
     <div class="strategies-page">
@@ -80,10 +278,66 @@ const templateLogic: Record<string, string> = {
           <div class="list-sorts">
             <app-sort-btn column="name" [query]="list">Name</app-sort-btn>
             <app-sort-btn column="tf" [query]="list">TF</app-sort-btn>
+            <app-sort-btn column="rating" [query]="list">Rating</app-sort-btn>
           </div>
-          <p class="tiny">Signal only — when to enter or flatten. Size, stop, and take profit stay on Risk.</p>
+          <p class="tiny">ვარსკვლავი ოპერატორისთვისაა: რომელი PAPER-ზე და რომელი არა. არცერთი არ არის მომგებიანი. 5★ არ არსებობს. LIVE გამორთულია. Size/SL/TP რჩება Risk-ზე.</p>
         </div>
         <div class="strategies-toolbar-actions">
+          <label class="field">Use
+            <select [ngModel]="useFilter()" (ngModelChange)="useFilter.set($event)">
+              <option value="">All</option>
+              <option value="paper">გამოიყენე PAPER-ზე</option>
+              <option value="weak">სუსტი</option>
+              <option value="avoid">არ გამოიყენო</option>
+              <option value="blocked">ვერ გაეშვება</option>
+            </select>
+          </label>
+          <label class="field">Family
+            <select [ngModel]="familyFilter()" (ngModelChange)="familyFilter.set($event)">
+              <option value="">All families</option>
+              <option value="TREND">TREND</option>
+              <option value="TREND / STRUCTURE">TREND / STRUCTURE</option>
+              <option value="BREAKOUT / TREND">BREAKOUT / TREND</option>
+              <option value="MEAN REVERSION">MEAN REVERSION</option>
+              <option value="REVERSAL">REVERSAL</option>
+              <option value="FUTURES / FLOW">FUTURES / FLOW</option>
+              <option value="ROUTER">ROUTER</option>
+            </select>
+          </label>
+          <label class="field">Status
+            <select [ngModel]="statusFilter()" (ngModelChange)="statusFilter.set($event)">
+              <option value="">All statuses</option>
+              <option value="VALIDATION_PENDING">VALIDATION_PENDING</option>
+              <option value="RESEARCHING">RESEARCHING</option>
+              <option value="DATA_UNAVAILABLE">DATA_UNAVAILABLE</option>
+            </select>
+          </label>
+          <label class="field">Timeframe
+            <select [ngModel]="timeframeFilter()" (ngModelChange)="timeframeFilter.set($event)">
+              <option value="">All TF</option>
+              <option value="5m">5m</option>
+              <option value="15m">15m</option>
+              <option value="1h">1h</option>
+            </select>
+          </label>
+          <label class="field">Direction
+            <select [ngModel]="directionFilter()" (ngModelChange)="directionFilter.set($event)">
+              <option value="">All</option>
+              <option value="Long">Long</option>
+              <option value="Short">Short</option>
+              <option value="Both">Both</option>
+            </select>
+          </label>
+          <label class="field">Data
+            <select [ngModel]="dataFilter()" (ngModelChange)="dataFilter.set($event)">
+              <option value="">All data</option>
+              <option value="ohlcv">OHLCV</option>
+              <option value="oi">Open interest</option>
+              <option value="funding">Funding / basis</option>
+              <option value="taker">Taker flow</option>
+              <option value="universe">Universe / pairs</option>
+            </select>
+          </label>
           <label class="field">Coin
             <select [(ngModel)]="previewCoin">
               @for (coin of coins(); track coin.symbol) {
@@ -110,7 +364,23 @@ const templateLogic: Record<string, string> = {
           <section class="panel strategy-card" [class.is-editing]="editingId() === row.id">
             <div class="strategy-card-head">
               <div>
-                <strong>{{ row.name }}</strong>
+                <div class="strategy-title-row">
+                  <strong>{{ row.name }}</strong>
+                  @if (ratingFor(row.templateKey); as rate) {
+                    <div class="strategy-rating" [attr.title]="rate.note + ' ' + ratingMeta(rate)">
+                      <span class="strategy-stars" [attr.aria-label]="verdictLabel(row.templateKey) + ', ' + rate.stars + ' of 5'">
+                        @for (n of starSlots; track n) {
+                          <app-icon name="star" [size]="14" [filled]="n <= rate.stars" [class.is-on]="n <= rate.stars" />
+                        }
+                      </span>
+                      <span class="strategy-verdict" [class.is-paper]="rate.verdict === 'paper'" [class.is-weak]="rate.verdict === 'weak'" [class.is-avoid]="rate.verdict === 'avoid'" [class.is-blocked]="rate.verdict === 'blocked'">{{ verdictLabel(row.templateKey) }}</span>
+                    </div>
+                  }
+                </div>
+                @if (ratingFor(row.templateKey); as rate) {
+                  <p class="strategy-rating-meta">{{ rate.note }}</p>
+                  <p class="strategy-rating-meta">{{ ratingMeta(rate) }}</p>
+                }
                 <div class="strategy-pills">
                   <span class="badge badge-stopped">{{ row.timeframe }}</span>
                   <span class="badge" [class.badge-long]="(row.allowedSide || 'Long') === 'Long'" [class.badge-short]="row.allowedSide === 'Short'" [class.badge-paper]="row.allowedSide === 'Both'">{{ row.allowedSide || 'Long' }}</span>
@@ -126,7 +396,12 @@ const templateLogic: Record<string, string> = {
                   <span class="badge" [class.badge-running]="row.isEnabled !== false" [class.badge-stopped]="row.isEnabled === false">
                     {{ row.isEnabled === false ? 'Disabled' : 'Enabled' }}
                   </span>
+                  <span class="badge badge-paused">{{ familyFor(row.templateKey, row.family) }}</span>
+                  @if (isResearchOnly(row.templateKey)) {
+                    <span class="badge badge-stopped">RESEARCH ONLY</span>
+                  }
                   <span class="badge badge-paused">{{ row.validationStatus || 'VALIDATION_PENDING' }}</span>
+                  <span class="badge badge-paused">{{ (row.supportedDirections?.length ? row.supportedDirections.join('/') : 'LONG/SHORT') }}</span>
                 </div>
               </div>
               @if (editingId() !== row.id) {
@@ -146,6 +421,7 @@ const templateLogic: Record<string, string> = {
               <ng-container [ngTemplateOutlet]="editor" [ngTemplateOutletContext]="{ $implicit: form }" />
             } @else {
               <p class="strategy-blurb">{{ blurbFor(row.templateKey) }}</p>
+              <p class="tiny">{{ row.dataDependencies || depsFor(row.templateKey) }} · TF {{ (row.supportedTimeframes || ['5m','15m','1h']).join(', ') }} · research, not LIVE</p>
               @if (previews()[row.id]; as snap) {
                 <div class="strategy-preview">
                   <div class="strategy-preview-head">
@@ -207,7 +483,7 @@ const templateLogic: Record<string, string> = {
           <label class="field">Template
             <select [(ngModel)]="form.templateKey">
               @for (row of templates; track row.key) {
-                <option [value]="row.key">{{ row.label }}</option>
+                <option [value]="row.key">{{ row.label }} · {{ verdictLabel(row.key) }}</option>
               }
             </select>
           </label>
@@ -220,6 +496,10 @@ const templateLogic: Record<string, string> = {
           </label>
         </div>
         <p class="strategy-hint">{{ blurbFor(form.templateKey) }}</p>
+        <p class="tiny">{{ depsFor(form.templateKey) }} · LONG and SHORT · 5m / 15m / 1h · not auto-promoted to Paper or LIVE</p>
+        @if (ratingFor(form.templateKey); as rate) {
+          <p class="strategy-rating-note">{{ verdictLabel(form.templateKey) }} · {{ rate.stars }}/5 · {{ rate.note }} {{ ratingMeta(rate) }}</p>
+        }
         <label class="field">Note <textarea rows="2" [(ngModel)]="form.description"></textarea></label>
         @if (form.templateKey === 'ema_rsi_trend') {
           <div class="form-grid cols-3">
@@ -259,6 +539,55 @@ const templateLogic: Record<string, string> = {
             <label class="field">EMA fast <input type="number" [(ngModel)]="form.emaFast" /></label>
             <label class="field">EMA slow <input type="number" [(ngModel)]="form.emaSlow" /></label>
           </div>
+        }
+        @if (form.templateKey === 'turtle_tsm') {
+          <div class="form-grid cols-3">
+            <label class="field">Entry lookback <input type="number" [(ngModel)]="form.entryLookback" /></label>
+            <label class="field">Exit lookback <input type="number" [(ngModel)]="form.exitLookback" /></label>
+            <label class="field">Trend EMA <input type="number" [(ngModel)]="form.trendEmaPeriod" /></label>
+            <label class="field">ATR period <input type="number" [(ngModel)]="form.atrPeriod" /></label>
+            <label class="field">ATR stop × <input type="number" step="0.1" [(ngModel)]="form.atrStopMultiplier" /></label>
+            <label class="field">Min rel volume <input type="number" step="0.1" [(ngModel)]="form.minimumRelativeVolume" /></label>
+          </div>
+        }
+        @if (form.templateKey === 'vwap_pullback_trend') {
+          <div class="form-grid cols-3">
+            <label class="field">EMA fast <input type="number" [(ngModel)]="form.emaFast" /></label>
+            <label class="field">EMA slow <input type="number" [(ngModel)]="form.emaSlow" /></label>
+            <label class="field">Max VWAP distance ATR <input type="number" step="0.05" [(ngModel)]="form.maxVwapDistanceAtr" /></label>
+            <label class="field">Stop ATR × <input type="number" step="0.1" [(ngModel)]="form.stopAtrMultiplier" /></label>
+            <label class="field">Min rel volume <input type="number" step="0.1" [(ngModel)]="form.minimumRelativeVolume" /></label>
+            <label class="field">RSI period <input type="number" [(ngModel)]="form.rsiPeriod" /></label>
+          </div>
+        }
+        @if (form.templateKey === 'volatility_breakout') {
+          <div class="form-grid cols-3">
+            <label class="field">BB period <input type="number" [(ngModel)]="form.bbPeriod" /></label>
+            <label class="field">BB stddev <input type="number" step="0.1" [(ngModel)]="form.bbStdDev" /></label>
+            <label class="field">Compression % <input type="number" step="0.05" [(ngModel)]="form.compressionPercentile" /></label>
+            <label class="field">Vol lookback <input type="number" [(ngModel)]="form.volatilityLookback" /></label>
+            <label class="field">Breakout rel vol <input type="number" step="0.1" [(ngModel)]="form.breakoutRelativeVolume" /></label>
+            <label class="field">ATR expansion lookback <input type="number" [(ngModel)]="form.atrExpansionLookback" /></label>
+          </div>
+        }
+        @if (form.templateKey === 'supertrend_ema_trend') {
+          <div class="form-grid cols-3">
+            <label class="field">ST ATR period <input type="number" [(ngModel)]="form.supertrendPeriod" /></label>
+            <label class="field">ST multiplier <input type="number" step="0.1" [(ngModel)]="form.supertrendMultiplier" /></label>
+            <label class="field">EMA fast <input type="number" [(ngModel)]="form.emaFast" /></label>
+            <label class="field">EMA slow <input type="number" [(ngModel)]="form.emaSlow" /></label>
+            <label class="field">ADX period <input type="number" [(ngModel)]="form.adxPeriod" /></label>
+            <label class="field">Min ADX <input type="number" [(ngModel)]="form.minimumAdx" /></label>
+          </div>
+        }
+        @if (form.templateKey === 'oi_price_momentum' || form.templateKey === 'funding_oi_regime' || form.templateKey === 'crypto_pairs_arb' || form.templateKey === 'xs_relative_strength' || form.templateKey === 'taker_flow_momentum') {
+          <p class="tiny">This template stays DATA_UNAVAILABLE until the required historical series is timestamp-aligned. It will not invent data or auto-enable LIVE.</p>
+        }
+        @if (form.templateKey === 'funding_basis_rv' || form.templateKey === 'funding_oi_reversal' || form.templateKey === 'oi_price_volume_regime' || form.templateKey === 'funding_price_momentum' || form.templateKey === 'funding_extreme_momentum_exhaustion' || form.templateKey === 'basis_mean_reversion' || form.templateKey === 'funding_basis_vwap' || form.templateKey === 'oi_breakout_confirmation') {
+          <p class="tiny">Phase 3 research-only. Continuation and contrarian are tested independently. OI books are OI_SAMPLE_LIMITED (~29d). Not LIVE. Not auto-promoted.</p>
+        }
+        @if (form.templateKey === 'regime_strategy_router') {
+          <p class="tiny">Router is deferred until independent candidates are validated. Routing rules will not be fit on OOS. RESEARCH ONLY.</p>
         }
         <div class="strategy-filters">
           <div class="form-grid cols-3">
@@ -308,17 +637,78 @@ export class StrategiesPage {
   readonly previews = signal<Record<string, StrategyPreviewDto>>({});
   readonly previewBusy = signal<string | null>(null);
   previewCoin = 'BTCUSDT';
-  readonly list = new ListQuery();
-  readonly visible = computed(() =>
-    this.list.apply(
+  readonly starSlots = starSlots;
+  readonly ratingFor = ratingFor;
+  readonly ratingMeta = ratingMeta;
+  readonly verdictLabel = verdictLabel;
+  readonly depsFor = depsFor;
+  readonly isResearchOnly = isResearchOnly;
+  readonly familyFor = familyFor;
+  readonly familyFilter = signal('');
+  readonly useFilter = signal('');
+  readonly statusFilter = signal('');
+  readonly timeframeFilter = signal('');
+  readonly directionFilter = signal('');
+  readonly dataFilter = signal('');
+  readonly list = (() => {
+    const query = new ListQuery();
+    query.key.set('rating');
+    query.dir.set('desc');
+    return query;
+  })();
+  readonly visible = computed(() => {
+    const family = this.familyFilter();
+    const use = this.useFilter();
+    const status = this.statusFilter();
+    const tf = this.timeframeFilter();
+    const direction = this.directionFilter();
+    const data = this.dataFilter();
+    const rows = this.list.apply(
       this.trading.strategies(),
-      (row) => [row.name, row.description, row.timeframe, row.templateKey, row.allowedSymbols?.join(' ')],
+      (row) => [row.name, row.description, row.timeframe, row.templateKey, row.family, row.validationStatus, row.allowedSymbols?.join(' ')],
       {
         name: (row) => row.name,
         tf: (row) => row.timeframe,
+        rating: (row) => ratingSortValue(row.templateKey),
       },
-    ),
-  );
+    );
+    return rows.filter((row) => {
+      if (family && familyFor(row.templateKey, row.family) !== family) {
+        return false;
+      }
+      if (use && ratingFor(row.templateKey).verdict !== use) {
+        return false;
+      }
+      if (status && (row.validationStatus || '') !== status) {
+        return false;
+      }
+      if (tf && row.timeframe !== tf && !(row.supportedTimeframes || []).includes(tf)) {
+        return false;
+      }
+      if (direction && (row.allowedSide || 'Long') !== direction) {
+        return false;
+      }
+      if (data) {
+        const deps = (row.dataDependencies || depsFor(row.templateKey)).toLowerCase();
+        if (data === 'ohlcv' && (deps.includes('open interest') || deps.includes('funding') || deps.includes('taker') || deps.includes('universe'))) {
+          return false;
+        }
+        if (data === 'oi' && !deps.includes('open interest')) {
+          return false;
+        }
+        if (data === 'funding' && !deps.includes('funding')) {
+          return false;
+        }
+        if (data === 'taker' && !deps.includes('taker')) {
+          return false;
+        }
+        if (data === 'universe' && !deps.includes('universe') && !deps.includes('pair')) {
+          return false;
+        }
+      }
+      return true;
+    });
+  });
   readonly coins = computed(() => {
     const rows = this.trading.markets();
     if (rows.length) {
@@ -446,7 +836,7 @@ function blankStrategy(): StrategyDraft {
     all: true,
     symbols: '',
     templateKey: 'ema_rsi_trend',
-    allowedSide: 'Long',
+    allowedSide: 'Both',
     emaFast: 20,
     emaSlow: 50,
     rsiPeriod: 14,
@@ -464,6 +854,24 @@ function blankStrategy(): StrategyDraft {
     volumeLookback: 20,
     minAtrPercent: 0.15,
     maxAtrPercent: 4,
+    entryLookback: 20,
+    exitLookback: 10,
+    atrPeriod: 14,
+    atrStopMultiplier: 2,
+    trendEmaPeriod: 50,
+    volumeFilterEnabled: true,
+    relativeVolumePeriod: 20,
+    minimumRelativeVolume: 1,
+    maxVwapDistanceAtr: 0.75,
+    stopAtrMultiplier: 1.5,
+    volatilityLookback: 100,
+    compressionPercentile: 0.2,
+    atrExpansionLookback: 20,
+    breakoutRelativeVolume: 1.2,
+    supertrendPeriod: 10,
+    supertrendMultiplier: 3,
+    adxPeriod: 14,
+    minimumAdx: 20,
   };
 }
 
@@ -493,6 +901,24 @@ function fromStrategy(row: StrategyDto): StrategyDraft {
     volumeLookback: row.volumeLookback ?? 20,
     minAtrPercent: row.minAtrPercent ?? 0,
     maxAtrPercent: row.maxAtrPercent ?? 0,
+    entryLookback: row.entryLookback ?? 20,
+    exitLookback: row.exitLookback ?? 10,
+    atrPeriod: row.atrPeriod ?? 14,
+    atrStopMultiplier: row.atrStopMultiplier ?? 2,
+    trendEmaPeriod: row.trendEmaPeriod ?? 50,
+    volumeFilterEnabled: row.volumeFilterEnabled !== false,
+    relativeVolumePeriod: row.relativeVolumePeriod ?? 20,
+    minimumRelativeVolume: row.minimumRelativeVolume ?? 1,
+    maxVwapDistanceAtr: row.maxVwapDistanceAtr ?? 0.75,
+    stopAtrMultiplier: row.stopAtrMultiplier ?? 1.5,
+    volatilityLookback: row.volatilityLookback ?? 100,
+    compressionPercentile: row.compressionPercentile ?? 0.2,
+    atrExpansionLookback: row.atrExpansionLookback ?? 20,
+    breakoutRelativeVolume: row.breakoutRelativeVolume ?? 1.2,
+    supertrendPeriod: row.supertrendPeriod ?? 10,
+    supertrendMultiplier: row.supertrendMultiplier ?? 3,
+    adxPeriod: row.adxPeriod ?? 14,
+    minimumAdx: row.minimumAdx ?? 20,
   };
 }
 
@@ -526,6 +952,24 @@ function toRequest(form: StrategyDraft): SaveStrategyRequest {
     volumeLookback: Number(form.volumeLookback),
     minAtrPercent: Number(form.minAtrPercent),
     maxAtrPercent: Number(form.maxAtrPercent),
+    entryLookback: Number(form.entryLookback),
+    exitLookback: Number(form.exitLookback),
+    atrPeriod: Number(form.atrPeriod),
+    atrStopMultiplier: Number(form.atrStopMultiplier),
+    trendEmaPeriod: Number(form.trendEmaPeriod),
+    volumeFilterEnabled: form.volumeFilterEnabled !== false,
+    relativeVolumePeriod: Number(form.relativeVolumePeriod),
+    minimumRelativeVolume: Number(form.minimumRelativeVolume),
+    maxVwapDistanceAtr: Number(form.maxVwapDistanceAtr),
+    stopAtrMultiplier: Number(form.stopAtrMultiplier),
+    volatilityLookback: Number(form.volatilityLookback),
+    compressionPercentile: Number(form.compressionPercentile),
+    atrExpansionLookback: Number(form.atrExpansionLookback),
+    breakoutRelativeVolume: Number(form.breakoutRelativeVolume),
+    supertrendPeriod: Number(form.supertrendPeriod),
+    supertrendMultiplier: Number(form.supertrendMultiplier),
+    adxPeriod: Number(form.adxPeriod),
+    minimumAdx: Number(form.minimumAdx),
   };
 }
 

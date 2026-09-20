@@ -128,6 +128,26 @@ export interface StrategyDto {
   validationStatus: string;
   supportedTimeframes: string[];
   supportedDirections: string[];
+  dataDependencies?: string;
+  entryLookback?: number;
+  exitLookback?: number;
+  atrPeriod?: number;
+  atrStopMultiplier?: number;
+  trendEmaPeriod?: number;
+  volumeFilterEnabled?: boolean;
+  relativeVolumePeriod?: number;
+  minimumRelativeVolume?: number;
+  maxVwapDistanceAtr?: number;
+  stopAtrMultiplier?: number;
+  volatilityLookback?: number;
+  compressionPercentile?: number;
+  atrExpansionLookback?: number;
+  breakoutRelativeVolume?: number;
+  supertrendPeriod?: number;
+  supertrendMultiplier?: number;
+  adxPeriod?: number;
+  minimumAdx?: number;
+  family?: string;
 }
 
 export interface SaveStrategyRequest {
@@ -155,6 +175,24 @@ export interface SaveStrategyRequest {
   volumeLookback: number;
   minAtrPercent: number;
   maxAtrPercent: number;
+  entryLookback?: number;
+  exitLookback?: number;
+  atrPeriod?: number;
+  atrStopMultiplier?: number;
+  trendEmaPeriod?: number;
+  volumeFilterEnabled?: boolean;
+  relativeVolumePeriod?: number;
+  minimumRelativeVolume?: number;
+  maxVwapDistanceAtr?: number;
+  stopAtrMultiplier?: number;
+  volatilityLookback?: number;
+  compressionPercentile?: number;
+  atrExpansionLookback?: number;
+  breakoutRelativeVolume?: number;
+  supertrendPeriod?: number;
+  supertrendMultiplier?: number;
+  adxPeriod?: number;
+  minimumAdx?: number;
 }
 
 export interface StrategyPreviewBarDto {

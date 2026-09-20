@@ -46,7 +46,7 @@ public static class ValidationBenchmark
         var sw = Stopwatch.StartNew();
         var rows = new List<BenchmarkRow>();
 
-        foreach (var key in StrategyTemplateKeys.All)
+        foreach (var key in StrategyTemplateKeys.Frozen)
         {
             var definition = StrategyValidation.Definition(key, "1h");
             var one = Stopwatch.StartNew();

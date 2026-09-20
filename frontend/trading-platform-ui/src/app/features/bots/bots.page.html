@@ -30,8 +30,8 @@
         <label class="field">
           Strategy
           <select [ngModel]="selectedStrategy()?.id ?? ''" (ngModelChange)="strategyId.set($event)">
-            @for (row of trading.strategies(); track row.id) {
-              <option [value]="row.id">{{ row.name }}{{ row.isEnabled === false ? ' · disabled' : '' }} · {{ row.appliesToAllSymbols ? 'All coins' : row.allowedSymbols.length + ' coins' }}</option>
+            @for (row of rankedStrategies(); track row.id) {
+              <option [value]="row.id">{{ strategyOptionLabel(row) }}</option>
             }
           </select>
         </label>
@@ -40,6 +40,9 @@
           <input type="search" [ngModel]="coinQuery()" (ngModelChange)="coinQuery.set($event)" placeholder="BTC, PEPE, SOL…" />
         </label>
       </div>
+      @if (selectedStrategy(); as strat) {
+        <p class="tiny strategy-pick-note">{{ ratingFor(strat.templateKey).note }}</p>
+      }
       <div class="coin-toolbar">
         <label class="tiny" style="display:flex;gap:8px;align-items:center">
           <input type="checkbox" [checked]="allVisibleSelected()" (change)="toggleAllVisible($any($event.target).checked)" />

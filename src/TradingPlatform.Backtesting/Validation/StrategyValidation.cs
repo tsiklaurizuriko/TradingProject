@@ -15,7 +15,17 @@ public sealed record ValidationSlice(
 
 public sealed record SensitivityRow(string Change, decimal BaselinePf, decimal ChangedPf, bool Flipped);
 
-public sealed record RegimeRow(string Regime, int Windows, decimal MedianPf, int Trades);
+public sealed record RegimeRow(
+    string Regime,
+    int Windows,
+    decimal MedianPf,
+    int Trades,
+    int WindowsWithTrades = 0,
+    int EmptyWindows = 0,
+    int NoLossesWindows = 0,
+    int NoWinsWindows = 0,
+    decimal PositivePnlSum = 0m,
+    decimal AbsoluteNegativePnlSum = 0m);
 
 public sealed record TemplateValidationResult(
     string TemplateKey,
@@ -68,9 +78,13 @@ public static class StrategyValidation
         var volume = Positive(q?.VolumeLookback, 20);
         const int atr = 14;
         var macdReady = macdSlow + macdSignal - 1;
+        var entry = Positive(p?.EntryLookback, 20);
+        var volLook = Positive(p?.VolatilityLookback, 100);
+        var adx = Positive(p?.AdxPeriod, 14) * 2 + 2;
+        var st = Positive(p?.SupertrendPeriod, 10) + 5;
         return Math.Max(
             Math.Max(Math.Max(emaSlow, emaFast), rsi + 1),
-            Math.Max(Math.Max(macdReady, bb), Math.Max(donchian + 1, Math.Max(volume, atr + 1))));
+            Math.Max(Math.Max(macdReady, bb), Math.Max(donchian + 1, Math.Max(volume, Math.Max(atr + 1, Math.Max(entry + 1, Math.Max(volLook, Math.Max(adx, st))))))));
     }
 
     public static int WarmupBars(StrategyDefinition definition) =>
@@ -296,12 +310,15 @@ public static class StrategyValidation
     public static string RenderReport(IReadOnlyList<TemplateValidationResult> rows, string extra = "")
     {
         var sb = new System.Text.StringBuilder();
-        sb.AppendLine("# Strategy audit report");
+        sb.AppendLine("# Strategy audit report — Model B final");
         sb.AppendLine();
+        sb.AppendLine("IndicatorModel = B. MetricsVersion = fixed. Funding = EXCLUDING_FUNDING. LIVE = OFF.");
         sb.AppendLine("Factual historical simulation only. **Not** a profit forecast. Nothing here enables LIVE.");
         sb.AppendLine("Execution: signal on closed bar T, fill at **T+1 open**, Isolated Risk book sizing/SL/TP, fees and slippage included.");
         sb.AppendLine("Funding: labeled per template. Paper/LIVE still fill at last price; this report uses the backtest next-open model.");
         sb.AppendLine("Parameters are frozen defaults. No search for maximum historical profit.");
+        sb.AppendLine();
+        sb.AppendLine(AggregationMethodology());
         sb.AppendLine();
         if (!string.IsNullOrWhiteSpace(extra))
         {
@@ -323,7 +340,9 @@ public static class StrategyValidation
             sb.AppendLine($"8. Symbols: {string.Join(", ", row.Symbols)}");
             WriteCombined(sb, row);
             sb.AppendLine($"18. Walk-forward results: {FormatWalk(row.WalkForward)}");
-            sb.AppendLine($"19. Out-of-sample results: {FormatReplay(row.OutOfSample)} (IS {FormatReplay(row.InSample)}; validation {FormatReplay(row.Validation)})");
+            sb.AppendLine($"19. Out-of-sample results: {ValidationMetricsAggregator.FormatSlice(row.OutOfSample)}");
+            sb.AppendLine($"    IS: {ValidationMetricsAggregator.FormatSlice(row.InSample)}");
+            sb.AppendLine($"    Validation: {ValidationMetricsAggregator.FormatSlice(row.Validation)}");
             sb.AppendLine($"20. Parameter stability: {FormatSensitivity(row.Sensitivity)}");
             sb.AppendLine($"21. Regime performance: {FormatRegimes(row.Regimes)}");
             sb.AppendLine($"22. Main failure modes: {row.FailureModes}");
@@ -344,56 +363,69 @@ public static class StrategyValidation
         return sb.ToString();
     }
 
+    private static string AggregationMethodology() =>
+        """
+        Aggregation (metrics-fixed):
+        - Unit of observation for PF, net, fees, expectancy: the closed trade (`ReplayTrade.PnL`, cost-inclusive).
+        - PF = sum(gross positive trade PnL) / abs(sum(gross negative trade PnL)). Same formula for LONG, SHORT, Combined, IS, Validation, and OOS. Not an average of per-book PFs.
+        - Empty books/windows: PF = N/A. Trades but no losses: PF = Infinity. Trades but no wins: PF = 0. Never PF = 99.
+        - Return A: equal-book normalized return = sum(book net) / (included books × initial balance). Empty books are included with 0 return.
+        - Return B: per-book mean/median/positive-book %. These are not a single 10,000 USDT portfolio.
+        - Drawdown: per-book mean/median/p90/p95/max. Equal-weight normalized portfolio DD is N/A unless aligned equity curves exist (they are stripped after merge). Max-of-max is not labeled as portfolio DD.
+        - Sharpe / Sortino / Calmar at universe level: N/A (no common time series after merge). Per-book Sharpe is not copied into the aggregate.
+        - Costs: fees and slippage are inside `ReplayTrade.PnL` once. Gross after slippage before fees = Net + Fees. Slippage vs mid cannot be reconstructed from stored trades.
+        """;
+
     private static void WriteCombined(System.Text.StringBuilder sb, TemplateValidationResult row)
     {
         var combined = row.Combined;
         var longSide = row.Long;
         var shortSide = row.Short;
-        sb.AppendLine("LONG:");
-        sb.AppendLine($"- Trades: {longSide?.Trades ?? 0}");
+        var totals = combined is null ? PnlTotals.Empty : ValidationMetricsAggregator.ResolveTotals(combined);
+        var longPf = ValidationMetricsAggregator.ProfitFactorOf(longSide);
+        var shortPf = ValidationMetricsAggregator.ProfitFactorOf(shortSide);
+        var combinedPf = combined is null ? ProfitFactorValue.NoTrades : ValidationMetricsAggregator.ProfitFactorOf(combined);
+        var returns = combined?.BookReturns is { Count: > 0 } bookReturns
+            ? EqualBookAggregation.Returns(bookReturns)
+            : null;
+        var drawdowns = combined?.BookDrawdowns is { Count: > 0 } dds
+            ? EqualBookAggregation.Drawdowns(dds)
+            : null;
+        var bookCount = returns?.Books ?? 0;
+        sb.AppendLine("LONG (trade-weighted sums across books, not an average of per-book PFs):");
+        sb.AppendLine($"- Trades: {longSide?.Trades ?? 0} (W {longSide?.WinningTrades ?? 0} / L {longSide?.LosingTrades ?? 0} / Z {longSide?.ZeroPnlTrades ?? 0})");
+        sb.AppendLine($"- +W {Num(longSide?.PositivePnlSum)} / |L| {Num(longSide?.AbsoluteNegativePnlSum)}");
         sb.AppendLine($"- Win rate: {Pct(longSide?.WinRate)}");
-        sb.AppendLine($"- Profit factor: {Num(longSide?.ProfitFactor)}");
+        sb.AppendLine($"- Profit factor: {longPf.Render()}");
         sb.AppendLine($"- Expectancy: {Num(longSide?.Expectancy)}");
-        sb.AppendLine($"- Max DD: {Pct(longSide?.MaximumDrawdown)}");
-        sb.AppendLine("SHORT:");
-        sb.AppendLine($"- Trades: {shortSide?.Trades ?? 0}");
+        sb.AppendLine($"- Fees: {Num(longSide?.Fees)}");
+        sb.AppendLine($"- Max per-book side DD: {Pct(longSide?.MaximumDrawdown)} (not a portfolio drawdown)");
+        sb.AppendLine("SHORT (trade-weighted sums across books, not an average of per-book PFs):");
+        sb.AppendLine($"- Trades: {shortSide?.Trades ?? 0} (W {shortSide?.WinningTrades ?? 0} / L {shortSide?.LosingTrades ?? 0} / Z {shortSide?.ZeroPnlTrades ?? 0})");
+        sb.AppendLine($"- +W {Num(shortSide?.PositivePnlSum)} / |L| {Num(shortSide?.AbsoluteNegativePnlSum)}");
         sb.AppendLine($"- Win rate: {Pct(shortSide?.WinRate)}");
-        sb.AppendLine($"- Profit factor: {Num(shortSide?.ProfitFactor)}");
+        sb.AppendLine($"- Profit factor: {shortPf.Render()}");
         sb.AppendLine($"- Expectancy: {Num(shortSide?.Expectancy)}");
-        sb.AppendLine($"- Max DD: {Pct(shortSide?.MaximumDrawdown)}");
+        sb.AppendLine($"- Fees: {Num(shortSide?.Fees)}");
+        sb.AppendLine($"- Max per-book side DD: {Pct(shortSide?.MaximumDrawdown)} (not a portfolio drawdown)");
         sb.AppendLine("Combined:");
-        sb.AppendLine($"9. Gross performance: not reported separately; net is after fees and slippage.");
-        sb.AppendLine($"10. Net performance: {Num(combined?.NetProfit)} USDT ({Pct(combined?.ReturnPercent)})");
-        sb.AppendLine($"11. Fees: {Num(combined?.FeesPaid)} USDT");
+        sb.AppendLine($"- Exact totals: +W {Num(totals.PositivePnlSum)} / |L| {Num(totals.AbsoluteNegativePnlSum)} (W {totals.WinningTrades} / L {totals.LosingTrades} / Z {totals.ZeroPnlTrades})");
+        sb.AppendLine($"9. Gross after slippage before fees: {Num(totals.GrossAfterSlippageBeforeFees)} USDT. Slippage vs mid: not reconstructed (embedded in fill prices; not estimated).");
+        sb.AppendLine($"10. Net performance: {Num(combined?.NetProfit)} USDT (sum of independent book nets). Equal-book return A: {(returns is null ? "unavailable (per-book returns not stored on this artifact)" : Pct(returns.EqualBookReturn * 100m))} over {bookCount} books × initial. Per-book B: mean {(returns is null ? "unavailable" : Pct(returns.MeanReturn * 100m))}, median {(returns is null ? "unavailable" : Pct(returns.MedianReturn * 100m))}, positive-book {(returns is null ? "unavailable" : Pct(returns.PositiveBookPercent))}. Not a single-account portfolio return.");
+        sb.AppendLine($"11. Fees: {Num(totals.Fees)} USDT (once; already inside net)");
         sb.AppendLine($"12. Funding: {row.CostNotes}");
-        sb.AppendLine($"13. Slippage: included in net (0.02% default in this harness)");
-        sb.AppendLine($"14. Maximum drawdown: {Pct(combined?.MaximumDrawdown)}");
-        sb.AppendLine($"15. Profit factor: {Num(combined?.ProfitFactor)}");
-        sb.AppendLine($"16. Expectancy: {(combined is { NumberOfTrades: > 0 } ? Num(combined.NetProfit / combined.NumberOfTrades) : "n/a")}");
-        sb.AppendLine($"17. Trade count: {combined?.NumberOfTrades ?? 0}");
+        sb.AppendLine("13. Slippage: included once in entry/exit prices (0.02% default). Not subtracted again.");
+        sb.AppendLine($"14. Per-book drawdown: mean {(drawdowns is null ? "unavailable" : Pct(drawdowns.Mean))}, median {(drawdowns is null ? "unavailable" : Pct(drawdowns.Median))}, p90 {(drawdowns is null ? "unavailable" : Pct(drawdowns.P90))}, p95 {(drawdowns is null ? "unavailable" : Pct(drawdowns.P95))}, max {(drawdowns is null ? "unavailable" : Pct(drawdowns.Maximum))}. Equal-weight normalized portfolio DD: N/A (equity curves stripped; no stated portfolio weights beyond equal-book). Do not read max-of-max as portfolio DD.");
+        sb.AppendLine($"15. Profit factor: {combinedPf.Render()} (same W/|L| definition as LONG/SHORT)");
+        sb.AppendLine($"16. Expectancy: {(totals.Trades > 0 ? Num(totals.Expectancy) : "n/a")} (net / trades)");
+        sb.AppendLine($"17. Trade count: {totals.Trades}; Sharpe/Sortino/Calmar (universe): N/A");
     }
 
     private static string FormatPeriod(DateTimeOffset? from, DateTimeOffset? to) =>
         from is null || to is null ? "insufficient data" : $"{from:yyyy-MM-dd} → {to:yyyy-MM-dd}";
 
-    private static string FormatReplay(ReplayResult? result) =>
-        result is null
-            ? "n/a"
-            : $"n={result.NumberOfTrades} PF={result.ProfitFactor:0.00} DD={result.MaximumDrawdown:0.00}% net={result.NetProfit:0.00}";
-
-    private static string FormatWalk(IReadOnlyList<ValidationSlice> windows)
-    {
-        if (windows.Count == 0)
-        {
-            return "no windows (insufficient bars)";
-        }
-
-        var pfs = windows.Select(w => w.Result.ProfitFactor).OrderBy(v => v).ToList();
-        var median = pfs[pfs.Count / 2];
-        var worst = windows.MinBy(w => w.Result.ProfitFactor)!;
-        var best = windows.MaxBy(w => w.Result.ProfitFactor)!;
-        return $"{windows.Count} windows; median PF {median:0.00}; worst {worst.Label} PF {worst.Result.ProfitFactor:0.00}; best {best.Label} PF {best.Result.ProfitFactor:0.00}";
-    }
+    private static string FormatWalk(IReadOnlyList<ValidationSlice> windows) =>
+        ValidationMetricsAggregator.FormatWalk(windows);
 
     private static string FormatSensitivity(IReadOnlyList<SensitivityRow> rows) =>
         rows.Count == 0
@@ -403,7 +435,14 @@ public static class StrategyValidation
     private static string FormatRegimes(IReadOnlyList<RegimeRow> rows) =>
         rows.Count == 0
             ? "not computed"
-            : string.Join("; ", rows.Select(r => $"{r.Regime}: {r.Windows} windows, {r.Trades} trades, median PF {r.MedianPf:0.00}"));
+            : string.Join("; ", rows.Select(r =>
+            {
+                var pf = ProfitFactorValue.From(r.PositivePnlSum, r.AbsoluteNegativePnlSum, r.Trades);
+                var median = r.MedianPf > 0m
+                    ? r.MedianPf.ToString("0.00")
+                    : "N/A";
+                return $"{r.Regime}: {r.Windows} windows ({r.WindowsWithTrades} with trades, {r.EmptyWindows} empty), {r.Trades} trades, trade PF {pf.Render()}, median finite window PF {median}, no-loss {r.NoLossesWindows}, no-win {r.NoWinsWindows}";
+            }));
 
     private static string Pct(decimal? value) => value is null ? "n/a" : $"{value.Value:0.00}%";
 

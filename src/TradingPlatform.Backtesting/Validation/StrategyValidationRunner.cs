@@ -14,7 +14,7 @@ public static class StrategyValidationRunner
     {
         var caches = new Dictionary<(string Symbol, string Timeframe), (List<MarketCandle> Closed, CausalIndicatorCache Cache)>();
         var rows = new List<TemplateValidationResult>();
-        foreach (var key in StrategyTemplateKeys.All)
+        foreach (var key in StrategyTemplateKeys.Frozen)
         {
             rows.Add(EvaluateTemplate(key, series, implementationOk, caches));
         }
@@ -34,11 +34,24 @@ public static class StrategyValidationRunner
         var notes = left.Notes.Concat(right.Notes).ToList();
         var regimes = left.Regimes.Concat(right.Regimes)
             .GroupBy(r => r.Regime, StringComparer.OrdinalIgnoreCase)
-            .Select(g => new RegimeRow(
-                g.Key,
-                g.Sum(x => x.Windows),
-                Median(g.Select(x => x.MedianPf).ToList()),
-                g.Sum(x => x.Trades)))
+            .Select(g =>
+            {
+                var trades = g.Sum(x => x.Trades);
+                var positive = g.Sum(x => x.PositivePnlSum);
+                var negative = g.Sum(x => x.AbsoluteNegativePnlSum);
+                var finiteMedians = g.Where(x => x.MedianPf > 0m && x.MedianPf != 99m).Select(x => x.MedianPf).ToList();
+                return new RegimeRow(
+                    g.Key,
+                    g.Sum(x => x.Windows),
+                    finiteMedians.Count == 0 ? 0m : Median(finiteMedians),
+                    trades,
+                    g.Sum(x => x.WindowsWithTrades),
+                    g.Sum(x => x.EmptyWindows),
+                    g.Sum(x => x.NoLossesWindows),
+                    g.Sum(x => x.NoWinsWindows),
+                    positive,
+                    negative);
+            })
             .OrderBy(r => r.Regime)
             .ToList();
         var periodStart = Min(left.PeriodStart, right.PeriodStart);
@@ -230,11 +243,7 @@ public static class StrategyValidationRunner
             validation,
             oos,
             sensitivity,
-            regimes.Select(kv => new RegimeRow(
-                kv.Key,
-                kv.Value.Count,
-                Median(kv.Value.Select(v => v.ProfitFactor).ToList()),
-                kv.Value.Sum(v => v.NumberOfTrades))).OrderBy(r => r.Regime).ToList(),
+            regimes.Select(kv => RegimeSummary(kv.Key, kv.Value)).OrderBy(r => r.Regime).ToList(),
             failure,
             next,
             combined?.CostNotes ?? "EXCLUDING_FUNDING",
@@ -296,97 +305,30 @@ public static class StrategyValidationRunner
 
     private static ReplayResult Merge(ReplayResult? left, ReplayResult right)
     {
-        if (left is null)
-        {
-            return right;
-        }
-
-        if (left.Trades.Count > 0 && right.Trades.Count > 0)
-        {
-            var trades = left.Trades.Concat(right.Trades).OrderBy(t => t.OpenedAt).ToList();
-            var fees = left.FeesPaid + right.FeesPaid;
-            var net = left.NetProfit + right.NetProfit;
-            var wins = trades.Where(t => t.PnL > 0m).ToList();
-            var losses = trades.Where(t => t.PnL < 0m).ToList();
-            var grossWin = wins.Sum(t => t.PnL);
-            var grossLoss = Math.Abs(losses.Sum(t => t.PnL));
-            var capital = left.InitialBalance;
-            return left with
-            {
-                FinalBalance = capital + net,
-                NetProfit = net,
-                ReturnPercent = capital == 0m ? 0m : Math.Round(net / capital * 100m, 8, MidpointRounding.AwayFromZero),
-                NumberOfTrades = trades.Count,
-                WinRate = trades.Count == 0 ? 0m : Math.Round((decimal)wins.Count / trades.Count * 100m, 8, MidpointRounding.AwayFromZero),
-                ProfitFactor = grossLoss == 0m ? (grossWin > 0m ? 99m : 0m) : Math.Round(grossWin / grossLoss, 8, MidpointRounding.AwayFromZero),
-                AverageWin = wins.Count == 0 ? 0m : Math.Round(wins.Average(t => t.PnL), 8, MidpointRounding.AwayFromZero),
-                AverageLoss = losses.Count == 0 ? 0m : Math.Round(losses.Average(t => t.PnL), 8, MidpointRounding.AwayFromZero),
-                MaximumDrawdown = Math.Max(left.MaximumDrawdown, right.MaximumDrawdown),
-                FeesPaid = fees,
-                LargestWinningTrade = trades.Count == 0 ? 0m : trades.Max(t => t.PnL),
-                LargestLosingTrade = trades.Count == 0 ? 0m : trades.Min(t => t.PnL),
-                BarsUsed = left.BarsUsed + right.BarsUsed,
-                WindowStart = left.WindowStart < right.WindowStart ? left.WindowStart : right.WindowStart,
-                WindowEnd = left.WindowEnd > right.WindowEnd ? left.WindowEnd : right.WindowEnd,
-                Trades = trades,
-                Long = ReplayMetrics.ForSide(trades, "Long"),
-                Short = ReplayMetrics.ForSide(trades, "Short")
-            };
-        }
-
-        var leftWins = WinCount(left);
-        var rightWins = WinCount(right);
-        var winsCount = leftWins + rightWins;
-        var tradeCount = left.NumberOfTrades + right.NumberOfTrades;
-        var lossCount = Math.Max(0, tradeCount - winsCount);
-        var summaryGrossWin = left.AverageWin * leftWins + right.AverageWin * rightWins;
-        var summaryGrossLoss = Math.Abs(left.AverageLoss) * (left.NumberOfTrades - leftWins) + Math.Abs(right.AverageLoss) * (right.NumberOfTrades - rightWins);
-        var summaryNet = left.NetProfit + right.NetProfit;
-        var summaryCapital = left.InitialBalance;
-        return left with
-        {
-            FinalBalance = summaryCapital + summaryNet,
-            NetProfit = summaryNet,
-            ReturnPercent = summaryCapital == 0m ? 0m : Math.Round(summaryNet / summaryCapital * 100m, 8, MidpointRounding.AwayFromZero),
-            NumberOfTrades = tradeCount,
-            WinRate = tradeCount == 0 ? 0m : Math.Round((decimal)winsCount / tradeCount * 100m, 8, MidpointRounding.AwayFromZero),
-            ProfitFactor = summaryGrossLoss == 0m ? (summaryGrossWin > 0m ? 99m : 0m) : Math.Round(summaryGrossWin / summaryGrossLoss, 8, MidpointRounding.AwayFromZero),
-            AverageWin = winsCount == 0 ? 0m : Math.Round(summaryGrossWin / winsCount, 8, MidpointRounding.AwayFromZero),
-            AverageLoss = lossCount == 0 ? 0m : Math.Round(-(summaryGrossLoss / lossCount), 8, MidpointRounding.AwayFromZero),
-            MaximumDrawdown = Math.Max(left.MaximumDrawdown, right.MaximumDrawdown),
-            FeesPaid = left.FeesPaid + right.FeesPaid,
-            LargestWinningTrade = Math.Max(left.LargestWinningTrade, right.LargestWinningTrade),
-            LargestLosingTrade = Math.Min(left.LargestLosingTrade, right.LargestLosingTrade),
-            BarsUsed = left.BarsUsed + right.BarsUsed,
-            WindowStart = left.WindowStart < right.WindowStart ? left.WindowStart : right.WindowStart,
-            WindowEnd = left.WindowEnd > right.WindowEnd ? left.WindowEnd : right.WindowEnd,
-            Trades = [],
-            Equity = [],
-            Long = MergeSides(left.Long, right.Long),
-            Short = MergeSides(left.Short, right.Short)
-        };
+        var attached = ValidationMetricsAggregator.AttachBookStats(right);
+        return left is null ? attached : ValidationMetricsAggregator.Combine(left, attached);
     }
 
-    private static int WinCount(ReplayResult result) =>
-        result.NumberOfTrades <= 0 ? 0 : (int)Math.Round(result.NumberOfTrades * result.WinRate / 100m, MidpointRounding.AwayFromZero);
+    private static ReplayResult Strip(ReplayResult result) => ValidationMetricsAggregator.Strip(result);
 
-    private static ReplaySideMetrics MergeSides(ReplaySideMetrics left, ReplaySideMetrics right)
+    private static RegimeRow RegimeSummary(string regime, IReadOnlyList<ReplayResult> windows)
     {
-        var trades = left.Trades + right.Trades;
-        var net = left.NetPnL + right.NetPnL;
-        var winRate = trades == 0 ? 0m : Math.Round((left.WinRate * left.Trades + right.WinRate * right.Trades) / trades, 8, MidpointRounding.AwayFromZero);
-        var pf = trades == 0 ? 0m : Math.Round((left.ProfitFactor * left.Trades + right.ProfitFactor * right.Trades) / trades, 8, MidpointRounding.AwayFromZero);
-        return new ReplaySideMetrics(
-            trades,
-            net,
-            winRate,
-            pf,
-            trades == 0 ? 0m : Math.Round(net / trades, 8, MidpointRounding.AwayFromZero),
-            Math.Max(left.MaximumDrawdown, right.MaximumDrawdown));
+        var totals = PnlTotals.Combine(windows.Select(ValidationMetricsAggregator.ResolveTotals));
+        var withTrades = windows.Where(w => w.NumberOfTrades > 0).ToList();
+        var pfs = withTrades.Select(ValidationMetricsAggregator.ProfitFactorOf).ToList();
+        var finite = pfs.Where(p => p.IsFinite).Select(p => p.Ratio).ToList();
+        return new RegimeRow(
+            regime,
+            windows.Count,
+            finite.Count == 0 ? 0m : Median(finite),
+            totals.Trades,
+            withTrades.Count,
+            windows.Count - withTrades.Count,
+            pfs.Count(p => p.Kind == ProfitFactorKind.NoLosses),
+            pfs.Count(p => p.Kind == ProfitFactorKind.NoWins),
+            totals.PositivePnlSum,
+            totals.AbsoluteNegativePnlSum);
     }
-
-    private static ReplayResult Strip(ReplayResult result) =>
-        result with { Trades = [], Equity = [] };
 
     private static decimal Median(IReadOnlyList<decimal> values)
     {

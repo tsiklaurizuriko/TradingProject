@@ -55,6 +55,38 @@ public sealed class StrategyDefinitionParams
     public int BbPeriod { get; set; } = 20;
     public decimal BbStdDev { get; set; } = 2m;
     public int DonchianLength { get; set; } = 20;
+    public int EntryLookback { get; set; } = 20;
+    public int ExitLookback { get; set; } = 10;
+    public int AtrPeriod { get; set; } = 14;
+    public decimal AtrStopMultiplier { get; set; } = 2m;
+    public int TrendEmaPeriod { get; set; } = 50;
+    public bool VolumeFilterEnabled { get; set; } = true;
+    public int RelativeVolumePeriod { get; set; } = 20;
+    public decimal MinimumRelativeVolume { get; set; } = 1m;
+    public decimal MaxVwapDistanceAtr { get; set; } = 0.75m;
+    public decimal StopAtrMultiplier { get; set; } = 1.5m;
+    public int VolatilityLookback { get; set; } = 100;
+    public decimal CompressionPercentile { get; set; } = 0.20m;
+    public int AtrExpansionLookback { get; set; } = 20;
+    public decimal BreakoutRelativeVolume { get; set; } = 1.2m;
+    public int SupertrendPeriod { get; set; } = 10;
+    public decimal SupertrendMultiplier { get; set; } = 3m;
+    public int AdxPeriod { get; set; } = 14;
+    public decimal MinimumAdx { get; set; } = 20m;
+    public int OiLookback { get; set; } = 20;
+    public decimal OiChangeThreshold { get; set; } = 0.02m;
+    public decimal PriceChangeThreshold { get; set; } = 0.01m;
+    public string OiHypothesis { get; set; } = "continuation";
+    public int FundingLookback { get; set; } = 24;
+    public decimal FundingExtremePercentile { get; set; } = 0.90m;
+    public string FundingHypothesis { get; set; } = "continuation";
+    public decimal? ZScoreEntry { get; set; }
+    public decimal? ValueAreaPercent { get; set; }
+    public decimal? SweepDepthAtr { get; set; }
+    public int? SwingLength { get; set; }
+    public bool? UseFuturesFilter { get; set; }
+    public decimal PriceDisplacementAtr { get; set; } = 1.5m;
+    public decimal OiExtremePercentile { get; set; } = 0.90m;
 }
 
 public sealed class StrategyDefinitionQuality
@@ -89,11 +121,91 @@ public sealed class StrategyContext
     public decimal CurrentPrice { get; init; }
     public bool HasOpenPosition { get; init; }
     public PositionSide PositionSide { get; init; } = PositionSide.Long;
+    /// <summary>Optional higher-timeframe cache. LIVE and frozen templates leave this null.</summary>
+    public CausalIndicatorCache? HigherTimeframeCache { get; init; }
+    /// <summary>Open interest aligned to ClosedCandles. Null means historical OI is unavailable.</summary>
+    public IReadOnlyList<decimal?>? OpenInterest { get; init; }
+    /// <summary>Funding rate aligned to ClosedCandles. Null means historical funding is unavailable.</summary>
+    public IReadOnlyList<decimal?>? FundingRate { get; init; }
+    /// <summary>Mark price aligned to ClosedCandles. Null means historical mark is unavailable.</summary>
+    public IReadOnlyList<decimal?>? MarkPrice { get; init; }
+    /// <summary>Index price aligned to ClosedCandles. Null means historical index is unavailable.</summary>
+    public IReadOnlyList<decimal?>? IndexPrice { get; init; }
+    /// <summary>Normalized basis (Mark-Index)/Index. Null means basis cannot be reconstructed.</summary>
+    public IReadOnlyList<decimal?>? NormalizedBasis { get; init; }
 }
+
+public sealed class StrategyFuturesSeries
+{
+    public IReadOnlyList<decimal?>? OpenInterest { get; init; }
+    public IReadOnlyList<decimal?>? FundingRate { get; init; }
+    public IReadOnlyList<decimal?>? MarkPrice { get; init; }
+    public IReadOnlyList<decimal?>? IndexPrice { get; init; }
+    public IReadOnlyList<decimal?>? NormalizedBasis { get; init; }
+}
+
+public sealed record StrategySignalDetail(
+    SignalType Signal,
+    string Reason,
+    DateTimeOffset? TimestampUtc = null,
+    decimal? SuggestedStop = null,
+    decimal? SuggestedTakeProfit = null,
+    IReadOnlyDictionary<string, decimal?>? Snapshot = null,
+    string Status = "RESEARCHING");
 
 public interface IStrategyEngine
 {
     SignalType Evaluate(StrategyDefinition definition, StrategyContext context, out string reason);
+
+    SignalType EvaluateAt(
+        StrategyDefinition definition,
+        StrategyContext context,
+        CausalIndicatorCache cache,
+        int index,
+        out string reason)
+    {
+        var take = Math.Clamp(index + 1, 0, cache.Candles.Count);
+        var prefix = new MarketCandle[take];
+        for (var i = 0; i < take; i++)
+        {
+            prefix[i] = cache.Candles[i];
+        }
+
+        return Evaluate(
+            definition,
+            new StrategyContext
+            {
+                ClosedCandles = prefix,
+                AverageEntryPrice = context.AverageEntryPrice,
+                CurrentPrice = take == 0 ? context.CurrentPrice : prefix[take - 1].Close,
+                HasOpenPosition = context.HasOpenPosition,
+                PositionSide = context.PositionSide,
+                HigherTimeframeCache = context.HigherTimeframeCache,
+                OpenInterest = Prefix(context.OpenInterest, take),
+                FundingRate = Prefix(context.FundingRate, take),
+                MarkPrice = Prefix(context.MarkPrice, take),
+                IndexPrice = Prefix(context.IndexPrice, take),
+                NormalizedBasis = Prefix(context.NormalizedBasis, take)
+            },
+            out reason);
+    }
+
+    private static IReadOnlyList<decimal?>? Prefix(IReadOnlyList<decimal?>? series, int take)
+    {
+        if (series is null)
+        {
+            return null;
+        }
+
+        var n = Math.Min(take, series.Count);
+        var copy = new decimal?[n];
+        for (var i = 0; i < n; i++)
+        {
+            copy[i] = series[i];
+        }
+
+        return copy;
+    }
 }
 
 public sealed class StrategyDefinitionValidator

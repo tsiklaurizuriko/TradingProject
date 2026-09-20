@@ -53,6 +53,7 @@ export class Shell {
       label: 'Analysis',
       items: [
         { path: '/strategies', label: 'Strategies', icon: 'layers' },
+        { path: '/risk', label: 'Risk Management', icon: 'shield' },
         { path: '/backtesting', label: 'Backtesting', icon: 'flask' },
         { path: '/performance', label: 'Performance', icon: 'chart' },
       ],
@@ -65,16 +66,15 @@ export class Shell {
         { path: '/orders', label: 'Orders', icon: 'orders' },
       ],
     },
-      {
-        label: 'System',
-        items: [
-          { path: '/risk', label: 'Risk Management', icon: 'shield' },
-          ...(this.ui.showLiveChrome() ? [{ path: '/exchanges', label: 'Live Connection', icon: 'plug' }] : []),
-          { path: '/notifications', label: 'Notifications', icon: 'bell' },
-          { path: '/settings', label: 'Settings', icon: 'settings' },
-          { path: '/admin', label: 'Admin', icon: 'admin' },
-        ],
-      },
+    {
+      label: 'System',
+      items: [
+        ...(this.ui.showLiveChrome() ? [{ path: '/exchanges', label: 'Live Connection', icon: 'plug' }] : []),
+        { path: '/notifications', label: 'Notifications', icon: 'bell' },
+        { path: '/settings', label: 'Settings', icon: 'settings' },
+        { path: '/admin', label: 'Admin', icon: 'admin' },
+      ],
+    },
   ]);
 
   readonly page = toSignal(

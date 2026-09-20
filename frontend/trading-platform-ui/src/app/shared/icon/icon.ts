@@ -8,7 +8,7 @@ import { Component, Input } from '@angular/core';
       [attr.width]="size"
       [attr.height]="size"
       viewBox="0 0 24 24"
-      fill="none"
+      [attr.fill]="filled ? 'currentColor' : 'none'"
       stroke="currentColor"
       stroke-width="1.75"
       stroke-linecap="round"
@@ -123,4 +123,5 @@ import { Component, Input } from '@angular/core';
 export class IconComponent {
   @Input({ required: true }) name = '';
   @Input() size = 16;
+  @Input() filled = false;
 }

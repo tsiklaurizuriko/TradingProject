@@ -265,7 +265,7 @@ public sealed class ModelBValidationTests
         first.Fingerprint.Should().NotBeNullOrWhiteSpace();
         var second = ValidationBenchmark.Run();
         second.Fingerprint.Should().Be(first.Fingerprint);
-        first.Rows.Should().HaveCount(StrategyTemplateKeys.All.Length);
+        first.Rows.Should().HaveCount(StrategyTemplateKeys.Frozen.Length);
         first.Rows.Should().OnlyContain(row => row.CandlesPerSecond > 1_000);
     }
 

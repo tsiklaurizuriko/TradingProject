@@ -245,6 +245,7 @@ internal static class TradingModelConfiguration
             Money(b.Property(x => x.Low));
             Money(b.Property(x => x.Close));
             Money(b.Property(x => x.Volume));
+            b.Ignore(x => x.TakerBuyVolume);
         });
         model.Entity<MarketTrade>(b =>
         {

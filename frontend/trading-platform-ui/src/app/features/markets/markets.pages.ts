@@ -3,6 +3,7 @@ import { Router, RouterLink } from '@angular/router';
 import { TradingService } from '../../core/trading/trading.service';
 import {
   compact,
+  MarketQuoteDto,
   money,
   pct,
   pnlClass,
@@ -68,7 +69,7 @@ export class ScannerPage {
   readonly source = computed(() => {
     const q = this.ui.search().trim().toUpperCase();
     const quotes = this.trading.markets();
-    const source = quotes.length
+    const source: MarketQuoteDto[] = quotes.length
       ? quotes
       : this.trading.tickers().map((t) => ({ ...t, changePercent24h: 0, quoteVolume: 0 }));
     if (!q) {

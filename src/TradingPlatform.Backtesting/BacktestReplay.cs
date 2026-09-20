@@ -34,7 +34,12 @@ public sealed record ReplayTrade(
     decimal PnL,
     decimal Fees,
     string Reason,
-    string Side = "Long");
+    string Side = "Long",
+    decimal MidEntryPrice = 0m,
+    decimal MidExitPrice = 0m,
+    decimal SlippageCost = 0m,
+    decimal FundingPnl = 0m,
+    decimal GrossPnl = 0m);
 
 public sealed record EquityPoint(long Time, decimal Equity);
 
@@ -44,7 +49,13 @@ public sealed record ReplaySideMetrics(
     decimal WinRate,
     decimal ProfitFactor,
     decimal Expectancy,
-    decimal MaximumDrawdown);
+    decimal MaximumDrawdown,
+    decimal PositivePnlSum = 0m,
+    decimal AbsoluteNegativePnlSum = 0m,
+    int WinningTrades = 0,
+    int LosingTrades = 0,
+    int ZeroPnlTrades = 0,
+    decimal Fees = 0m);
 
 public sealed record ReplayResult(
     decimal InitialBalance,
@@ -70,7 +81,14 @@ public sealed record ReplayResult(
     ReplaySideMetrics Long,
     ReplaySideMetrics Short,
     decimal FundingPaid = 0m,
-    string CostNotes = "EXCLUDING_FUNDING");
+    string CostNotes = "EXCLUDING_FUNDING",
+    PnlTotals? Totals = null,
+    IReadOnlyList<decimal>? BookReturns = null,
+    IReadOnlyList<decimal>? BookDrawdowns = null,
+    decimal SlippagePaid = 0m,
+    decimal GrossPnl = 0m);
+
+public sealed record ReplayFundingSettlement(DateTimeOffset FundingTime, decimal FundingRate);
 
 public sealed class BacktestReplay
 {
@@ -84,7 +102,10 @@ public sealed class BacktestReplay
         ReplaySettings settings,
         CausalIndicatorCache? indicatorCache = null,
         int? evaluateFromInclusive = null,
-        int? evaluateToExclusive = null)
+        int? evaluateToExclusive = null,
+        CausalIndicatorCache? higherTimeframeCache = null,
+        StrategyFuturesSeries? futures = null,
+        IReadOnlyList<ReplayFundingSettlement>? fundingSettlements = null)
     {
         IReadOnlyList<MarketCandle> ordered;
         if (indicatorCache is not null)
@@ -122,13 +143,17 @@ public sealed class BacktestReplay
         DateTimeOffset? lastLossAt = null;
         var dayStart = DateTimeOffset.MinValue;
         var dayPnl = 0m;
+        var fundingPaid = 0m;
+        var slippagePaid = 0m;
+        var grossPnl = 0m;
+        var includeFunding = fundingSettlements is { Count: > 0 };
+        var fundingIndex = 0;
         var riskEngine = new RiskEngine();
         var profile = ProfileFromSettings(settings);
         var template = !string.IsNullOrWhiteSpace(definition.Template) || definition.Params is not null;
         var cache = template
             ? indicatorCache ?? new CausalIndicatorCache(ordered)
             : null;
-        var engine = _engine as StrategyEngine;
         var loopFrom = indexWindow ? evalFrom : 0;
 
         for (var i = loopFrom; i < ordered.Count; i++)
@@ -173,33 +198,60 @@ public sealed class BacktestReplay
                     dayPnl = 0m;
                 }
 
-                var fill = ApplySlippage(bar.Open, settings.SlippagePercent, worseForBuy: entrySide == PositionSide.Long);
-                var qty = Size(
-                    riskEngine,
-                    profile,
-                    equity,
-                    fill,
-                    settings,
-                    dayPnl,
-                    consecutiveLosses,
-                    lastLossAt,
-                    bar.OpenTime,
-                    entrySide);
-                if (qty > 0m)
-                {
-                    var fee = Notional(qty, fill) * (settings.FeePercent / 100m);
-                    equity -= fee;
-                    feesPaid += fee;
-                    open = new OpenPosition(bar.OpenTime, qty, fill, fee, entrySide);
-                }
+                    var mid = bar.Open;
+                    var fill = ApplySlippage(mid, settings.SlippagePercent, worseForBuy: entrySide == PositionSide.Long);
+                    var qty = Size(
+                        riskEngine,
+                        profile,
+                        equity,
+                        fill,
+                        settings,
+                        dayPnl,
+                        consecutiveLosses,
+                        lastLossAt,
+                        bar.OpenTime,
+                        entrySide);
+                    if (qty > 0m)
+                    {
+                        var fee = Notional(qty, fill) * (settings.FeePercent / 100m);
+                        equity -= fee;
+                        feesPaid += fee;
+                        open = new OpenPosition(bar.OpenTime, qty, fill, fee, entrySide, MidEntryPrice: mid);
+                    }
 
                 pendingEntry = null;
             }
             else if (pendingExit && open is not null)
             {
-                Close(open, ApplySlippage(bar.Open, settings.SlippagePercent, worseForBuy: open.Side == PositionSide.Short), bar.OpenTime, pendingExitReason, settings, trades, ref equity, ref feesPaid, ref consecutiveLosses, ref lastLossAt, ref dayPnl);
+                Close(open, ApplySlippage(bar.Open, settings.SlippagePercent, worseForBuy: open.Side == PositionSide.Short), bar.Open, bar.OpenTime, pendingExitReason, settings, trades, ref equity, ref feesPaid, ref slippagePaid, ref grossPnl, ref consecutiveLosses, ref lastLossAt, ref dayPnl);
                 open = null;
                 pendingExit = false;
+            }
+
+            if (open is not null && includeFunding)
+            {
+                var prevClose = i == 0 ? DateTimeOffset.MinValue : ordered[i - 1].CloseTime;
+                while (fundingIndex < fundingSettlements!.Count && fundingSettlements[fundingIndex].FundingTime <= prevClose)
+                {
+                    fundingIndex++;
+                }
+
+                while (fundingIndex < fundingSettlements.Count && fundingSettlements[fundingIndex].FundingTime <= bar.CloseTime)
+                {
+                    var f = fundingSettlements[fundingIndex];
+                    fundingIndex++;
+                    if (f.FundingTime < open.OpenedAt)
+                    {
+                        continue;
+                    }
+
+                    var notional = open.Quantity * bar.Close;
+                    var cash = notional * f.FundingRate;
+                    var signed = open.Side == PositionSide.Long ? -cash : cash;
+                    equity += signed;
+                    fundingPaid -= signed;
+                    open = open with { FundingAccrued = open.FundingAccrued + signed };
+                }
             }
 
             if (open is not null)
@@ -212,33 +264,33 @@ public sealed class BacktestReplay
                     : open.EntryPrice * (1m + settings.TakeProfitPercent / 100m);
                 if (open.Side == PositionSide.Long && bar.Low <= stop)
                 {
-                    var fill = Math.Min(stop, bar.Low);
-                    fill = ApplySlippage(fill, settings.SlippagePercent, worseForBuy: false);
-                    Close(open, fill, bar.CloseTime, "Stop loss", settings, trades, ref equity, ref feesPaid, ref consecutiveLosses, ref lastLossAt, ref dayPnl);
+                    var mid = Math.Min(stop, bar.Low);
+                    var fill = ApplySlippage(mid, settings.SlippagePercent, worseForBuy: false);
+                    Close(open, fill, mid, bar.CloseTime, "Stop loss", settings, trades, ref equity, ref feesPaid, ref slippagePaid, ref grossPnl, ref consecutiveLosses, ref lastLossAt, ref dayPnl);
                     open = null;
                     pendingExit = false;
                 }
                 else if (open.Side == PositionSide.Short && bar.High >= stop)
                 {
-                    var fill = Math.Max(stop, bar.High);
-                    fill = ApplySlippage(fill, settings.SlippagePercent, worseForBuy: true);
-                    Close(open, fill, bar.CloseTime, "Stop loss", settings, trades, ref equity, ref feesPaid, ref consecutiveLosses, ref lastLossAt, ref dayPnl);
+                    var mid = Math.Max(stop, bar.High);
+                    var fill = ApplySlippage(mid, settings.SlippagePercent, worseForBuy: true);
+                    Close(open, fill, mid, bar.CloseTime, "Stop loss", settings, trades, ref equity, ref feesPaid, ref slippagePaid, ref grossPnl, ref consecutiveLosses, ref lastLossAt, ref dayPnl);
                     open = null;
                     pendingExit = false;
                 }
                 else if (open.Side == PositionSide.Long && bar.High >= target)
                 {
-                    var fill = Math.Min(target, bar.High);
-                    fill = ApplySlippage(fill, settings.SlippagePercent, worseForBuy: false);
-                    Close(open, fill, bar.CloseTime, "Take profit", settings, trades, ref equity, ref feesPaid, ref consecutiveLosses, ref lastLossAt, ref dayPnl);
+                    var mid = Math.Min(target, bar.High);
+                    var fill = ApplySlippage(mid, settings.SlippagePercent, worseForBuy: false);
+                    Close(open, fill, mid, bar.CloseTime, "Take profit", settings, trades, ref equity, ref feesPaid, ref slippagePaid, ref grossPnl, ref consecutiveLosses, ref lastLossAt, ref dayPnl);
                     open = null;
                     pendingExit = false;
                 }
                 else if (open.Side == PositionSide.Short && bar.Low <= target)
                 {
-                    var fill = Math.Max(target, bar.Low);
-                    fill = ApplySlippage(fill, settings.SlippagePercent, worseForBuy: true);
-                    Close(open, fill, bar.CloseTime, "Take profit", settings, trades, ref equity, ref feesPaid, ref consecutiveLosses, ref lastLossAt, ref dayPnl);
+                    var mid = Math.Max(target, bar.Low);
+                    var fill = ApplySlippage(mid, settings.SlippagePercent, worseForBuy: true);
+                    Close(open, fill, mid, bar.CloseTime, "Take profit", settings, trades, ref equity, ref feesPaid, ref slippagePaid, ref grossPnl, ref consecutiveLosses, ref lastLossAt, ref dayPnl);
                     open = null;
                     pendingExit = false;
                 }
@@ -268,21 +320,23 @@ public sealed class BacktestReplay
             {
                 SignalType signal;
                 string reason;
-                if (cache is not null && engine is not null)
+                var evalContext = new StrategyContext
                 {
-                    signal = engine.EvaluateAt(
-                        definition,
-                        new StrategyContext
-                        {
-                            ClosedCandles = ordered,
-                            AverageEntryPrice = open?.EntryPrice,
-                            CurrentPrice = bar.Close,
-                            HasOpenPosition = open is not null,
-                            PositionSide = open?.Side ?? PositionSide.Long,
-                        },
-                        cache,
-                        i,
-                        out reason);
+                    ClosedCandles = ordered,
+                    AverageEntryPrice = open?.EntryPrice,
+                    CurrentPrice = bar.Close,
+                    HasOpenPosition = open is not null,
+                    PositionSide = open?.Side ?? PositionSide.Long,
+                    HigherTimeframeCache = higherTimeframeCache,
+                    OpenInterest = futures?.OpenInterest,
+                    FundingRate = futures?.FundingRate,
+                    MarkPrice = futures?.MarkPrice,
+                    IndexPrice = futures?.IndexPrice,
+                    NormalizedBasis = futures?.NormalizedBasis
+                };
+                if (cache is not null)
+                {
+                    signal = _engine.EvaluateAt(definition, evalContext, cache, i, out reason);
                 }
                 else
                 {
@@ -295,6 +349,12 @@ public sealed class BacktestReplay
                             CurrentPrice = bar.Close,
                             HasOpenPosition = open is not null,
                             PositionSide = open?.Side ?? PositionSide.Long,
+                            HigherTimeframeCache = higherTimeframeCache,
+                            OpenInterest = PrefixFutures(futures?.OpenInterest, i + 1),
+                            FundingRate = PrefixFutures(futures?.FundingRate, i + 1),
+                            MarkPrice = PrefixFutures(futures?.MarkPrice, i + 1),
+                            IndexPrice = PrefixFutures(futures?.IndexPrice, i + 1),
+                            NormalizedBasis = PrefixFutures(futures?.NormalizedBasis, i + 1)
                         },
                         out reason);
                 }
@@ -319,13 +379,9 @@ public sealed class BacktestReplay
             var last = lastProcessed >= 0 && lastProcessed < ordered.Count
                 ? ordered[lastProcessed]
                 : ordered.Last(c => c.OpenTime <= end);
-            Close(open, ApplySlippage(last.Close, settings.SlippagePercent, worseForBuy: open.Side == PositionSide.Short), last.CloseTime, "End of window", settings, trades, ref equity, ref feesPaid, ref consecutiveLosses, ref lastLossAt, ref dayPnl);
+            Close(open, ApplySlippage(last.Close, settings.SlippagePercent, worseForBuy: open.Side == PositionSide.Short), last.Close, last.CloseTime, "End of window", settings, trades, ref equity, ref feesPaid, ref slippagePaid, ref grossPnl, ref consecutiveLosses, ref lastLossAt, ref dayPnl);
         }
 
-        var wins = trades.Where(t => t.PnL > 0m).ToList();
-        var losses = trades.Where(t => t.PnL < 0m).ToList();
-        var grossWin = wins.Sum(t => t.PnL);
-        var grossLoss = Math.Abs(losses.Sum(t => t.PnL));
         var net = equity - settings.InitialBalance;
         var returns = trades.Select(t => t.PnL / Math.Max(settings.InitialBalance, 1m)).ToList();
         decimal? sharpe = null;
@@ -356,21 +412,26 @@ public sealed class BacktestReplay
             "Unclosed trades flatten at the last processed close. No look-ahead on unclosed candles. " +
             "Index windows score only in-window signals; a last-bar signal fills at T+1 open if that next candle exists in the series, then the window flattens. " +
             "If T+1 does not exist, the pending fill is dropped. Execution state starts flat at the window. " +
-            "Funding is not applied in this replay (EXCLUDING_FUNDING). " +
+            (includeFunding
+                ? "Settled funding (fundingTime <= bar.CloseTime, not future) is applied to open Isolated notional (INCLUDING_FUNDING). "
+                : "Funding is not applied in this replay (EXCLUDING_FUNDING). ") +
             "Historical simulation, not a guarantee of future performance.";
 
         var longMetrics = ReplayMetrics.ForSide(trades, "Long");
         var shortMetrics = ReplayMetrics.ForSide(trades, "Short");
+        var totals = PnlTotals.FromTrades(trades);
+        var pf = totals.ProfitFactor;
+        var bookReturn = settings.InitialBalance == 0m ? 0m : net / settings.InitialBalance;
         return new ReplayResult(
             settings.InitialBalance,
             Round(equity),
             Round(net),
-            settings.InitialBalance == 0m ? 0m : Round(net / settings.InitialBalance * 100m),
+            settings.InitialBalance == 0m ? 0m : Round(bookReturn * 100m),
             trades.Count,
-            trades.Count == 0 ? 0m : Round((decimal)wins.Count / trades.Count * 100m),
-            grossLoss == 0m ? (grossWin > 0m ? 99m : 0m) : Round(grossWin / grossLoss),
-            wins.Count == 0 ? 0m : Round(wins.Average(t => t.PnL)),
-            losses.Count == 0 ? 0m : Round(losses.Average(t => t.PnL)),
+            totals.WinRate,
+            pf.IsFinite ? pf.Ratio : 0m,
+            totals.WinningTrades == 0 ? 0m : Round(totals.PositivePnlSum / totals.WinningTrades),
+            totals.LosingTrades == 0 ? 0m : Round(-(totals.AbsoluteNegativePnlSum / totals.LosingTrades)),
             Round(maxDrawdown),
             sharpe,
             Round(feesPaid),
@@ -383,27 +444,49 @@ public sealed class BacktestReplay
             trades,
             equityCurve,
             longMetrics,
-            shortMetrics);
+            shortMetrics,
+            FundingPaid: Round(fundingPaid),
+            CostNotes: includeFunding ? "INCLUDING_FUNDING" : "EXCLUDING_FUNDING",
+            Totals: totals,
+            BookReturns: [bookReturn],
+            BookDrawdowns: [maxDrawdown],
+            SlippagePaid: Round(slippagePaid),
+            GrossPnl: Round(grossPnl));
+    }
+
+    public static bool AccountingIdentityHolds(ReplayResult result, decimal tolerance = 0.05m)
+    {
+        var reconstructed = result.GrossPnl - result.FeesPaid - result.SlippagePaid - result.FundingPaid;
+        return Math.Abs(reconstructed - result.NetProfit) <= tolerance;
     }
 
     private static void Close(
         OpenPosition open,
         decimal exitPrice,
+        decimal midExit,
         DateTimeOffset at,
         string reason,
         ReplaySettings settings,
         List<ReplayTrade> trades,
         ref decimal equity,
         ref decimal feesPaid,
+        ref decimal slippagePaid,
+        ref decimal grossPnl,
         ref int consecutiveLosses,
         ref DateTimeOffset? lastLossAt,
         ref decimal dayPnl)
     {
         var exitFee = Notional(open.Quantity, exitPrice) * (settings.FeePercent / 100m);
-        var pnl = Direction(open.Side) * (exitPrice - open.EntryPrice) * open.Quantity - open.EntryFee - exitFee;
+        var pnl = Direction(open.Side) * (exitPrice - open.EntryPrice) * open.Quantity - open.EntryFee - exitFee + open.FundingAccrued;
         equity += Direction(open.Side) * (exitPrice - open.EntryPrice) * open.Quantity - exitFee;
         feesPaid += exitFee;
         dayPnl += pnl;
+        var midEntry = open.MidEntryPrice == 0m ? open.EntryPrice : open.MidEntryPrice;
+        var dir = Direction(open.Side);
+        var gross = dir * (midExit - midEntry) * open.Quantity;
+        var slip = dir * (open.EntryPrice - midEntry) * open.Quantity + dir * (midExit - exitPrice) * open.Quantity;
+        grossPnl += gross;
+        slippagePaid += slip;
         if (pnl < 0m)
         {
             consecutiveLosses++;
@@ -423,7 +506,12 @@ public sealed class BacktestReplay
             Round(pnl),
             Round(open.EntryFee + exitFee),
             reason,
-            open.Side == PositionSide.Short ? "Short" : "Long"));
+            open.Side == PositionSide.Short ? "Short" : "Long",
+            Round(midEntry),
+            Round(midExit),
+            Round(slip),
+            Round(open.FundingAccrued),
+            Round(gross)));
     }
 
     private static decimal Size(
@@ -495,7 +583,17 @@ public sealed class BacktestReplay
 
     private static decimal Round(decimal value) => Math.Round(value, 8, MidpointRounding.AwayFromZero);
 
-    private sealed record OpenPosition(DateTimeOffset OpenedAt, decimal Quantity, decimal EntryPrice, decimal EntryFee, PositionSide Side);
+    private sealed record OpenPosition(
+        DateTimeOffset OpenedAt,
+        decimal Quantity,
+        decimal EntryPrice,
+        decimal EntryFee,
+        PositionSide Side,
+        decimal FundingAccrued = 0m,
+        decimal MidEntryPrice = 0m);
+
+    private static IReadOnlyList<decimal?>? PrefixFutures(IReadOnlyList<decimal?>? series, int take) =>
+        series is null ? null : new PrefixList<decimal?>(series, take);
 
     private sealed class PrefixList<T> : IReadOnlyList<T>
     {

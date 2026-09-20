@@ -84,7 +84,39 @@ internal static class StrategyTemplateEvaluator
                     q.RequireVolume,
                     Positive(q.VolumeLookback, 20),
                     q.MinAtrPercent,
-                    q.MaxAtrPercent));
+                    q.MaxAtrPercent),
+            Positive(p?.EntryLookback, 20),
+            Positive(p?.ExitLookback, 10),
+            Positive(p?.AtrPeriod, 14),
+            (p?.AtrStopMultiplier ?? 0m) > 0m ? p!.AtrStopMultiplier : 2m,
+            Positive(p?.TrendEmaPeriod, 50),
+            p?.VolumeFilterEnabled ?? true,
+            Positive(p?.RelativeVolumePeriod, 20),
+            p?.MinimumRelativeVolume ?? 1m,
+            (p?.MaxVwapDistanceAtr ?? 0m) > 0m ? p!.MaxVwapDistanceAtr : 0.75m,
+            (p?.StopAtrMultiplier ?? 0m) > 0m ? p!.StopAtrMultiplier : 1.5m,
+            Positive(p?.VolatilityLookback, 100),
+            p?.CompressionPercentile is > 0m and <= 1m ? p.CompressionPercentile : 0.20m,
+            Positive(p?.AtrExpansionLookback, 20),
+            p?.BreakoutRelativeVolume ?? 1.2m,
+            Positive(p?.SupertrendPeriod, 10),
+            (p?.SupertrendMultiplier ?? 0m) > 0m ? p!.SupertrendMultiplier : 3m,
+            Positive(p?.AdxPeriod, 14),
+            p?.MinimumAdx ?? 20m,
+            Positive(p?.OiLookback, 20),
+            p?.OiChangeThreshold ?? 0.02m,
+            p?.PriceChangeThreshold ?? 0.01m,
+            string.IsNullOrWhiteSpace(p?.OiHypothesis) ? "continuation" : p.OiHypothesis,
+            Positive(p?.FundingLookback, 24),
+            p?.FundingExtremePercentile ?? 0.90m,
+            string.IsNullOrWhiteSpace(p?.FundingHypothesis) ? "continuation" : p.FundingHypothesis,
+            p?.ZScoreEntry ?? 2m,
+            p?.ValueAreaPercent ?? 0.70m,
+            p?.SweepDepthAtr ?? 0.15m,
+            p?.SwingLength ?? 3,
+            p?.UseFuturesFilter ?? true,
+            (p?.PriceDisplacementAtr ?? 0m) > 0m ? p!.PriceDisplacementAtr : 1.5m,
+            p?.OiExtremePercentile is > 0m and <= 1m ? p.OiExtremePercentile : 0.90m);
     }
 
     public static SignalType EvaluateAt(
@@ -141,14 +173,18 @@ internal static class StrategyTemplateEvaluator
         int i,
         StrategyContext context,
         CausalIndicatorCache cache) =>
-        p.TemplateKey switch
-        {
-            StrategyTemplateKeys.MacdTrend => Macd(p, candles, i, context, cache),
-            StrategyTemplateKeys.RsiPullback => RsiPullback(p, candles, i, context, cache),
-            StrategyTemplateKeys.BollingerReversion => Bollinger(p, candles, i, context, cache),
-            StrategyTemplateKeys.DonchianBreakout => Donchian(p, candles, i, context, cache),
-            _ => EmaRsi(p, candles, i, context, cache)
-        };
+        StrategyTemplateKeys.IsResearch(p.TemplateKey)
+            ? AsTuple(AdvancedStrategyEvaluator.Evaluate(p, candles, i, context, cache))
+            : p.TemplateKey switch
+            {
+                StrategyTemplateKeys.MacdTrend => Macd(p, candles, i, context, cache),
+                StrategyTemplateKeys.RsiPullback => RsiPullback(p, candles, i, context, cache),
+                StrategyTemplateKeys.BollingerReversion => Bollinger(p, candles, i, context, cache),
+                StrategyTemplateKeys.DonchianBreakout => Donchian(p, candles, i, context, cache),
+                _ => EmaRsi(p, candles, i, context, cache)
+            };
+
+    private static (SignalType Signal, string Reason) AsTuple(StrategySignalDetail detail) => (detail.Signal, detail.Reason);
 
     private static (SignalType Signal, string Reason) EmaRsi(
         StrategyTemplateParams p,
