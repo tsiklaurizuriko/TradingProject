@@ -139,7 +139,7 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
         }
     }
 
-    public async Task PlaceClosePositionStopsAsync(
+    public async Task<ProtectiveStopsResult> PlaceClosePositionStopsAsync(
         string symbol,
         OrderSide closeSide,
         decimal stopLossPrice,
@@ -149,63 +149,67 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
         CancellationToken cancellationToken = default)
     {
         var (key, secret) = await RequireKeys(cancellationToken);
-        Exception? stopFailure = null;
-        Exception? takeFailure = null;
-        try
+        var stopError = await TryPlaceCloseStopAsync(
+            key, secret, symbol, closeSide, "STOP_MARKET", stopLossPrice, stopClientOrderId, cancellationToken);
+        var takeError = await TryPlaceCloseStopAsync(
+            key, secret, symbol, closeSide, "TAKE_PROFIT_MARKET", takeProfitPrice, takeProfitClientOrderId, cancellationToken);
+
+        if (stopError is not null && takeError is null)
         {
-            await _signed.PlaceFuturesClosePositionOrderAsync(
-                key,
-                secret,
-                symbol,
-                closeSide,
-                "STOP_MARKET",
-                stopLossPrice,
-                stopClientOrderId,
-                cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            stopFailure = ex;
+            await CancelOrderAsync(symbol, takeProfitClientOrderId, null, cancellationToken);
         }
 
-        try
+        return new ProtectiveStopsResult(
+            stopError is null,
+            takeError is null,
+            stopError,
+            takeError);
+    }
+
+    private async Task<string?> TryPlaceCloseStopAsync(
+        string key,
+        string secret,
+        string symbol,
+        OrderSide closeSide,
+        string type,
+        decimal stopPrice,
+        string clientOrderId,
+        CancellationToken cancellationToken)
+    {
+        var error = await PlaceOnceAsync(priceProtect: true);
+        if (error is null || IsImmediateTrigger(error))
         {
-            await _signed.PlaceFuturesClosePositionOrderAsync(
-                key,
-                secret,
-                symbol,
-                closeSide,
-                "TAKE_PROFIT_MARKET",
-                takeProfitPrice,
-                takeProfitClientOrderId,
-                cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            takeFailure = ex;
+            return error;
         }
 
-        if (stopFailure is not null && takeFailure is not null)
-        {
-            throw new DomainException(
-                ErrorCodes.OrderRejected,
-                $"STOP_MARKET failed: {stopFailure.Message}; TAKE_PROFIT_MARKET failed: {takeFailure.Message}");
-        }
+        return await PlaceOnceAsync(priceProtect: false);
 
-        if (stopFailure is not null)
+        async Task<string?> PlaceOnceAsync(bool priceProtect)
         {
-            throw new DomainException(
-                ErrorCodes.OrderRejected,
-                $"STOP_MARKET failed: {stopFailure.Message}. TAKE_PROFIT_MARKET was placed.");
-        }
-
-        if (takeFailure is not null)
-        {
-            throw new DomainException(
-                ErrorCodes.OrderRejected,
-                $"TAKE_PROFIT_MARKET failed: {takeFailure.Message}. STOP_MARKET was placed.");
+            try
+            {
+                await _signed.PlaceFuturesClosePositionOrderAsync(
+                    key,
+                    secret,
+                    symbol,
+                    closeSide,
+                    type,
+                    stopPrice,
+                    clientOrderId,
+                    cancellationToken,
+                    priceProtect);
+                return null;
+            }
+            catch (Exception ex)
+            {
+                return ex.Message;
+            }
         }
     }
+
+    private static bool IsImmediateTrigger(string message) =>
+        message.Contains("-2021", StringComparison.Ordinal)
+        || message.Contains("immediately trigger", StringComparison.OrdinalIgnoreCase);
 
     public async Task CancelOrderAsync(string symbol, string? clientOrderId, string? exchangeOrderId, CancellationToken cancellationToken = default)
     {
@@ -312,12 +316,7 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
             _ => OrderStatus.Submitted
         };
         var executed = payload.TryGetProperty("executedQty", out var qtyEl) ? Dec(qtyEl) : request.Quantity;
-        var quote = payload.TryGetProperty("cumQuote", out var quoteEl)
-            ? Dec(quoteEl)
-            : payload.TryGetProperty("cummulativeQuoteQty", out var spotQuote)
-                ? Dec(spotQuote)
-                : 0m;
-        var avg = executed > 0m && quote > 0m ? quote / executed : request.Price;
+        var avg = ReadFillPrice(payload, executed) ?? (request.Price is > 0m ? request.Price : null);
         long? transact = payload.TryGetProperty("transactTime", out var timeEl) ? timeEl.GetInt64() : null;
         return new ExchangeOrder(
             payload.TryGetProperty("clientOrderId", out var cid) ? cid.GetString() ?? request.ClientOrderId : request.ClientOrderId,
@@ -379,6 +378,39 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
         }
 
         return total;
+    }
+
+    private static decimal? ReadFillPrice(JsonElement payload, decimal executed)
+    {
+        if (payload.TryGetProperty("avgPrice", out var avgEl))
+        {
+            var avgPrice = Dec(avgEl);
+            if (avgPrice > 0m)
+            {
+                return avgPrice;
+            }
+        }
+
+        var quote = payload.TryGetProperty("cumQuote", out var quoteEl)
+            ? Dec(quoteEl)
+            : payload.TryGetProperty("cummulativeQuoteQty", out var spotQuote)
+                ? Dec(spotQuote)
+                : 0m;
+        if (executed > 0m && quote > 0m)
+        {
+            return quote / executed;
+        }
+
+        if (payload.TryGetProperty("price", out var priceEl))
+        {
+            var price = Dec(priceEl);
+            if (price > 0m)
+            {
+                return price;
+            }
+        }
+
+        return null;
     }
 
     private static decimal Dec(JsonElement element)

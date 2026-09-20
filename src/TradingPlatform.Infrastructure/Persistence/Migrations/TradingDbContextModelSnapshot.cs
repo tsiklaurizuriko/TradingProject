@@ -1241,11 +1241,11 @@ namespace TradingPlatform.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<decimal>("AverageEntryPrice")
+                    b.Property<decimal>("AvailableBalanceAtEntry")
                         .HasPrecision(28, 8)
                         .HasColumnType("numeric(28,8)");
 
-                    b.Property<decimal>("AvailableBalanceAtEntry")
+                    b.Property<decimal>("AverageEntryPrice")
                         .HasPrecision(28, 8)
                         .HasColumnType("numeric(28,8)");
 
@@ -1542,14 +1542,14 @@ namespace TradingPlatform.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<string>("AllowedSymbolsCsv")
-                        .HasMaxLength(4000)
-                        .HasColumnType("character varying(4000)");
-
                     b.Property<string>("AllowedSide")
                         .IsRequired()
                         .HasMaxLength(16)
                         .HasColumnType("character varying(16)");
+
+                    b.Property<string>("AllowedSymbolsCsv")
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
 
                     b.Property<bool>("AppliesToAllSymbols")
                         .HasColumnType("boolean");
@@ -1580,20 +1580,20 @@ namespace TradingPlatform.Infrastructure.Persistence.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)");
 
-                    b.Property<string>("ValidationStatus")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<Guid>("UserId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("ValidationStatus")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
                     b.HasKey("Id");
 
-                    b.HasIndex("UserId");
+                    b.HasIndex("UserId", "Name");
 
                     b.ToTable("Strategies", (string)null);
                 });

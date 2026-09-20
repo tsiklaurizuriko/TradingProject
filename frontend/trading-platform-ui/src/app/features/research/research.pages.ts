@@ -281,6 +281,7 @@ function depsFor(key: string): string {
             <app-sort-btn column="rating" [query]="list">Rating</app-sort-btn>
           </div>
           <p class="tiny">ვარსკვლავი ოპერატორისთვისაა: რომელი PAPER-ზე და რომელი არა. არცერთი არ არის მომგებიანი. 5★ არ არსებობს. LIVE გამორთულია. Size/SL/TP რჩება Risk-ზე.</p>
+          <p class="tiny">One catalog. Paper and LIVE bots share these strategies; they hit different accounts.</p>
         </div>
         <div class="strategies-toolbar-actions">
           <label class="field">Use

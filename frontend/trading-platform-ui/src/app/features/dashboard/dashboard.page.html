@@ -118,10 +118,12 @@
       <button
         class="btn accent"
         type="button"
-        [disabled]="busy || !trading.idleWorkspaceBots().length"
+        [disabled]="!!busy || !trading.idleWorkspaceBots().length"
         (click)="requestStartAll()"
-      >Start All Bots</button>
-      <button class="btn danger" type="button" [disabled]="busy || !trading.runningWorkspaceBots().length" (click)="stopAll()">Stop All Bots</button>
+      >{{ busy === 'starting' ? 'Starting…' : 'Start All Bots' }}</button>
+      <button class="btn danger" type="button" [disabled]="!!busy || !trading.runningWorkspaceBots().length" (click)="stopAll()">
+        {{ busy === 'stopping' ? 'Stopping…' : 'Stop All Bots' }}
+      </button>
     </div>
     <div class="cluster">
       <button class="btn secondary" type="button" disabled title="Pause is not implemented; use Stop">Pause</button>

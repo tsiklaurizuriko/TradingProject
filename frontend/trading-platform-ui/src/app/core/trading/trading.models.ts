@@ -262,6 +262,12 @@ export interface StartBotsResult {
   detail?: string | null;
 }
 
+export interface StopBotsResult {
+  stopped: number;
+  failed: number;
+  detail?: string | null;
+}
+
 export interface DeleteBotsResult {
   deleted: number;
   skipped: number;

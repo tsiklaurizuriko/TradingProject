@@ -22,6 +22,7 @@ namespace TradingPlatform.Trading;
 public sealed class BotLifecycleService : IBotLifecycleService
 {
     public const string SamplePaperBotName = "BTCUSDT EMA RSI Paper";
+    private const int WorkspaceBatchSize = 10;
 
     private readonly ITradingStore _store;
     private readonly IPublicMarketDataClient _market;
@@ -105,7 +106,6 @@ public sealed class BotLifecycleService : IBotLifecycleService
         Guid? riskProfileId = null,
         CancellationToken cancellationToken = default)
     {
-        _ = riskProfileId;
         if (_options.KillSwitchEnabled)
         {
             throw new DomainException(ErrorCodes.KillSwitchActive, "Kill switch is active.");
@@ -146,7 +146,7 @@ public sealed class BotLifecycleService : IBotLifecycleService
                 $"{strategyVersion.Strategy.Name} is not assigned to {name}. Open Strategies and add this coin, or set the strategy to all coins.");
         }
 
-        var risk = await _store.GetConservativeRiskAsync(cancellationToken);
+        var risk = await ResolveRiskAsync(riskProfileId, cancellationToken);
         RiskLiveGuard.EnsureAllowed(mode, risk);
 
         Domain.Exchanges.ExchangeAccount account;
@@ -209,6 +209,8 @@ public sealed class BotLifecycleService : IBotLifecycleService
             bot.StrategyVersionId = strategyVersion.Id;
             bot.StrategyVersion = strategyVersion;
             bot.Timeframe = strategyVersion.Timeframe;
+            bot.RiskProfileId = risk.Id;
+            bot.RiskProfile = risk;
         }
 
         if (bot.Status == BotStatus.Running)
@@ -230,7 +232,6 @@ public sealed class BotLifecycleService : IBotLifecycleService
         IReadOnlyList<string> symbols,
         CancellationToken cancellationToken = default)
     {
-        _ = riskProfileId;
         if (mode is not TradingMode.Paper and not TradingMode.Live)
         {
             throw new DomainException(ErrorCodes.ValidationFailed, "Use Paper or Live.");
@@ -253,7 +254,7 @@ public sealed class BotLifecycleService : IBotLifecycleService
         var strategyVersion = await _store.GetLatestStrategyVersionAsync(strategyId, cancellationToken)
             ?? throw new DomainException(ErrorCodes.StrategyInvalid, "Strategy was not found.");
         EnsureStrategyEnabled(strategyVersion.Strategy);
-        var risk = await _store.GetConservativeRiskAsync(cancellationToken);
+        var risk = await ResolveRiskAsync(riskProfileId, cancellationToken);
         RiskLiveGuard.EnsureAllowed(mode, risk);
 
         Domain.Exchanges.ExchangeAccount account;
@@ -371,17 +372,6 @@ public sealed class BotLifecycleService : IBotLifecycleService
             }
 
             RiskLiveGuard.EnsureAllowed(bot.Mode, await _store.GetConservativeRiskAsync(cancellationToken));
-
-            var running = await _store.GetRunningBotsAsync(cancellationToken);
-            if (running.Any(other =>
-                    other.Id != bot.Id &&
-                    other.Mode == TradingMode.Live &&
-                    string.Equals(other.Symbol, bot.Symbol, StringComparison.OrdinalIgnoreCase)))
-            {
-                throw new DomainException(
-                    ErrorCodes.BotAlreadyRunning,
-                    "A live bot is already running this coin. USD-M is one position per symbol.");
-            }
         }
         else if (bot.Mode != TradingMode.Paper)
         {
@@ -399,8 +389,13 @@ public sealed class BotLifecycleService : IBotLifecycleService
         return mapped;
     }
 
-    public async Task<StartBotsResult> StartAllIdleAsync(Guid userId, TradingMode mode, CancellationToken cancellationToken = default)
+    public async Task<StartBotsResult> StartAllIdleAsync(
+        Guid userId,
+        TradingMode mode,
+        Guid? preferredStrategyId = null,
+        CancellationToken cancellationToken = default)
     {
+        _ = preferredStrategyId;
         if (_options.KillSwitchEnabled)
         {
             throw new DomainException(ErrorCodes.KillSwitchActive, "Kill switch is active.");
@@ -428,38 +423,24 @@ public sealed class BotLifecycleService : IBotLifecycleService
             RiskLiveGuard.EnsureAllowed(mode, await _store.GetConservativeRiskAsync(cancellationToken));
         }
 
-        var bots = (await _store.ListBotsAsync(cancellationToken))
-            .Where(bot => bot.UserId == user.Id && bot.Mode == mode && bot.Status != BotStatus.Running)
+        var bots = (await _store.ListWorkspaceBotsAsync(user.Id, mode, cancellationToken))
+            .Where(bot => bot.Status != BotStatus.Running)
             .OrderBy(bot => bot.Symbol)
+            .ThenBy(bot => bot.Name)
             .ToList();
-        var taken = new HashSet<string>(
-            (await _store.GetRunningBotsAsync(cancellationToken))
-                .Where(bot => bot.Mode == mode)
-                .Select(bot => bot.Symbol),
-            StringComparer.OrdinalIgnoreCase);
 
         var started = 0;
         var failed = 0;
         string? detail = null;
+        var dirty = 0;
         foreach (var bot in bots)
         {
-            if (mode == TradingMode.Live && !taken.Add(bot.Symbol))
-            {
-                failed++;
-                detail = "A live bot is already running this coin. USD-M is one position per symbol.";
-                continue;
-            }
-
             try
             {
                 await AttachLatestStrategyAsync(bot, cancellationToken);
                 await MarkRunningAsync(bot, cancellationToken);
-                if (mode == TradingMode.Paper)
-                {
-                    taken.Add(bot.Symbol);
-                }
-
                 started++;
+                dirty++;
             }
             catch (Exception ex)
             {
@@ -467,16 +448,82 @@ public sealed class BotLifecycleService : IBotLifecycleService
                 detail = ex.Message;
                 _logger.LogWarning(ex, "Start-all skipped {Mode} bot {BotId} {Symbol}", mode, bot.Id, bot.Symbol);
             }
+
+            if (dirty >= WorkspaceBatchSize)
+            {
+                await FlushWorkspaceProgressAsync(cancellationToken);
+                dirty = 0;
+            }
         }
 
-        if (started > 0)
+        if (dirty > 0)
         {
-            await _store.SaveChangesAsync(cancellationToken);
-            await _publisher.PublishOverviewAsync(cancellationToken);
+            await FlushWorkspaceProgressAsync(cancellationToken);
         }
 
         _logger.LogInformation("Start-all {Mode}: started {Started}, failed {Failed}.", mode, started, failed);
         return new StartBotsResult(started, failed, detail);
+    }
+
+    public async Task<StopBotsResult> StopAllRunningAsync(Guid userId, TradingMode mode, CancellationToken cancellationToken = default)
+    {
+        if (mode is not TradingMode.Paper and not TradingMode.Live)
+        {
+            throw new DomainException(ErrorCodes.ValidationFailed, "Use Paper or Live.");
+        }
+
+        var user = userId == Guid.Empty
+            ? await _store.GetFirstAdminAsync(cancellationToken)
+            : await _store.GetUserAsync(userId, cancellationToken) ?? await _store.GetFirstAdminAsync(cancellationToken);
+
+        var bots = (await _store.ListWorkspaceBotsAsync(user.Id, mode, cancellationToken))
+            .Where(bot => bot.Status == BotStatus.Running)
+            .OrderBy(bot => bot.Symbol)
+            .ThenBy(bot => bot.Id)
+            .ToList();
+
+        var stopped = 0;
+        var failed = 0;
+        string? detail = null;
+        var dirty = 0;
+        var now = _clock.UtcNow;
+        foreach (var bot in bots)
+        {
+            try
+            {
+                bot.Status = BotStatus.Stopped;
+                bot.StoppedAt = now;
+                bot.LastError = "Stopped. Open positions were left in place.";
+                stopped++;
+                dirty++;
+            }
+            catch (Exception ex)
+            {
+                failed++;
+                detail = ex.Message;
+                _logger.LogWarning(ex, "Stop-all skipped {Mode} bot {BotId} {Symbol}", mode, bot.Id, bot.Symbol);
+            }
+
+            if (dirty >= WorkspaceBatchSize)
+            {
+                await FlushWorkspaceProgressAsync(cancellationToken);
+                dirty = 0;
+            }
+        }
+
+        if (dirty > 0)
+        {
+            await FlushWorkspaceProgressAsync(cancellationToken);
+        }
+
+        _logger.LogInformation("Stop-all {Mode}: stopped {Stopped}, failed {Failed}. Positions were not closed.", mode, stopped, failed);
+        return new StopBotsResult(stopped, failed, detail);
+    }
+
+    private async Task FlushWorkspaceProgressAsync(CancellationToken cancellationToken)
+    {
+        await _store.SaveChangesAsync(cancellationToken);
+        await _publisher.PublishOverviewAsync(cancellationToken);
     }
 
     private async Task AttachLatestStrategyAsync(Bot bot, CancellationToken cancellationToken)
@@ -632,6 +679,20 @@ public sealed class BotLifecycleService : IBotLifecycleService
             bot.StartedAt,
             bot.StrategyVersion.StrategyId,
             bot.RiskProfileId);
+
+    private async Task<RiskProfile> ResolveRiskAsync(Guid? riskProfileId, CancellationToken cancellationToken)
+    {
+        if (riskProfileId is { } id && id != Guid.Empty)
+        {
+            var selected = await _store.GetRiskProfileByIdAsync(id, cancellationToken);
+            if (selected is not null)
+            {
+                return selected;
+            }
+        }
+
+        return await _store.GetConservativeRiskAsync(cancellationToken);
+    }
 
     private static void EnsureStrategyEnabled(Strategy strategy)
     {
@@ -872,7 +933,7 @@ public sealed class TradingQueryService : ITradingQueryService
                 o.Symbol,
                 o.Side.ToString(),
                 o.Type.ToString(),
-                o.AverageFillPrice ?? o.Price,
+                o.AverageFillPrice is > 0m ? o.AverageFillPrice : o.Price > 0m ? o.Price : null,
                 o.Quantity,
                 o.FilledQuantity,
                 o.Status.ToString(),
@@ -1166,11 +1227,19 @@ public sealed class TradingQueryService : ITradingQueryService
 
     private static decimal RoundPerf(decimal value) => Math.Round(value, 2, MidpointRounding.AwayFromZero);
 
-    public async Task<RiskProfileDto> GetRiskProfileAsync(CancellationToken cancellationToken = default) =>
-        MapRisk(await _store.GetConservativeRiskAsync(cancellationToken));
+    public async Task<RiskProfileDto> GetRiskProfileAsync(string? mode = null, CancellationToken cancellationToken = default)
+    {
+        _ = mode;
+        return MapRisk(await _store.GetConservativeRiskAsync(cancellationToken));
+    }
 
-    public async Task<IReadOnlyList<StrategyDto>> GetStrategiesAsync(CancellationToken cancellationToken = default) =>
-        (await _store.ListStrategiesAsync(cancellationToken)).Select(MapStrategy).ToList();
+    public async Task<IReadOnlyList<StrategyDto>> GetStrategiesAsync(string? mode = null, CancellationToken cancellationToken = default)
+    {
+        _ = mode;
+        return (await _store.ListStrategiesAsync(cancellationToken))
+            .Select(MapStrategy)
+            .ToList();
+    }
 
     public async Task<StrategyPreviewDto> PreviewStrategyAsync(
         Guid strategyId,
@@ -1239,8 +1308,13 @@ public sealed class TradingQueryService : ITradingQueryService
             series.TakeLast(40).ToList());
     }
 
-    public async Task<IReadOnlyList<RiskProfileDto>> GetRiskProfilesAsync(CancellationToken cancellationToken = default) =>
-        (await _store.ListRiskProfilesAsync(cancellationToken)).Select(MapRisk).ToList();
+    public async Task<IReadOnlyList<RiskProfileDto>> GetRiskProfilesAsync(string? mode = null, CancellationToken cancellationToken = default)
+    {
+        _ = mode;
+        return (await _store.ListRiskProfilesAsync(cancellationToken))
+            .Select(MapRisk)
+            .ToList();
+    }
 
     public async Task<StrategyDto> UpdateStrategyScopeAsync(
         Guid strategyId,
@@ -1269,8 +1343,10 @@ public sealed class TradingQueryService : ITradingQueryService
     public async Task<StrategyDto> CreateStrategyAsync(
         Guid userId,
         SaveStrategyRequest request,
+        string? mode = null,
         CancellationToken cancellationToken = default)
     {
+        _ = mode;
         var user = userId == Guid.Empty
             ? await _store.GetFirstAdminAsync(cancellationToken)
             : await _store.GetUserAsync(userId, cancellationToken) ?? await _store.GetFirstAdminAsync(cancellationToken);

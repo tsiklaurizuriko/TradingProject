@@ -137,7 +137,8 @@ public sealed class BinanceSignedRestClient
         string type,
         decimal stopPrice,
         string clientOrderId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool priceProtect = true)
     {
         var fields = new Dictionary<string, string>
         {
@@ -147,7 +148,7 @@ public sealed class BinanceSignedRestClient
             ["stopPrice"] = BinanceHmac.FormatDecimal(stopPrice),
             ["closePosition"] = "true",
             ["workingType"] = "MARK_PRICE",
-            ["priceProtect"] = "TRUE",
+            ["priceProtect"] = priceProtect ? "TRUE" : "FALSE",
             ["newClientOrderId"] = clientOrderId,
             ["newOrderRespType"] = "RESULT"
         };

@@ -8,6 +8,7 @@ import {
   CreateBotsResult,
   DeleteBotsResult,
   StartBotsResult,
+  StopBotsResult,
   ExchangeConnectionDto,
   KlineBarDto,
   MarketQuoteDto,
@@ -149,14 +150,18 @@ export class TradingService {
     return this.deleteWorkspaceBots([bot]);
   }
 
-  stopWorkspaceAll(): Promise<BotDto[]> {
-    return Promise.all(this.runningWorkspaceBots().map((bot) => this.stopBot(bot.id)));
+  stopWorkspaceAll(): Promise<StopBotsResult> {
+    return firstValueFrom(
+      this.http.post<StopBotsResult>(`${environment.apiBaseUrl}/trading/bots/stop-all`, {
+        mode: this.ui.workspace(),
+      }),
+    );
   }
 
   startWorkspaceAll(): Promise<StartBotsResult> {
     return firstValueFrom(
       this.http.post<StartBotsResult>(`${environment.apiBaseUrl}/trading/bots/start-all`, {
-        mode: this.workspace(),
+        mode: this.ui.workspace(),
       }),
     );
   }
@@ -214,6 +219,7 @@ export class TradingService {
       if (active) {
         this.risk.set(active);
       }
+      this.syncWorkspacePrefs(strategies ?? [], profiles ?? []);
     } catch {
       this.strategies.set([]);
       this.riskProfiles.set([]);
@@ -394,6 +400,15 @@ export class TradingService {
       if (this.ui.workspace() === mode) {
         this.performance.set(null);
       }
+    }
+  }
+
+  private syncWorkspacePrefs(strategies: StrategyDto[], profiles: RiskProfileDto[]): void {
+    if (!strategies.some((row) => row.id === this.ui.preferredStrategyId())) {
+      this.ui.setPreferredStrategyId(strategies.find((row) => row.isEnabled)?.id ?? strategies[0]?.id ?? '');
+    }
+    if (!profiles.some((row) => row.id === this.ui.preferredRiskId())) {
+      this.ui.setPreferredRiskId(profiles.find((row) => row.isActive)?.id ?? profiles[0]?.id ?? '');
     }
   }
 }

@@ -46,6 +46,12 @@ public sealed record PlaceOrderRequest(
     TimeSpan? Timeout,
     bool ReduceOnly = false);
 
+public sealed record ProtectiveStopsResult(
+    bool StopPlaced,
+    bool TakePlaced,
+    string? StopError = null,
+    string? TakeError = null);
+
 public interface IExchangeConnector
 {
     string Name { get; }
@@ -58,7 +64,7 @@ public interface IExchangeConnector
     Task PrepareSymbolRiskAsync(string symbol, MarginMode marginMode, int leverage, CancellationToken cancellationToken = default);
     Task<int> GetMaxIsolatedLeverageAsync(string symbol, CancellationToken cancellationToken = default);
     Task<ExchangeOrder> PlaceOrderAsync(PlaceOrderRequest request, CancellationToken cancellationToken = default);
-    Task PlaceClosePositionStopsAsync(
+    Task<ProtectiveStopsResult> PlaceClosePositionStopsAsync(
         string symbol,
         OrderSide closeSide,
         decimal stopLossPrice,

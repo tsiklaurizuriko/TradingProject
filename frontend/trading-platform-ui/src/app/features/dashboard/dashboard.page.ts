@@ -44,7 +44,7 @@ export class DashboardPage {
   readonly pnlClass = pnlClass;
   readonly timeframes = ['1m', '5m', '15m', '1h', '4h', '1d'];
   readonly Math = Math;
-  busy = false;
+  busy: false | 'starting' | 'stopping' = false;
   readonly confirmStartAll = signal(false);
 
   formatUsd(value: number | null | undefined): string {
@@ -227,7 +227,7 @@ export class DashboardPage {
   readonly startAllTitle = computed(() => (this.isLive() ? 'LIVE TRADING WARNING' : 'Start All Bots'));
   readonly startAllMessage = computed(() => {
     if (!this.isLive()) {
-      return 'This starts every stopped bot in this PAPER workspace.';
+      return 'This starts every stopped bot in this PAPER workspace. LIVE bots are not touched.';
     }
     const risk = this.trading.risk();
     const name = risk?.name ?? '—';
@@ -237,7 +237,7 @@ export class DashboardPage {
     const lev = risk?.maxLeverage ?? '—';
     const port = risk?.maxPortfolioRiskPercent ?? '—';
     const daily = risk?.maxDailyLossPercent ?? '—';
-    return `Current book ${name}. Risk per trade ${r}%. SL ${sl}%. TP ${tp}%. Max leverage ${lev}x. Available Balance ${money(this.available())}. Max portfolio risk ${port}%. Daily loss limit ${daily}%.`;
+    return `LIVE bots only. Paper stays stopped. Isolated still allows only one open LIVE position per coin; extra strategies wait. Current book ${name}. Risk per trade ${r}%. SL ${sl}%. TP ${tp}%. Max leverage ${lev}x. Available Balance ${money(this.available())}. Max portfolio risk ${port}%. Daily loss limit ${daily}%.`;
   });
   readonly startAllWarning = computed(() =>
     this.isLive()
@@ -259,7 +259,7 @@ export class DashboardPage {
 
   async startAll(): Promise<void> {
     this.confirmStartAll.set(false);
-    this.busy = true;
+    this.busy = 'starting';
     try {
       const result = await this.trading.startWorkspaceAll();
       await this.trading.refresh();
@@ -287,11 +287,27 @@ export class DashboardPage {
   }
 
   async stopAll(): Promise<void> {
-    this.busy = true;
+    this.busy = 'stopping';
     try {
-      await this.trading.stopWorkspaceAll();
+      const result = await this.trading.stopWorkspaceAll();
       await this.trading.refresh();
-      this.toast.show('Bots stopped', `${this.ui.workspace()} running bots were stopped.`, 'success', 'bots');
+      if (result.failed && result.stopped) {
+        this.toast.show(
+          'Partial stop',
+          `${result.stopped} bot(s) stopped, ${result.failed} skipped.${result.detail ? ' ' + result.detail : ''}`,
+          'info',
+          'bots',
+        );
+      } else if (result.failed) {
+        this.toast.show('Stop blocked', result.detail || 'Could not stop these bots.', 'error', 'bots');
+      } else {
+        this.toast.show(
+          'Bots stopped',
+          `${result.stopped} ${this.ui.workspace()} bot(s) were stopped. Positions were not closed.`,
+          'success',
+          'bots',
+        );
+      }
     } catch {
       this.toast.show('Stop failed', 'Could not stop one or more bots.', 'error', 'bots');
     } finally {

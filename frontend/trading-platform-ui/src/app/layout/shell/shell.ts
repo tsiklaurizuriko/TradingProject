@@ -174,7 +174,7 @@ export class Shell {
           return;
         }
         const result = this.ui.setMode('live', true);
-        await this.trading.refresh();
+        await Promise.all([this.trading.refresh(), this.trading.refreshCatalog(), this.trading.refreshRisk()]);
         const usdt = this.trading.overview()?.liveAvailable ?? status.usdtFree;
         this.toast.show(
           result.accepted ? 'LIVE Binance USD-M' : 'Mode blocked',
@@ -191,6 +191,9 @@ export class Shell {
     }
 
     const result = this.ui.setMode(mode, true);
+    if (result.accepted) {
+      await Promise.all([this.trading.refresh(), this.trading.refreshCatalog(), this.trading.refreshRisk()]);
+    }
     this.toast.show(result.accepted ? 'Trading mode' : 'Mode blocked', result.message, result.accepted ? 'info' : 'error');
   }
 

@@ -20,6 +20,7 @@ public interface ITradingStore
     Task<User?> GetUserAsync(Guid userId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<Bot>> GetRunningBotsAsync(CancellationToken cancellationToken = default);
     Task<IReadOnlyList<Bot>> ListBotsAsync(CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<Bot>> ListWorkspaceBotsAsync(Guid userId, TradingMode mode, CancellationToken cancellationToken = default);
     Task<Bot?> GetBotAsync(Guid botId, CancellationToken cancellationToken = default);
     Task<Bot?> FindPaperBotBySymbolAsync(Guid userId, string symbol, CancellationToken cancellationToken = default);
     Task<Bot?> FindBotBySymbolAsync(Guid userId, string symbol, TradingMode mode, Guid? strategyId, Guid? riskProfileId, CancellationToken cancellationToken = default);

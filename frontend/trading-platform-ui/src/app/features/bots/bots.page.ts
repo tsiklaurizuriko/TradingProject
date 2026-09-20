@@ -193,6 +193,9 @@ export class BotsPage {
   }
 
   openCreate(): void {
+    const ranked = this.rankedStrategies();
+    const preferred = this.ui.preferredStrategyId();
+    this.strategyId.set(ranked.some((row) => row.id === preferred) ? preferred : ranked[0]?.id ?? '');
     this.createOpen.set(true);
   }
 

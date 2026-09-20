@@ -64,8 +64,8 @@ public sealed class TradingController : ControllerBase
         _query.GetPerformanceAsync(mode, cancellationToken);
 
     [HttpGet("risk-profile")]
-    public Task<RiskProfileDto> RiskProfile(CancellationToken cancellationToken) =>
-        _query.GetRiskProfileAsync(cancellationToken);
+    public Task<RiskProfileDto> RiskProfile([FromQuery] string? mode, CancellationToken cancellationToken) =>
+        _query.GetRiskProfileAsync(mode, cancellationToken);
 
     [HttpGet("markets")]
     public async Task<ActionResult<IReadOnlyList<MarketQuoteDto>>> Markets(CancellationToken cancellationToken)
@@ -193,20 +193,31 @@ public sealed class TradingController : ControllerBase
             throw new DomainException(ErrorCodes.ValidationFailed, "Use Paper or Live.");
         }
 
-        return _lifecycle.StartAllIdleAsync(UserId(), parsed, cancellationToken);
+        return _lifecycle.StartAllIdleAsync(UserId(), parsed, request.PreferredStrategyId, cancellationToken);
+    }
+
+    [HttpPost("bots/stop-all")]
+    public Task<StopBotsResult> StopAll([FromBody] StartBotsRequest request, CancellationToken cancellationToken)
+    {
+        if (!Enum.TryParse<TradingMode>(request.Mode, true, out var parsed) || parsed is not (TradingMode.Paper or TradingMode.Live))
+        {
+            throw new DomainException(ErrorCodes.ValidationFailed, "Use Paper or Live.");
+        }
+
+        return _lifecycle.StopAllRunningAsync(UserId(), parsed, cancellationToken);
     }
 
     [HttpGet("strategies")]
-    public Task<IReadOnlyList<StrategyDto>> Strategies(CancellationToken cancellationToken) =>
-        _query.GetStrategiesAsync(cancellationToken);
+    public Task<IReadOnlyList<StrategyDto>> Strategies([FromQuery] string? mode, CancellationToken cancellationToken) =>
+        _query.GetStrategiesAsync(mode, cancellationToken);
 
     [HttpPut("strategies/{strategyId:guid}/scope")]
     public Task<StrategyDto> UpdateStrategyScope(Guid strategyId, [FromBody] SaveSymbolScopeRequest request, CancellationToken cancellationToken) =>
         _query.UpdateStrategyScopeAsync(strategyId, request.AppliesToAllSymbols, request.Symbols, cancellationToken);
 
     [HttpPost("strategies")]
-    public Task<StrategyDto> CreateStrategy([FromBody] SaveStrategyRequest request, CancellationToken cancellationToken) =>
-        _query.CreateStrategyAsync(UserId(), request, cancellationToken);
+    public Task<StrategyDto> CreateStrategy([FromBody] SaveStrategyRequest request, [FromQuery] string? mode, CancellationToken cancellationToken) =>
+        _query.CreateStrategyAsync(UserId(), request, mode, cancellationToken);
 
     [HttpPut("strategies/{strategyId:guid}")]
     public Task<StrategyDto> UpdateStrategy(Guid strategyId, [FromBody] SaveStrategyRequest request, CancellationToken cancellationToken) =>
@@ -225,8 +236,8 @@ public sealed class TradingController : ControllerBase
         _query.PreviewStrategyAsync(strategyId, symbol, limit, cancellationToken);
 
     [HttpGet("risk-profiles")]
-    public Task<IReadOnlyList<RiskProfileDto>> RiskProfiles(CancellationToken cancellationToken) =>
-        _query.GetRiskProfilesAsync(cancellationToken);
+    public Task<IReadOnlyList<RiskProfileDto>> RiskProfiles([FromQuery] string? mode, CancellationToken cancellationToken) =>
+        _query.GetRiskProfilesAsync(mode, cancellationToken);
 
     [HttpPut("risk-profiles/{riskProfileId:guid}/scope")]
     public Task<RiskProfileDto> UpdateRiskScope(Guid riskProfileId, [FromBody] SaveSymbolScopeRequest request, CancellationToken cancellationToken) =>

@@ -1,3 +1,5 @@
+using TradingPlatform.Domain.Errors;
+
 namespace TradingPlatform.Domain.Trading;
 
 public enum TradingMode
@@ -5,6 +7,22 @@ public enum TradingMode
     Paper = 0,
     Testnet = 1,
     Live = 2
+}
+
+public static class TradingWorkspaces
+{
+    public static TradingMode Parse(string? mode) =>
+        string.Equals(mode, "Live", StringComparison.OrdinalIgnoreCase) ? TradingMode.Live : TradingMode.Paper;
+
+    public static void EnsureMatch(TradingMode actual, TradingMode expected, string kind)
+    {
+        if (actual != expected)
+        {
+            throw new DomainException(
+                ErrorCodes.ValidationFailed,
+                $"This {kind} belongs to {actual}. Switch the header to {actual} first.");
+        }
+    }
 }
 
 public enum BotStatus

@@ -203,6 +203,7 @@ public sealed class DatabaseSeeder
         await UpsertSystemRiskAsync("MEDIUM", ["Medium Risk", "Moderate"], MediumBook(), cancellationToken);
         await UpsertSystemRiskAsync("HIGH", ["High Risk", "Aggressive"], HighBook(), cancellationToken);
         await EnsureOneActiveAsync(cancellationToken);
+        await _db.SaveChangesAsync(cancellationToken);
         await SeedStrategiesAsync(cancellationToken);
     }
 
@@ -243,6 +244,7 @@ public sealed class DatabaseSeeder
                     Timeframe = Timeframe.FiveMinutes
                 });
                 _db.Strategies.Add(strategy);
+                existing.Add(strategy);
                 continue;
             }
 
@@ -421,23 +423,13 @@ public sealed class DatabaseSeeder
         {
             template.Name = name;
             template.IsSystem = true;
+            template.IsActive = string.Equals(name, "LOW", StringComparison.OrdinalIgnoreCase);
             _db.RiskProfiles.Add(template);
             return;
         }
 
         existing.Name = name;
         existing.IsSystem = true;
-        existing.RiskPerTradePercent = template.RiskPerTradePercent;
-        existing.StopLossPercent = template.StopLossPercent;
-        existing.TakeProfitPercent = template.TakeProfitPercent;
-        existing.MaxLeverage = template.MaxLeverage;
-        existing.MaxDailyLossPercent = template.MaxDailyLossPercent;
-        existing.MaxPortfolioRiskPercent = template.MaxPortfolioRiskPercent;
-        existing.MaxSimultaneousPositions = template.MaxSimultaneousPositions;
-        existing.MaxConsecutiveLosses = template.MaxConsecutiveLosses;
-        existing.CooldownMinutes = template.CooldownMinutes;
-        existing.MinimumLiquidationSafetyBufferPercent = template.MinimumLiquidationSafetyBufferPercent;
-        existing.AllowLive = template.AllowLive;
     }
 
     private async Task EnsureOneActiveAsync(CancellationToken cancellationToken)

@@ -11,6 +11,7 @@ using TradingPlatform.Domain.Positions;
 using TradingPlatform.Domain.Risk;
 using TradingPlatform.Domain.Signals;
 using TradingPlatform.Domain.Strategies;
+using TradingPlatform.Domain.Errors;
 using TradingPlatform.Domain.Trades;
 using TradingPlatform.Domain.Trading;
 using TradingPlatform.Infrastructure.Persistence;
@@ -37,6 +38,14 @@ public sealed class TradingStore : ITradingStore
 
     public async Task<IReadOnlyList<Bot>> ListBotsAsync(CancellationToken cancellationToken = default) =>
         await BotsWithGraph().ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<Bot>> ListWorkspaceBotsAsync(
+        Guid userId,
+        TradingMode mode,
+        CancellationToken cancellationToken = default) =>
+        await BotsWithGraph()
+            .Where(bot => bot.UserId == userId && bot.Mode == mode)
+            .ToListAsync(cancellationToken);
 
     public Task<Bot?> GetBotAsync(Guid botId, CancellationToken cancellationToken = default) =>
         BotsWithGraph().FirstOrDefaultAsync(b => b.Id == botId, cancellationToken);
@@ -79,6 +88,16 @@ public sealed class TradingStore : ITradingStore
 
     public async Task<StrategyVersion> GetSampleStrategyVersionAsync(CancellationToken cancellationToken = default)
     {
+        var enabled = await _db.StrategyVersions
+            .Include(v => v.Strategy)
+            .Where(v => v.Strategy.IsEnabled)
+            .OrderBy(v => v.VersionNumber)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (enabled is not null)
+        {
+            return enabled;
+        }
+
         return await _db.StrategyVersions
             .Include(v => v.Strategy)
             .OrderBy(v => v.VersionNumber)
@@ -106,6 +125,17 @@ public sealed class TradingStore : ITradingStore
     public async Task<RiskProfile> GetConservativeRiskAsync(CancellationToken cancellationToken = default)
     {
         var books = await _db.RiskProfiles.OrderBy(r => r.RiskPerTradePercent).ToListAsync(cancellationToken);
+        if (books.Count == 0)
+        {
+            await SystemRiskCatalog.EnsureAsync(_db, cancellationToken);
+            books = await _db.RiskProfiles.OrderBy(r => r.RiskPerTradePercent).ToListAsync(cancellationToken);
+        }
+
+        if (books.Count == 0)
+        {
+            throw new DomainException(ErrorCodes.ValidationFailed, "No Isolated risk book is seeded.");
+        }
+
         return books.FirstOrDefault(r => r.IsActive)
             ?? books.FirstOrDefault(r => string.Equals(r.Name, "LOW", StringComparison.OrdinalIgnoreCase))
             ?? books.FirstOrDefault(r => string.Equals(r.Name, "Low Risk", StringComparison.OrdinalIgnoreCase))
@@ -260,7 +290,7 @@ public sealed class TradingStore : ITradingStore
         _db.Orders.CountAsync(o => o.Mode == mode && o.CreatedAt >= sinceUtc, cancellationToken);
 
     public async Task<decimal> SumClosedPnLSinceForModeAsync(TradingMode mode, DateTimeOffset sinceUtc, CancellationToken cancellationToken = default) =>
-        await _db.Trades
+         await _db.Trades
             .Where(t => t.ClosedAt != null && t.ClosedAt >= sinceUtc && t.Bot.Mode == mode)
             .SumAsync(t => (decimal?)t.PnL, cancellationToken) ?? 0m;
 

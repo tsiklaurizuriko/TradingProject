@@ -28,6 +28,10 @@ public static class DatabaseInitializer
             await store.SaveChangesAsync(cancellationToken);
             logger.LogInformation("No bot is running until a coin is started manually.");
         }
+        catch (InvalidOperationException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Database is not available yet. API will start; readiness checks will report the database as down until PostgreSQL is reachable.");

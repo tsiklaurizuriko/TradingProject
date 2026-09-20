@@ -113,6 +113,7 @@ internal static class TradingModelConfiguration
             b.Property(x => x.AllowedSide).HasMaxLength(16).IsRequired();
             b.Property(x => x.IsEnabled).IsRequired();
             b.Property(x => x.ValidationStatus).HasMaxLength(32).IsRequired();
+            b.HasIndex(x => new { x.UserId, x.Name });
         });
         model.Entity<StrategyVersion>(b =>
         {

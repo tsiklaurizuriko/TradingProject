@@ -85,7 +85,7 @@ public sealed class PaperExchangeConnector : IExchangeConnector
             now));
     }
 
-    public Task PlaceClosePositionStopsAsync(
+    public Task<ProtectiveStopsResult> PlaceClosePositionStopsAsync(
         string symbol,
         OrderSide closeSide,
         decimal stopLossPrice,
@@ -93,7 +93,7 @@ public sealed class PaperExchangeConnector : IExchangeConnector
         string stopClientOrderId,
         string takeProfitClientOrderId,
         CancellationToken cancellationToken = default) =>
-        Task.CompletedTask;
+        Task.FromResult(new ProtectiveStopsResult(true, true));
 
     public Task CancelOrderAsync(string symbol, string? clientOrderId, string? exchangeOrderId, CancellationToken cancellationToken = default) =>
         Task.CompletedTask;

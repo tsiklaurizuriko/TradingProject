@@ -370,13 +370,13 @@ public interface ITradingQueryService
     Task<IReadOnlyList<OrderDto>> GetOrdersAsync(CancellationToken cancellationToken = default);
     Task<IReadOnlyList<PositionDto>> GetPositionsAsync(CancellationToken cancellationToken = default);
     Task<IReadOnlyList<TradeDto>> GetTradesAsync(CancellationToken cancellationToken = default);
-    Task<RiskProfileDto> GetRiskProfileAsync(CancellationToken cancellationToken = default);
-    Task<IReadOnlyList<StrategyDto>> GetStrategiesAsync(CancellationToken cancellationToken = default);
+    Task<RiskProfileDto> GetRiskProfileAsync(string? mode = null, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<StrategyDto>> GetStrategiesAsync(string? mode = null, CancellationToken cancellationToken = default);
     Task<StrategyPreviewDto> PreviewStrategyAsync(Guid strategyId, string? symbol, int? limit, CancellationToken cancellationToken = default);
-    Task<IReadOnlyList<RiskProfileDto>> GetRiskProfilesAsync(CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<RiskProfileDto>> GetRiskProfilesAsync(string? mode = null, CancellationToken cancellationToken = default);
     Task<StrategyDto> UpdateStrategyScopeAsync(Guid strategyId, bool appliesToAll, IEnumerable<string>? symbols, CancellationToken cancellationToken = default);
     Task<RiskProfileDto> UpdateRiskScopeAsync(Guid riskProfileId, bool appliesToAll, IEnumerable<string>? symbols, CancellationToken cancellationToken = default);
-    Task<StrategyDto> CreateStrategyAsync(Guid userId, SaveStrategyRequest request, CancellationToken cancellationToken = default);
+    Task<StrategyDto> CreateStrategyAsync(Guid userId, SaveStrategyRequest request, string? mode = null, CancellationToken cancellationToken = default);
     Task<StrategyDto> UpdateStrategyAsync(Guid strategyId, SaveStrategyRequest request, CancellationToken cancellationToken = default);
     Task<StrategyDto> SetStrategyEnabledAsync(Guid strategyId, bool enabled, CancellationToken cancellationToken = default);
     Task<RiskProfileDto> CreateRiskProfileAsync(SaveRiskProfileRequest request, CancellationToken cancellationToken = default);
@@ -391,9 +391,11 @@ public sealed record CreateBotsRequest(string Mode, Guid StrategyId, Guid RiskPr
 
 public sealed record CreateBotsResult(int Created, int Skipped);
 
-public sealed record StartBotsRequest(string Mode);
+public sealed record StartBotsRequest(string Mode, Guid? PreferredStrategyId = null);
 
 public sealed record StartBotsResult(int Started, int Failed, string? Detail);
+
+public sealed record StopBotsResult(int Stopped, int Failed, string? Detail);
 
 public sealed record DeleteBotsRequest(string Mode, Guid[] Ids);
 
@@ -477,7 +479,8 @@ public interface IBotLifecycleService
     Task<IReadOnlyList<BotDto>> StartTopVolumePaperBotsAsync(Guid userId, CancellationToken cancellationToken = default);
     Task<BotDto> StartSymbolAsync(Guid userId, string symbol, TradingMode mode, Guid? strategyId = null, Guid? riskProfileId = null, CancellationToken cancellationToken = default);
     Task<CreateBotsResult> CreateSymbolBotsAsync(Guid userId, TradingMode mode, Guid strategyId, Guid riskProfileId, IReadOnlyList<string> symbols, CancellationToken cancellationToken = default);
-    Task<StartBotsResult> StartAllIdleAsync(Guid userId, TradingMode mode, CancellationToken cancellationToken = default);
+    Task<StartBotsResult> StartAllIdleAsync(Guid userId, TradingMode mode, Guid? preferredStrategyId = null, CancellationToken cancellationToken = default);
+    Task<StopBotsResult> StopAllRunningAsync(Guid userId, TradingMode mode, CancellationToken cancellationToken = default);
     Task<BotDto> StartAsync(Guid botId, CancellationToken cancellationToken = default);
     Task<BotDto> StopAsync(Guid botId, CancellationToken cancellationToken = default);
     Task<DeleteBotsResult> DeleteBotsAsync(IReadOnlyList<Guid> ids, TradingMode? requiredMode, CancellationToken cancellationToken = default);
