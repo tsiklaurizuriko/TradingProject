@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { TradingService } from '../../core/trading/trading.service';
 import { BotDto, botStatus, modeBadge, signedMoney } from '../../core/trading/trading.models';
-import { ratingFor, ratingSortValue, starText, verdictLabel } from '../../core/trading/strategy-ratings';
+import { ratingFor, ratingSortValue, starText, verdictLabel, isOperatorCatalog } from '../../core/trading/strategy-ratings';
 import { ToastService } from '../../core/ui/toast.service';
 import { UiStateService } from '../../core/ui/ui-state.service';
 import { IconComponent } from '../../shared/icon/icon';
@@ -74,7 +74,9 @@ export class BotsPage {
     this.rankedStrategies().find((row) => row.id === this.strategyId()) ?? this.rankedStrategies()[0] ?? null,
   );
   readonly rankedStrategies = computed(() =>
-    [...this.trading.strategies()].sort((a, b) => ratingSortValue(b.templateKey) - ratingSortValue(a.templateKey)),
+    [...this.trading.strategies()]
+      .filter((row) => isOperatorCatalog(row.templateKey))
+      .sort((a, b) => ratingSortValue(b.templateKey) - ratingSortValue(a.templateKey)),
   );
   readonly ratingFor = ratingFor;
 

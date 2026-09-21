@@ -18,6 +18,9 @@ public sealed class ResearchRunRequest
     public bool Force { get; init; }
     public int MaxParallel { get; init; } = 1;
     public ResearchDataSnapshot DataSnapshot { get; init; } = new();
+    public bool UseLowIsolated { get; init; }
+    public bool HonorSuggestedStops { get; init; }
+    public bool SkipWalkForward { get; init; }
 }
 
 public static class ResearchRunner
@@ -84,6 +87,20 @@ public static class ResearchRunner
             return rows;
         }
 
+        if (!string.IsNullOrWhiteSpace(candidate.FrozenSymbol)
+            && !string.Equals(candidate.FrozenSymbol, symbol, StringComparison.OrdinalIgnoreCase))
+        {
+            rows.Add(Skip(
+                candidate,
+                symbol,
+                timeframe,
+                "OOS",
+                ResearchCostLabels.Base,
+                ResearchStatuses.Researching,
+                $"Frozen to {candidate.FrozenSymbol} only; skipped {symbol}."));
+            return rows;
+        }
+
         var templateKey = string.IsNullOrWhiteSpace(candidate.ParentTemplateKey)
             ? candidate.NativeKey
             : candidate.ParentTemplateKey;
@@ -142,7 +159,7 @@ public static class ResearchRunner
                 }
 
                 var engine = new ResearchStrategyEngine(candidate);
-                var settings = CostScaledRisk(closed[Math.Max(from, 0)].OpenTime, closed[Math.Min(to, closed.Count) - 1].CloseTime, cost);
+                var settings = CostScaledRisk(request, closed[Math.Max(from, 0)].OpenTime, closed[Math.Min(to, closed.Count) - 1].CloseTime, cost, candidate);
                 var signalFrom = Math.Max(from, warmup);
                 var replay = new BacktestReplay(engine).Run(definition, closed, settings, cache, signalFrom, to, htf);
                 var seed = new ResearchBookResult(
@@ -163,7 +180,7 @@ public static class ResearchRunner
                 rows.Add(filled with { Status = AssignStatus(filled, phase) });
             }
 
-            if (IncludesWalkForward(request.Phase))
+            if (IncludesWalkForward(request.Phase) && !request.SkipWalkForward)
             {
                 var train = Math.Min(400, Math.Max(warmup, Math.Max(80, closed.Count / 3)));
                 var test = Math.Min(80, Math.Max(20, closed.Count / 10));
@@ -189,7 +206,7 @@ public static class ResearchRunner
                     }
 
                     var engine = new ResearchStrategyEngine(candidate);
-                    var settings = CostScaledRisk(closed[testStart].OpenTime, closed[testEnd - 1].CloseTime, cost);
+                    var settings = CostScaledRisk(request, closed[testStart].OpenTime, closed[testEnd - 1].CloseTime, cost, candidate);
                     var replay = new BacktestReplay(engine).Run(definition, closed, settings, cache, testStart, testEnd, htf);
                     var seed = new ResearchBookResult(
                         candidate.CandidateId,
@@ -215,15 +232,61 @@ public static class ResearchRunner
         return rows;
     }
 
-    public static ReplaySettings CostScaledRisk(DateTimeOffset from, DateTimeOffset to, string costLabel)
+    public static ReplaySettings CostScaledRisk(DateTimeOffset from, DateTimeOffset to, string costLabel) =>
+        CostScaledRisk(new ResearchRunRequest
+        {
+            Phase = ResearchPhases.Pilot,
+            Candidates = [],
+            Symbols = [],
+            Timeframes = [],
+            Series = new Dictionary<(string, string), IReadOnlyList<TradingPlatform.Domain.Market.MarketCandle>>()
+        }, from, to, costLabel);
+
+    public static ReplaySettings CostScaledRisk(ResearchRunRequest request, DateTimeOffset from, DateTimeOffset to, string costLabel, ResearchCandidate? candidate = null)
     {
-        var baseline = StrategyValidation.FrozenRisk(from, to);
+        var baseline = request.UseLowIsolated
+            ? StrategyValidation.LowIsolatedRisk(from, to)
+            : StrategyValidation.FrozenRisk(from, to);
         var m = ResearchCostLabels.Multiplier(costLabel);
-        return baseline with
+        var scaled = baseline with
         {
             FeePercent = baseline.FeePercent * m,
-            SlippagePercent = baseline.SlippagePercent * m
+            SlippagePercent = baseline.SlippagePercent * m,
+            HonorSuggestedStops = request.HonorSuggestedStops
         };
+        return ApplyCandidateBook(scaled, candidate);
+    }
+
+    public static ReplaySettings IsolatedBookFor(ResearchCandidate candidate, DateTimeOffset from, DateTimeOffset to)
+    {
+        var baseline = StrategyValidation.LowIsolatedRisk(from, to);
+        return ApplyCandidateBook(baseline, candidate);
+    }
+
+    public static ReplaySettings ApplyCandidateBook(ReplaySettings baseline, ResearchCandidate? candidate)
+    {
+        if (candidate is null)
+        {
+            return baseline;
+        }
+
+        var next = baseline;
+        if (candidate.StopLossPercent > 0m)
+        {
+            next = next with { StopLossPercent = candidate.StopLossPercent };
+        }
+
+        if (candidate.TakeProfitPercent > 0m)
+        {
+            next = next with { TakeProfitPercent = candidate.TakeProfitPercent };
+        }
+
+        if (candidate.MaxHoldBars > 0)
+        {
+            next = next with { MaxHoldBars = candidate.MaxHoldBars };
+        }
+
+        return next;
     }
 
     public static StrategyDefinition DefinitionFor(ResearchCandidate candidate, string timeframe)

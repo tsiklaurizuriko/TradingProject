@@ -1,6 +1,15 @@
 import { Component, computed, input } from '@angular/core';
-import { dailyPnlSeries, money, signedMoney } from '../../core/trading/trading.models';
-import { RiskProfileDto, TradeDto } from '../../core/trading/trading.models';
+import {
+  BotDto,
+  PositionDto,
+  RiskProfileDto,
+  TradeDto,
+  dailyPnlSeries,
+  money,
+  signedMoney,
+  strategyOccupancy,
+  uniqueOpenCoins,
+} from '../../core/trading/trading.models';
 
 @Component({
   selector: 'app-pnl-chart',
@@ -168,39 +177,35 @@ export class GoalProgressComponent {
 @Component({
   selector: 'app-risk-overview',
   template: `
-    <section class="panel panel-fill compact">
+    <section class="panel panel-fill compact risk-overview">
       <div class="section-head"><h2>Risk Overview</h2></div>
       <div class="risk-row">
         <span>Profile <strong>{{ risk()?.name || '—' }}</strong></span>
       </div>
       <div class="risk-row">
-        <span>Risk per trade <strong>{{ risk() ? risk()!.riskPerTradePercent.toFixed(1) + '%' : '—' }}</strong></span>
+        <span>Risk per trade <strong>{{ pctLabel(risk()?.riskPerTradePercent) }}</strong></span>
         <div class="progress"><span [style.width.%]="bar(risk()?.riskPerTradePercent, 2)"></span></div>
       </div>
       <div class="risk-row">
-        <span>Available <strong>{{ money(equity()) }}</strong></span>
+        <span>Stop / Take <strong>{{ slTpLabel() }}</strong></span>
       </div>
       <div class="risk-row">
-        <span>Planned Risk next <strong>{{ money(plannedRisk()) }}</strong></span>
+        <span>Available <strong>{{ money(available()) }}</strong></span>
       </div>
       <div class="risk-row">
-        <span>Margin <strong>Isolated</strong></span>
+        <span>Planned Risk next <strong>{{ money(plannedRiskNext()) }}</strong></span>
       </div>
       <div class="risk-row">
-        <span>Daily Loss <strong>{{ dailyLossLabel() }}</strong></span>
-        <div class="progress"><span [style.width.%]="dailyLossBar()"></span></div>
+        <span>Margin <strong>Isolated · {{ risk() ? risk()!.maxLeverage + 'x' : '—' }}</strong></span>
       </div>
       <div class="risk-row">
-        <span>Daily limit <strong>{{ dailyLossUsdtLabel() }}</strong></span>
+        <span>Today's PnL <strong [class]="todaysPnL() >= 0 ? 'pnl-pos' : 'pnl-neg'">{{ signedMoney(todaysPnL()) }}</strong></span>
       </div>
       <div class="risk-row">
-        <span>Open planned risk <strong>{{ money(openRisk()) }} / {{ risk() ? risk()!.maxPortfolioRiskPercent + '%' : '—' }}</strong></span>
+        <span>Open planned risk <strong>{{ money(totalOpenRisk()) }} · {{ pctLabel(totalOpenRiskPct()) }}</strong></span>
       </div>
       <div class="risk-row">
-        <span>Leverage <strong>{{ risk() ? risk()!.maxLeverage + 'x' : '—' }}</strong></span>
-      </div>
-      <div class="risk-row">
-        <span>Open Positions <strong>{{ openPositions() }}{{ risk() ? ' / ' + risk()!.maxSimultaneousPositions : '' }}</strong></span>
+        <span>Open Positions <strong>{{ uniqueCoins() }}</strong></span>
       </div>
       <div class="risk-row">
         <span>Consecutive losses <strong>{{ consecutiveLosses() }}{{ risk() ? ' / ' + risk()!.maxConsecutiveLosses : '' }}</strong></span>
@@ -208,20 +213,55 @@ export class GoalProgressComponent {
       <div class="risk-row">
         <span>Risk Lock <strong>{{ locked() ? 'ON' : 'Off' }}</strong></span>
       </div>
+      <div class="risk-strategy-head">
+        <span>Per running strategy</span>
+        <span class="tiny">max {{ risk()?.maxSimultaneousPositions ?? '—' }} · cap {{ pctLabel(risk()?.maxPortfolioRiskPercent) }}</span>
+      </div>
+      @if (occupancy().length === 0) {
+        <p class="tiny muted">No running strategies.</p>
+      } @else {
+        <div class="risk-strategy-list">
+          @for (row of occupancy(); track row.key) {
+            <div class="risk-strategy" [class.is-full]="row.openCoins >= row.maxPositions">
+              <span class="risk-strategy-name" [title]="row.name">{{ row.name }}</span>
+              <strong>{{ row.openCoins }}/{{ row.maxPositions }}</strong>
+              <span class="tiny num">{{ money(row.plannedRiskUsdt) }} · {{ pctLabel(row.plannedRiskPercent) }}</span>
+            </div>
+          }
+        </div>
+      }
     </section>
   `,
 })
 export class RiskOverviewComponent {
   readonly risk = input<RiskProfileDto | null>(null);
-  readonly equity = input(0);
+  readonly available = input(0);
   readonly todaysPnL = input(0);
-  readonly openPositions = input(0);
-  readonly plannedRisk = input(0);
-  readonly openRisk = input(0);
+  readonly positions = input<PositionDto[]>([]);
+  readonly bots = input<BotDto[]>([]);
   readonly consecutiveLosses = input(0);
   readonly locked = input(false);
   readonly money = money;
   readonly signedMoney = signedMoney;
+  readonly occupancy = computed(() =>
+    strategyOccupancy(this.bots(), this.positions(), this.risk(), this.available()),
+  );
+  readonly uniqueCoins = computed(() => uniqueOpenCoins(this.positions()));
+  readonly totalOpenRisk = computed(() =>
+    this.positions().reduce((sum, row) => sum + (row.initialRiskUsdt ?? 0), 0),
+  );
+  readonly totalOpenRiskPct = computed(() => {
+    const available = this.available();
+    return available > 0 ? (this.totalOpenRisk() / available) * 100 : 0;
+  });
+  readonly plannedRiskNext = computed(() => {
+    const risk = this.risk();
+    const available = this.available();
+    if (!risk || available <= 0) {
+      return 0;
+    }
+    return (available * (risk.riskPerTradePercent ?? 0)) / 100;
+  });
 
   bar(value: number | null | undefined, max: number): number {
     if (value === null || value === undefined || max <= 0) {
@@ -230,33 +270,18 @@ export class RiskOverviewComponent {
     return Math.min(100, Math.max(0, (value / max) * 100));
   }
 
-  dailyLossLabel(): string {
-    const risk = this.risk();
-    const loss = Math.max(0, -this.todaysPnL());
-    const cap = risk && this.equity() > 0 ? (risk.maxDailyLossPercent / 100) * this.equity() : null;
-    if (!this.equity()) {
+  pctLabel(value: number | null | undefined): string {
+    if (value === null || value === undefined || Number.isNaN(value)) {
       return '—';
     }
-    const used = this.equity() ? ((loss / this.equity()) * 100).toFixed(1) : '0.0';
-    return cap === null ? `${used}%` : `${used}% / ${risk!.maxDailyLossPercent}%`;
+    return `${value.toFixed(1)}%`;
   }
 
-  dailyLossUsdtLabel(): string {
+  slTpLabel(): string {
     const risk = this.risk();
-    const loss = Math.max(0, -this.todaysPnL());
-    const cap = risk && this.equity() > 0 ? (risk.maxDailyLossPercent / 100) * this.equity() : 0;
-    if (!cap) {
-      return `${this.signedMoney(-loss)}`;
+    if (!risk) {
+      return '—';
     }
-    return `${this.signedMoney(-loss)} / ${this.money(cap)}`;
-  }
-
-  dailyLossBar(): number {
-    const risk = this.risk();
-    if (!risk || this.equity() <= 0) {
-      return 0;
-    }
-    const lossPct = (Math.max(0, -this.todaysPnL()) / this.equity()) * 100;
-    return this.bar(lossPct, risk.maxDailyLossPercent);
+    return `${risk.stopLossPercent}% / ${risk.takeProfitPercent}%`;
   }
 }

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using TradingPlatform.Domain.Errors;
+using TradingPlatform.Domain.Strategies;
 
 namespace TradingPlatform.Strategies.Engine;
 
@@ -42,6 +43,8 @@ public static class StrategyTemplateKeys
     public const string BasisMeanReversion = "basis_mean_reversion";
     public const string FundingBasisVwap = "funding_basis_vwap";
     public const string OiBreakoutConfirmation = "oi_breakout_confirmation";
+    public const string VolSpikeEmaTrend = "vol_spike_ema_trend";
+    public const string Bb202Break = "bb20_2_break";
 
     public static readonly string[] Frozen =
     [
@@ -90,9 +93,33 @@ public static class StrategyTemplateKeys
         OiBreakoutConfirmation
     ];
 
-    public static readonly string[] Research = [.. AdvancedSix, .. Alpha];
+    public static readonly string[] HistoricallyFitted =
+    [
+        VolSpikeEmaTrend,
+        Bb202Break
+    ];
+
+    public static readonly string[] Research = [.. AdvancedSix, .. Alpha, .. HistoricallyFitted];
 
     public static readonly string[] All = [.. Frozen, .. Research];
+
+    /// <summary>
+    /// Operator catalog: PAPER or weak guidance only. Avoid/blocked templates stay in the engine
+    /// for Frozen tests and any bots already running them.
+    /// </summary>
+    public static readonly string[] OperatorCatalog =
+    [
+        EmaRsiTrend,
+        RsiPullback,
+        BollingerReversion,
+        SupertrendEmaTrend,
+        LiqSweepContinuation,
+        VolSqueezeStructure,
+        VwapBreakoutVolume,
+        MarketStructureTrend,
+        VolSpikeEmaTrend,
+        Bb202Break
+    ];
 
     public static readonly string[] SupportedTimeframes = ["5m", "15m", "1h"];
     public static readonly string[] SupportedDirections = ["LONG", "SHORT"];
@@ -102,6 +129,15 @@ public static class StrategyTemplateKeys
 
     public static bool IsFrozen(string? key) =>
         Frozen.Contains(Normalize(key), StringComparer.OrdinalIgnoreCase);
+
+    public static bool IsHistoricallyFitted(string? key) =>
+        HistoricallyFitted.Contains(Normalize(key), StringComparer.OrdinalIgnoreCase);
+
+    public static bool IsOperatorCatalog(string? key)
+    {
+        var raw = (key ?? "").Trim();
+        return OperatorCatalog.Contains(raw, StringComparer.OrdinalIgnoreCase);
+    }
 
     public static bool IsResearch(string? key) =>
         Research.Contains(Normalize(key), StringComparer.OrdinalIgnoreCase);
@@ -135,6 +171,8 @@ public static class StrategyTemplateKeys
         RegimeStrategyRouter => "ROUTER",
         BollingerReversion => "MEAN REVERSION",
         DonchianBreakout => "BREAKOUT / TREND",
+        Bb202Break => "BREAKOUT / TREND",
+        VolSpikeEmaTrend => "TREND",
         _ => "TREND"
     };
 
@@ -325,6 +363,24 @@ public static class StrategyTemplates
                 VolumeFilterEnabled = true,
                 RelativeVolumePeriod = 20,
                 MinimumRelativeVolume = 0.8m
+            },
+            StrategyTemplateKeys.VolSpikeEmaTrend => core with
+            {
+                Timeframe = "15m",
+                AllowedSide = StrategySides.Both,
+                EmaFast = 20,
+                EmaSlow = 21,
+                RelativeVolumePeriod = 20,
+                MinimumRelativeVolume = 1.5m,
+                VolumeFilterEnabled = false
+            },
+            StrategyTemplateKeys.Bb202Break => core with
+            {
+                Timeframe = "15m",
+                AllowedSide = StrategySides.Both,
+                BbPeriod = 20,
+                BbStdDev = 2m,
+                VolumeFilterEnabled = false
             },
             _ => core
         };
@@ -605,6 +661,8 @@ public static class StrategyTemplates
         StrategyTemplateKeys.BasisMeanReversion => "Basis Mean Reversion",
         StrategyTemplateKeys.FundingBasisVwap => "Funding Basis VWAP",
         StrategyTemplateKeys.OiBreakoutConfirmation => "OI Breakout Confirmation",
+        StrategyTemplateKeys.VolSpikeEmaTrend => "BTC 15m Volume Spike EMA",
+        StrategyTemplateKeys.Bb202Break => "BTC 15m Bollinger Break",
         _ => "EMA RSI Trend"
     };
 
@@ -644,6 +702,8 @@ public static class StrategyTemplates
         StrategyTemplateKeys.BasisMeanReversion => "Research normalized basis z-score extremes as mean-reversion and as continuation, separately.",
         StrategyTemplateKeys.FundingBasisVwap => "Research funding extreme + basis extreme + VWAP deviation. Small parameter set only.",
         StrategyTemplateKeys.OiBreakoutConfirmation => "Research whether OI expansion adds incremental information to a volume-confirmed breakout. OI_SAMPLE_LIMITED.",
+        StrategyTemplateKeys.VolSpikeEmaTrend => "ისტორიულად მორგებული BTCUSDT 15m კანდიდატი: volume spike + EMA21. არ არის validated alpha. SL 2.50% / TP 5.00% / 192 bar.",
+        StrategyTemplateKeys.Bb202Break => "ისტორიულად მორგებული BTCUSDT 15m კანდიდატი: Bollinger (20,2) break. არ არის validated alpha. SL 4.00% / TP 5.00% / 192 bar.",
         _ => "ახალ ტრენდს იწყებს: სწრაფი EMA ნელს კვეთს, RSI ადასტურებს. მიზანი — მიმართულების ცვლილება, სუსტი გადაკვეთების გარეშე."
     };
 
@@ -682,6 +742,8 @@ public static class StrategyTemplates
         StrategyTemplateKeys.CryptoPairsArb => "DATA_UNAVAILABLE",
         StrategyTemplateKeys.XsRelativeStrength => "DATA_UNAVAILABLE",
         StrategyTemplateKeys.TakerFlowMomentum => "DATA_UNAVAILABLE",
+        StrategyTemplateKeys.VolSpikeEmaTrend => StrategyValidationStatuses.HistoricallyFittedCandidate,
+        StrategyTemplateKeys.Bb202Break => StrategyValidationStatuses.HistoricallyFittedCandidate,
         var key when StrategyTemplateKeys.IsResearch(key) => "RESEARCHING",
         _ => "VALIDATION_PENDING"
     };

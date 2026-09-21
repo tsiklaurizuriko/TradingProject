@@ -11,4 +11,5 @@ public static class StrategyValidationStatuses
     public const string RejectedByTests = "REJECTED_BY_TESTS";
     public const string Researching = "RESEARCHING";
     public const string DataUnavailable = "DATA_UNAVAILABLE";
+    public const string HistoricallyFittedCandidate = "HISTORICALLY_FITTED_CANDIDATE";
 }

@@ -174,17 +174,16 @@ public sealed class RiskEngineTests
     }
 
     [Fact]
-    public void Rejects_new_entries_when_daily_loss_exceeds_limit()
+    public void Daily_loss_does_not_block_new_entries()
     {
         var result = new RiskEngine().Evaluate(
             SignalType.Buy,
             High(),
-            Clear() with { DailyRealizedPnL = -7m, AccountDailyPnL = -7m },
+            Clear() with { DailyRealizedPnL = -70m, AccountDailyPnL = -70m },
             DateTimeOffset.UtcNow);
 
-        result.Decision.Should().Be(RiskDecision.Rejected);
-        result.HaltAccount.Should().BeTrue();
-        result.Reason.Should().Contain("daily loss");
+        result.Decision.Should().Be(RiskDecision.Approved);
+        result.HaltAccount.Should().BeFalse();
     }
 
     [Fact]
@@ -210,7 +209,7 @@ public sealed class RiskEngineTests
             DateTimeOffset.UtcNow);
 
         result.Decision.Should().Be(RiskDecision.Rejected);
-        result.Reason.Should().Contain("Maximum simultaneous");
+        result.Reason.Should().Contain("Maximum simultaneous Isolated positions reached for this strategy.");
     }
 
     [Fact]
@@ -223,7 +222,7 @@ public sealed class RiskEngineTests
             DateTimeOffset.UtcNow);
 
         result.Decision.Should().Be(RiskDecision.Rejected);
-        result.Reason.Should().Contain("portfolio planned risk");
+        result.Reason.Should().Contain("portfolio planned risk for this strategy");
     }
 
     [Fact]

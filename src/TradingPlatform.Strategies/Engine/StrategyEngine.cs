@@ -190,6 +190,16 @@ public interface IStrategyEngine
             out reason);
     }
 
+    StrategySignalDetail EvaluateDetailAt(
+        StrategyDefinition definition,
+        StrategyContext context,
+        CausalIndicatorCache cache,
+        int index)
+    {
+        var signal = EvaluateAt(definition, context, cache, index, out var reason);
+        return new StrategySignalDetail(signal, reason);
+    }
+
     private static IReadOnlyList<decimal?>? Prefix(IReadOnlyList<decimal?>? series, int take)
     {
         if (series is null)
@@ -350,6 +360,28 @@ public sealed class StrategyEngine : IStrategyEngine
 
         return Evaluate(definition, context, out reason);
     }
+
+    public StrategySignalDetail EvaluateDetailAt(
+        StrategyDefinition definition,
+        StrategyContext context,
+        CausalIndicatorCache cache,
+        int index)
+    {
+        if (!string.IsNullOrWhiteSpace(definition.Template) || definition.Params is not null)
+        {
+            return StrategyTemplateEvaluator.EvaluateDetailAt(definition, context, cache, index);
+        }
+
+        var signal = Evaluate(definition, context, out var reason);
+        return new StrategySignalDetail(signal, reason);
+    }
+
+    StrategySignalDetail IStrategyEngine.EvaluateDetailAt(
+        StrategyDefinition definition,
+        StrategyContext context,
+        CausalIndicatorCache cache,
+        int index) =>
+        EvaluateDetailAt(definition, context, cache, index);
 
     private bool EvaluateGroup(ConditionGroup? group, StrategyContext context, bool requirePosition)
     {

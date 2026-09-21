@@ -23,7 +23,9 @@ public sealed record ReplaySettings(
     int MaxSimultaneousPositions = 20,
     int MaxConsecutiveLosses = 100,
     int CooldownMinutes = 30,
-    decimal MinimumLiquidationSafetyBufferPercent = 0.1m);
+    decimal MinimumLiquidationSafetyBufferPercent = 0.1m,
+    bool HonorSuggestedStops = false,
+    int MaxHoldBars = 0);
 
 public sealed record ReplayTrade(
     DateTimeOffset OpenedAt,
@@ -133,6 +135,8 @@ public sealed class BacktestReplay
         var equityCurve = new List<EquityPoint>();
         OpenPosition? open = null;
         PositionSide? pendingEntry = null;
+        decimal? pendingStop = null;
+        decimal? pendingTake = null;
         var pendingExit = false;
         var pendingExitReason = "Exit";
         var sampleEvery = Math.Max(1, ordered.Count / 300);
@@ -151,9 +155,7 @@ public sealed class BacktestReplay
         var riskEngine = new RiskEngine();
         var profile = ProfileFromSettings(settings);
         var template = !string.IsNullOrWhiteSpace(definition.Template) || definition.Params is not null;
-        var cache = template
-            ? indicatorCache ?? new CausalIndicatorCache(ordered)
-            : null;
+        var cache = indicatorCache ?? (template ? new CausalIndicatorCache(ordered) : null);
         var loopFrom = indexWindow ? evalFrom : 0;
 
         for (var i = loopFrom; i < ordered.Count; i++)
@@ -200,6 +202,21 @@ public sealed class BacktestReplay
 
                     var mid = bar.Open;
                     var fill = ApplySlippage(mid, settings.SlippagePercent, worseForBuy: entrySide == PositionSide.Long);
+                    decimal? posStop = null;
+                    decimal? posTake = null;
+                    decimal? stopPctOverride = null;
+                    if (settings.HonorSuggestedStops && pendingStop is not null)
+                    {
+                        if (!TryStructuralStops(entrySide, fill, pendingStop, pendingTake, out posStop, out posTake, out stopPctOverride))
+                        {
+                            pendingEntry = null;
+                            pendingStop = null;
+                            pendingTake = null;
+                        }
+                    }
+
+                    if (pendingEntry is not null)
+                    {
                     var qty = Size(
                         riskEngine,
                         profile,
@@ -210,16 +227,23 @@ public sealed class BacktestReplay
                         consecutiveLosses,
                         lastLossAt,
                         bar.OpenTime,
-                        entrySide);
+                        entrySide,
+                        stopPctOverride,
+                        posTake is { } takePx && fill > 0m
+                            ? Math.Abs(takePx - fill) / fill * 100m
+                            : null);
                     if (qty > 0m)
                     {
                         var fee = Notional(qty, fill) * (settings.FeePercent / 100m);
                         equity -= fee;
                         feesPaid += fee;
-                        open = new OpenPosition(bar.OpenTime, qty, fill, fee, entrySide, MidEntryPrice: mid);
+                        open = new OpenPosition(bar.OpenTime, qty, fill, fee, entrySide, MidEntryPrice: mid, StopPrice: posStop, TakePrice: posTake, FillIndex: i);
+                    }
                     }
 
                 pendingEntry = null;
+                pendingStop = null;
+                pendingTake = null;
             }
             else if (pendingExit && open is not null)
             {
@@ -256,12 +280,12 @@ public sealed class BacktestReplay
 
             if (open is not null)
             {
-                var stop = open.Side == PositionSide.Short
+                var stop = open.StopPrice ?? (open.Side == PositionSide.Short
                     ? open.EntryPrice * (1m + settings.StopLossPercent / 100m)
-                    : open.EntryPrice * (1m - settings.StopLossPercent / 100m);
-                var target = open.Side == PositionSide.Short
+                    : open.EntryPrice * (1m - settings.StopLossPercent / 100m));
+                var target = open.TakePrice ?? (open.Side == PositionSide.Short
                     ? open.EntryPrice * (1m - settings.TakeProfitPercent / 100m)
-                    : open.EntryPrice * (1m + settings.TakeProfitPercent / 100m);
+                    : open.EntryPrice * (1m + settings.TakeProfitPercent / 100m));
                 if (open.Side == PositionSide.Long && bar.Low <= stop)
                 {
                     var mid = Math.Min(stop, bar.Low);
@@ -294,6 +318,14 @@ public sealed class BacktestReplay
                     open = null;
                     pendingExit = false;
                 }
+                else if (settings.MaxHoldBars > 0 && i - open.FillIndex + 1 >= settings.MaxHoldBars)
+                {
+                    var mid = bar.Close;
+                    var fill = ApplySlippage(mid, settings.SlippagePercent, worseForBuy: open.Side == PositionSide.Short);
+                    Close(open, fill, mid, bar.CloseTime, "TIME", settings, trades, ref equity, ref feesPaid, ref slippagePaid, ref grossPnl, ref consecutiveLosses, ref lastLossAt, ref dayPnl);
+                    open = null;
+                    pendingExit = false;
+                }
             }
 
             var mark = equity + (open is null ? 0m : Direction(open.Side) * (bar.Close - open.EntryPrice) * open.Quantity);
@@ -320,6 +352,7 @@ public sealed class BacktestReplay
             {
                 SignalType signal;
                 string reason;
+                StrategySignalDetail? detail = null;
                 var evalContext = new StrategyContext
                 {
                     ClosedCandles = ordered,
@@ -336,7 +369,9 @@ public sealed class BacktestReplay
                 };
                 if (cache is not null)
                 {
-                    signal = _engine.EvaluateAt(definition, evalContext, cache, i, out reason);
+                    detail = _engine.EvaluateDetailAt(definition, evalContext, cache, i);
+                    signal = detail.Signal;
+                    reason = detail.Reason;
                 }
                 else
                 {
@@ -362,6 +397,8 @@ public sealed class BacktestReplay
                 if (open is null && pendingEntry is null && signal is SignalType.Buy or SignalType.Sell)
                 {
                     pendingEntry = signal == SignalType.Sell ? PositionSide.Short : PositionSide.Long;
+                    pendingStop = detail?.SuggestedStop;
+                    pendingTake = detail?.SuggestedTakeProfit;
                 }
                 else if (open is not null && !pendingExit
                     && (signal is SignalType.Exit
@@ -524,11 +561,33 @@ public sealed class BacktestReplay
         int consecutiveLosses,
         DateTimeOffset? lastLossAt,
         DateTimeOffset at,
-        PositionSide side = PositionSide.Long)
+        PositionSide side = PositionSide.Long,
+        decimal? stopLossPercentOverride = null,
+        decimal? takeProfitPercentOverride = null)
     {
+        var sized = profile;
+        if (stopLossPercentOverride is > 0m || takeProfitPercentOverride is > 0m)
+        {
+            sized = ProfileFromSettings(settings);
+            if (stopLossPercentOverride is > 0m)
+            {
+                sized.StopLossPercent = stopLossPercentOverride.Value;
+            }
+
+            if (takeProfitPercentOverride is > 0m)
+            {
+                sized.TakeProfitPercent = takeProfitPercentOverride.Value;
+            }
+
+            if (sized.TakeProfitPercent <= sized.StopLossPercent)
+            {
+                sized.TakeProfitPercent = sized.StopLossPercent + 0.01m;
+            }
+        }
+
         var evaluation = engine.Evaluate(
             side == PositionSide.Short ? SignalType.Sell : SignalType.Buy,
-            profile,
+            sized,
             new RiskSnapshot
             {
                 Equity = available,
@@ -583,6 +642,54 @@ public sealed class BacktestReplay
 
     private static decimal Round(decimal value) => Math.Round(value, 8, MidpointRounding.AwayFromZero);
 
+    private static bool TryStructuralStops(
+        PositionSide side,
+        decimal fill,
+        decimal? suggestedStop,
+        decimal? suggestedTake,
+        out decimal? stop,
+        out decimal? take,
+        out decimal? stopPercent)
+    {
+        stop = null;
+        take = null;
+        stopPercent = null;
+        if (fill <= 0m || suggestedStop is not { } rawStop)
+        {
+            return false;
+        }
+
+        var minDistance = fill * 0.002m;
+        if (side == PositionSide.Long)
+        {
+            if (rawStop >= fill || fill - rawStop < minDistance)
+            {
+                return false;
+            }
+
+            var dist = fill - rawStop;
+            stop = rawStop;
+            stopPercent = dist / fill * 100m;
+            take = suggestedTake is { } tp && tp >= fill + dist
+                ? tp
+                : fill + dist * 2m;
+            return true;
+        }
+
+        if (rawStop <= fill || rawStop - fill < minDistance)
+        {
+            return false;
+        }
+
+        var shortDist = rawStop - fill;
+        stop = rawStop;
+        stopPercent = shortDist / fill * 100m;
+        take = suggestedTake is { } shortTp && shortTp <= fill - shortDist
+            ? shortTp
+            : fill - shortDist * 2m;
+        return true;
+    }
+
     private sealed record OpenPosition(
         DateTimeOffset OpenedAt,
         decimal Quantity,
@@ -590,7 +697,10 @@ public sealed class BacktestReplay
         decimal EntryFee,
         PositionSide Side,
         decimal FundingAccrued = 0m,
-        decimal MidEntryPrice = 0m);
+        decimal MidEntryPrice = 0m,
+        decimal? StopPrice = null,
+        decimal? TakePrice = null,
+        int FillIndex = 0);
 
     private static IReadOnlyList<decimal?>? PrefixFutures(IReadOnlyList<decimal?>? series, int take) =>
         series is null ? null : new PrefixList<decimal?>(series, take);

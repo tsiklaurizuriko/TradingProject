@@ -139,17 +139,6 @@ export class DashboardPage {
   readonly modeBots = computed(() => this.trading.workspaceBots());
   readonly modePositions = computed(() => this.trading.workspacePositions());
   readonly modeTrades = computed(() => this.trading.workspaceTrades());
-  readonly plannedRisk = computed(() => {
-    const risk = this.trading.risk();
-    const available = this.available();
-    if (!risk || available <= 0) {
-      return 0;
-    }
-    return (available * (risk.riskPerTradePercent ?? 0)) / 100;
-  });
-  readonly openRisk = computed(() =>
-    this.modePositions().reduce((sum, row) => sum + (row.initialRiskUsdt ?? 0), 0),
-  );
   readonly consecutiveLosses = computed(() => {
     const closed = [...this.modeTrades()]
       .filter((row) => row.closedAt)
@@ -164,14 +153,12 @@ export class DashboardPage {
     }
     return count;
   });
-  readonly riskLocked = computed(() => {
-    const risk = this.trading.risk();
-    const available = this.available();
-    const dailyCap = risk && available > 0 ? (risk.maxDailyLossPercent / 100) * available : 0;
-    const dailyHit = dailyCap > 0 && Math.max(0, -this.todaysPnL()) >= dailyCap;
-    const streakHit = !!risk && this.consecutiveLosses() >= (risk.maxConsecutiveLosses || 5);
-    return dailyHit || streakHit || this.modeBots().some((bot) => (bot.lastError ?? '').toLowerCase().includes('risk lock'));
-  });
+  readonly riskLocked = computed(() =>
+    this.modeBots().some((bot) => {
+      const err = (bot.lastError ?? '').toLowerCase();
+      return err.includes('risk lock') || err.includes('consecutive loss') || err.includes('entries are locked');
+    }),
+  );
 
   readonly monthlyPnL = computed(() => {
     const now = new Date();
@@ -236,8 +223,8 @@ export class DashboardPage {
     const tp = risk?.takeProfitPercent ?? '—';
     const lev = risk?.maxLeverage ?? '—';
     const port = risk?.maxPortfolioRiskPercent ?? '—';
-    const daily = risk?.maxDailyLossPercent ?? '—';
-    return `LIVE bots only. Paper stays stopped. Isolated still allows only one open LIVE position per coin; extra strategies wait. Current book ${name}. Risk per trade ${r}%. SL ${sl}%. TP ${tp}%. Max leverage ${lev}x. Available Balance ${money(this.available())}. Max portfolio risk ${port}%. Daily loss limit ${daily}%.`;
+    const maxPos = risk?.maxSimultaneousPositions ?? '—';
+    return `LIVE bots only. Paper stays stopped. Isolated still allows only one open LIVE position per coin. Current book ${name}. Risk per trade ${r}%. SL ${sl}%. TP ${tp}%. Max leverage ${lev}x. Available Balance ${money(this.available())}. Max portfolio risk ${port}% per strategy. Max positions ${maxPos} per strategy.`;
   });
   readonly startAllWarning = computed(() =>
     this.isLive()

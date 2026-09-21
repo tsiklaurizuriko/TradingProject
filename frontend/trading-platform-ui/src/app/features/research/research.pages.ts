@@ -22,6 +22,7 @@ import {
   ratingSortValue,
   starSlots,
   verdictLabel,
+  isOperatorCatalog,
 } from '../../core/trading/strategy-ratings';
 
 interface StrategyDraft {
@@ -72,40 +73,15 @@ interface StrategyDraft {
 const timeframes = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '1d'];
 const templateOptions = [
   { key: 'ema_rsi_trend', label: 'EMA RSI Trend' },
-  { key: 'macd_trend', label: 'MACD Trend' },
   { key: 'rsi_pullback', label: 'RSI Pullback' },
   { key: 'bollinger_reversion', label: 'Bollinger Reversion' },
-  { key: 'donchian_breakout', label: 'Donchian Breakout' },
-  { key: 'turtle_tsm', label: 'Turtle Time-Series Momentum' },
-  { key: 'vwap_pullback_trend', label: 'VWAP Pullback Trend' },
-  { key: 'volatility_breakout', label: 'Volatility Breakout' },
   { key: 'supertrend_ema_trend', label: 'Supertrend EMA Trend' },
-  { key: 'oi_price_momentum', label: 'Open Interest Price Momentum' },
-  { key: 'funding_oi_regime', label: 'Funding Rate Price OI Regime' },
-  { key: 'vp_vwap_reversion', label: 'Volume Profile VWAP Mean Reversion' },
-  { key: 'liq_sweep_reversal', label: 'Liquidity Sweep Reversal' },
   { key: 'liq_sweep_continuation', label: 'Liquidity Sweep Breakout Continuation' },
-  { key: 'funding_basis_rv', label: 'Funding Basis Carry Relative Value' },
-  { key: 'funding_oi_reversal', label: 'Funding Extreme OI Price Reversal' },
-  { key: 'taker_flow_momentum', label: 'Taker Flow Volume Imbalance Momentum' },
-  { key: 'oi_price_volume_regime', label: 'OI Price Volume Regime' },
-  { key: 'vwap_deviation_reversion', label: 'VWAP Deviation Reversion' },
-  { key: 'vwap_breakout_volume', label: 'VWAP Breakout Volume' },
-  { key: 'failed_breakout_reversal', label: 'Failed Breakout Reversal' },
   { key: 'vol_squeeze_structure', label: 'Volatility Squeeze Structure Break' },
+  { key: 'vwap_breakout_volume', label: 'VWAP Breakout Volume' },
   { key: 'market_structure_trend', label: 'Market Structure Trend Continuation' },
-  { key: 'market_structure_pullback', label: 'Market Structure Pullback' },
-  { key: 'atr_normalized_momentum', label: 'ATR-Normalized Momentum' },
-  { key: 'mtf_trend_structure', label: 'Multi-Timeframe Trend LTF Structure' },
-  { key: 'zscore_mean_reversion', label: 'Z-Score Statistical Mean Reversion' },
-  { key: 'crypto_pairs_arb', label: 'Crypto Pairs Statistical Arbitrage' },
-  { key: 'xs_relative_strength', label: 'Cross-Sectional Relative Strength Momentum' },
-  { key: 'regime_strategy_router', label: 'Regime-Adaptive Strategy Router' },
-  { key: 'funding_price_momentum', label: 'Funding Price Momentum' },
-  { key: 'funding_extreme_momentum_exhaustion', label: 'Funding Extreme Momentum Exhaustion' },
-  { key: 'basis_mean_reversion', label: 'Basis Mean Reversion' },
-  { key: 'funding_basis_vwap', label: 'Funding Basis VWAP' },
-  { key: 'oi_breakout_confirmation', label: 'OI Breakout Confirmation' },
+  { key: 'vol_spike_ema_trend', label: 'BTC 15m Volume Spike EMA' },
+  { key: 'bb20_2_break', label: 'BTC 15m Bollinger Break' },
 ] as const;
 const sideOptions = [
   { key: 'Long', label: 'Long' },
@@ -183,6 +159,10 @@ const templateLogic: Record<string, string> = {
     'Research funding + basis + VWAP deviation. Not LIVE.',
   oi_breakout_confirmation:
     'Research whether OI expansion adds information to a volume breakout. OI_SAMPLE_LIMITED. Not LIVE.',
+  vol_spike_ema_trend:
+    'ისტორიულად მორგებული BTCUSDT 15m: volume spike + EMA21. არ არის validated alpha. SL 2.50% / TP 5.00% / 192 bar. LIVE არა.',
+  bb20_2_break:
+    'ისტორიულად მორგებული BTCUSDT 15m: Bollinger (20,2) break. არ არის validated alpha. SL 4.00% / TP 5.00% / 192 bar. LIVE არა.',
 };
 
 const dataDependencies: Record<string, string> = {
@@ -237,6 +217,7 @@ function familyFor(key: string | undefined, fallback?: string): string {
     case 'liq_sweep_continuation':
     case 'vwap_breakout_volume':
     case 'donchian_breakout':
+    case 'bb20_2_break':
       return 'BREAKOUT / TREND';
     case 'vwap_pullback_trend':
     case 'supertrend_ema_trend':
@@ -280,8 +261,6 @@ function depsFor(key: string): string {
               <option value="">All</option>
               <option value="paper">გამოიყენე PAPER-ზე</option>
               <option value="weak">სუსტი</option>
-              <option value="avoid">არ გამოიყენო</option>
-              <option value="blocked">ვერ გაეშვება</option>
             </select>
           </label>
           <label class="field">Family
@@ -302,6 +281,7 @@ function depsFor(key: string): string {
               <option value="VALIDATION_PENDING">VALIDATION_PENDING</option>
               <option value="RESEARCHING">RESEARCHING</option>
               <option value="DATA_UNAVAILABLE">DATA_UNAVAILABLE</option>
+              <option value="HISTORICALLY_FITTED_CANDIDATE">HISTORICALLY_FITTED_CANDIDATE</option>
             </select>
           </label>
           <label class="field">Timeframe
@@ -674,6 +654,9 @@ export class StrategiesPage {
       },
     );
     return rows.filter((row) => {
+      if (!isOperatorCatalog(row.templateKey)) {
+        return false;
+      }
       if (family && familyFor(row.templateKey, row.family) !== family) {
         return false;
       }

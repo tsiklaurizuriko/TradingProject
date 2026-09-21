@@ -70,6 +70,7 @@ public sealed record RiskSnapshot
     public PositionSide Side { get; init; }
     public decimal AccountDailyPnL { get; init; }
     public bool SymbolAlreadyOpen { get; init; }
+    /// <summary>Open Isolated coins already held by the evaluating strategy. Other running strategies do not consume this quota.</summary>
     public int OpenPositionCount { get; init; }
     public decimal OpenRiskPercent { get; init; }
     public int ConsecutiveLosses { get; init; }
@@ -174,7 +175,7 @@ public sealed class RiskEngine : IRiskEngine
         var maxPortfolio = profile.MaxPortfolioRiskPercent > 0m ? profile.MaxPortfolioRiskPercent : 4m;
         if (projected > maxPortfolio)
         {
-            return Denied("Projected portfolio planned risk exceeds the configured maximum.");
+            return Denied("Projected portfolio planned risk for this strategy exceeds the configured maximum.");
         }
 
         var stopPrice = side == PositionSide.Short
@@ -233,18 +234,6 @@ public sealed class RiskEngine : IRiskEngine
         }
 
         var available = snapshot.AvailableBalance;
-        var dailyLoss = snapshot.AccountDailyPnL < 0m ? -snapshot.AccountDailyPnL : 0m;
-        if (dailyLoss == 0m && snapshot.DailyRealizedPnL < 0m)
-        {
-            dailyLoss = -snapshot.DailyRealizedPnL;
-        }
-
-        var maxDailyLoss = available * (profile.MaxDailyLossPercent / 100m);
-        if (maxDailyLoss > 0m && dailyLoss >= maxDailyLoss)
-        {
-            return Lock("Account daily loss limit reached. New entries are locked. Open positions stay.");
-        }
-
         var maxLosses = profile.MaxConsecutiveLosses > 0 ? profile.MaxConsecutiveLosses : 5;
         var cooldown = TimeSpan.FromMinutes(profile.CooldownMinutes > 0 ? profile.CooldownMinutes : 30);
         if (snapshot.ConsecutiveLosses >= maxLosses
@@ -262,7 +251,7 @@ public sealed class RiskEngine : IRiskEngine
         var maxOpen = profile.MaxSimultaneousPositions > 0 ? profile.MaxSimultaneousPositions : 2;
         if (snapshot.OpenPositionCount >= maxOpen)
         {
-            return Reject("Maximum simultaneous Isolated positions reached.");
+            return Reject("Maximum simultaneous Isolated positions reached for this strategy.");
         }
 
         var side = signal == SignalType.Sell || snapshot.Side == PositionSide.Short

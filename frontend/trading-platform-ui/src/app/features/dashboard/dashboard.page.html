@@ -156,11 +156,10 @@
   <div class="dash-risk">
     <app-risk-overview
       [risk]="trading.risk()"
-      [equity]="available()"
+      [available]="available()"
       [todaysPnL]="todaysPnL()"
-      [openPositions]="modePositions().length"
-      [plannedRisk]="plannedRisk()"
-      [openRisk]="openRisk()"
+      [positions]="modePositions()"
+      [bots]="modeBots()"
       [consecutiveLosses]="consecutiveLosses()"
       [locked]="riskLocked()"
     />

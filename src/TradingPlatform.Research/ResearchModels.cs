@@ -24,6 +24,7 @@ public static class ResearchStatuses
     public const string SkippedTimeframe = "SKIPPED_TIMEFRAME";
     public const string DataUnavailable = "DATA_UNAVAILABLE";
     public const string NoTrades = "NO_TRADES";
+    public const string HistoricallyFittedCandidate = "HISTORICALLY_FITTED_CANDIDATE";
 }
 
 public static class ResearchPhases
@@ -87,7 +88,11 @@ public sealed record ResearchCandidate(
     DateTimeOffset CreatedAtUtc,
     string DatasetScope,
     string Status,
-    string CodeVersion = ResearchCandidate.EngineVersion)
+    string CodeVersion = ResearchCandidate.EngineVersion,
+    string FrozenSymbol = "",
+    decimal StopLossPercent = 0m,
+    decimal TakeProfitPercent = 0m,
+    int MaxHoldBars = 0)
 {
     public const string EngineVersion = "research-layer-1";
 }

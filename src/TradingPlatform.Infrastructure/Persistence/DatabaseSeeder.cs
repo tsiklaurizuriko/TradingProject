@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using TradingPlatform.Application.Abstractions;
+using TradingPlatform.Domain.Bots;
 using TradingPlatform.Domain.Identity;
 using TradingPlatform.Domain.Market;
 using TradingPlatform.Domain.Operations;
@@ -202,6 +203,8 @@ public sealed class DatabaseSeeder
         await UpsertSystemRiskAsync("LOW", ["Low Risk", "Conservative"], LowBook(), cancellationToken);
         await UpsertSystemRiskAsync("MEDIUM", ["Medium Risk", "Moderate"], MediumBook(), cancellationToken);
         await UpsertSystemRiskAsync("HIGH", ["High Risk", "Aggressive"], HighBook(), cancellationToken);
+        await UpsertSystemRiskAsync("BTC 15m Vol Spike", ["FITTED-VOL-SPIKE", "vol_spike_ema_trend"], FittedVolSpikeBook(), cancellationToken);
+        await UpsertSystemRiskAsync("BTC 15m BB Break", ["FITTED-BB-BREAK", "bb20_2_break"], FittedBbBreakBook(), cancellationToken);
         await EnsureOneActiveAsync(cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
         await SeedStrategiesAsync(cancellationToken);
@@ -211,23 +214,25 @@ public sealed class DatabaseSeeder
     {
         var admin = await _db.Users.FirstAsync(cancellationToken);
         var existing = await _db.Strategies.Include(s => s.Versions).ToListAsync(cancellationToken);
-        foreach (var row in Catalog)
+        foreach (var row in Catalog.Where(item => StrategyTemplateKeys.IsOperatorCatalog(item.Key)))
         {
             var strategy = existing.FirstOrDefault(s => MatchesCatalog(s, row.Key, row.Name));
-            var parameters = StrategyTemplates.DefaultsFor(row.Key, qualityOn: !row.Research) with
+            var parameters = StrategyTemplates.DefaultsFor(row.Key, qualityOn: !row.Research && !StrategyTemplateKeys.IsHistoricallyFitted(row.Key)) with
             {
                 AllowedSide = StrategySides.Both,
-                Timeframe = "5m"
+                Timeframe = StrategyTemplateKeys.IsHistoricallyFitted(row.Key) ? "15m" : "5m"
             };
             if (strategy is null)
             {
+                var fitted = StrategyTemplateKeys.IsHistoricallyFitted(row.Key);
                 strategy = new Strategy
                 {
                     UserId = admin.Id,
                     User = admin,
                     Name = row.Name,
                     Description = row.Description,
-                    AppliesToAllSymbols = true,
+                    AppliesToAllSymbols = !fitted,
+                    AllowedSymbolsCsv = fitted ? "BTCUSDT" : null,
                     TemplateKey = row.Key,
                     AllowedSide = StrategySides.Both,
                     IsEnabled = !row.Research,
@@ -241,7 +246,7 @@ public sealed class DatabaseSeeder
                     VersionNumber = 1,
                     DefinitionJson = StrategyTemplates.Build(strategy.Name, 1, parameters),
                     Symbol = "BTCUSDT",
-                    Timeframe = Timeframe.FiveMinutes
+                    Timeframe = fitted ? Timeframe.FifteenMinutes : Timeframe.FiveMinutes
                 });
                 _db.Strategies.Add(strategy);
                 existing.Add(strategy);
@@ -249,6 +254,39 @@ public sealed class DatabaseSeeder
             }
 
             AlignCatalogStrategy(strategy, row, parameters);
+        }
+
+        await RetireHiddenStrategiesAsync(existing, cancellationToken);
+    }
+
+    private async Task RetireHiddenStrategiesAsync(List<Strategy> existing, CancellationToken cancellationToken)
+    {
+        var used = (await _db.Bots
+                .Select(bot => bot.StrategyVersion.StrategyId)
+                .Distinct()
+                .ToListAsync(cancellationToken))
+            .ToHashSet();
+        var now = DateTimeOffset.UtcNow;
+        foreach (var strategy in existing)
+        {
+            var key = strategy.TemplateKey;
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                var latest = strategy.Versions.OrderByDescending(row => row.VersionNumber).FirstOrDefault();
+                key = latest is null ? string.Empty : StrategyTemplates.Read(latest.DefinitionJson).TemplateKey;
+            }
+
+            if (StrategyTemplateKeys.IsOperatorCatalog(key))
+            {
+                continue;
+            }
+
+            strategy.IsEnabled = false;
+            strategy.IsArchived = true;
+            if (!used.Contains(strategy.Id) && strategy.DeletedAt is null)
+            {
+                strategy.DeletedAt = now;
+            }
         }
     }
 
@@ -263,6 +301,12 @@ public sealed class DatabaseSeeder
         (string Key, string Name, string Description, bool Research) row,
         StrategyTemplateParams parameters)
     {
+        if (StrategyTemplateKeys.IsHistoricallyFitted(row.Key))
+        {
+            AlignFittedBtc15m(strategy, row, parameters);
+            return;
+        }
+
         strategy.TemplateKey = row.Key;
         strategy.AllowedSide = StrategySides.Both;
         strategy.AppliesToAllSymbols = true;
@@ -407,7 +451,11 @@ public sealed class DatabaseSeeder
         (StrategyTemplateKeys.FundingBasisVwap, "Funding Basis VWAP",
             "Research funding + basis + VWAP deviation. Not LIVE.", true),
         (StrategyTemplateKeys.OiBreakoutConfirmation, "OI Breakout Confirmation",
-            "Research whether OI expansion adds information to a volume breakout. OI_SAMPLE_LIMITED. Not LIVE.", true)
+            "Research whether OI expansion adds information to a volume breakout. OI_SAMPLE_LIMITED. Not LIVE.", true),
+        (StrategyTemplateKeys.VolSpikeEmaTrend, "BTC 15m Volume Spike EMA",
+            "HISTORICALLY_FITTED_CANDIDATE. BTCUSDT 15m BOTH. RelVol spike > 1.5 with close vs EMA21. Use risk book BTC 15m Vol Spike (SL 2.50% / TP 5.00%). Not validated alpha. LIVE off.", true),
+        (StrategyTemplateKeys.Bb202Break, "BTC 15m Bollinger Break",
+            "HISTORICALLY_FITTED_CANDIDATE. BTCUSDT 15m BOTH. Close cross of Bollinger (20,2). Use risk book BTC 15m BB Break (SL 4.00% / TP 5.00%). Not validated alpha. LIVE off.", true)
     ];
 
     private async Task UpsertSystemRiskAsync(
@@ -498,5 +546,89 @@ public sealed class DatabaseSeeder
             CooldownMinutes = 30,
             MinimumLiquidationSafetyBufferPercent = 1m,
             AllowLive = false
+        };
+
+    private static void AlignFittedBtc15m(
+        Strategy strategy,
+        (string Key, string Name, string Description, bool Research) row,
+        StrategyTemplateParams parameters)
+    {
+        strategy.TemplateKey = row.Key;
+        strategy.Name = row.Name;
+        strategy.AllowedSide = StrategySides.Both;
+        strategy.AppliesToAllSymbols = false;
+        strategy.AllowedSymbolsCsv = "BTCUSDT";
+        strategy.IsEnabled = false;
+        strategy.ValidationStatus = StrategyValidationStatuses.HistoricallyFittedCandidate;
+        if (string.IsNullOrWhiteSpace(strategy.Description) || strategy.Description != row.Description)
+        {
+            strategy.Description = row.Description;
+        }
+
+        var latest = strategy.Versions.OrderByDescending(v => v.VersionNumber).FirstOrDefault();
+        var current = latest is null ? null : StrategyTemplates.Read(latest.DefinitionJson);
+        var mismatch = latest is null
+            || current is null
+            || current.TemplateKey != parameters.TemplateKey
+            || current.Timeframe != "15m"
+            || current.AllowedSide != StrategySides.Both
+            || latest.Timeframe != Timeframe.FifteenMinutes;
+        if (!mismatch)
+        {
+            return;
+        }
+
+        var json = StrategyTemplates.Build(strategy.Name, (latest?.VersionNumber ?? 0) + (latest is { IsImmutable: true } or null ? 1 : 0), parameters);
+        if (latest is null || latest.IsImmutable)
+        {
+            strategy.Versions.Add(new StrategyVersion
+            {
+                Strategy = strategy,
+                VersionNumber = (latest?.VersionNumber ?? 0) + 1,
+                DefinitionJson = json,
+                Symbol = "BTCUSDT",
+                Timeframe = Timeframe.FifteenMinutes
+            });
+            return;
+        }
+
+        latest.DefinitionJson = StrategyTemplates.Build(strategy.Name, latest.VersionNumber, parameters);
+        latest.Timeframe = Timeframe.FifteenMinutes;
+        latest.Symbol = "BTCUSDT";
+        latest.UpdatedAt = DateTimeOffset.UtcNow;
+    }
+
+    private static RiskProfile FittedVolSpikeBook() =>
+        new()
+        {
+            RiskPerTradePercent = 0.5m,
+            StopLossPercent = 2.5m,
+            TakeProfitPercent = 5m,
+            MaxLeverage = 3m,
+            MaxDailyLossPercent = 3m,
+            MaxPortfolioRiskPercent = 4m,
+            MaxSimultaneousPositions = 1,
+            MaxConsecutiveLosses = 5,
+            CooldownMinutes = 30,
+            MinimumLiquidationSafetyBufferPercent = 1m,
+            AllowLive = false,
+            IsActive = false
+        };
+
+    private static RiskProfile FittedBbBreakBook() =>
+        new()
+        {
+            RiskPerTradePercent = 0.5m,
+            StopLossPercent = 4m,
+            TakeProfitPercent = 5m,
+            MaxLeverage = 3m,
+            MaxDailyLossPercent = 3m,
+            MaxPortfolioRiskPercent = 4m,
+            MaxSimultaneousPositions = 1,
+            MaxConsecutiveLosses = 5,
+            CooldownMinutes = 30,
+            MinimumLiquidationSafetyBufferPercent = 1m,
+            AllowLive = false,
+            IsActive = false
         };
 }

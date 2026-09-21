@@ -56,7 +56,7 @@ interface RiskDraft {
         <div class="section-head">
           <div>
             <strong>{{ row.name }}</strong>
-            <div class="tiny">Isolated · {{ row.riskPerTradePercent }}% R · {{ row.stopLossPercent }}% SL · {{ row.takeProfitPercent }}% TP · {{ row.maxLeverage }}x · {{ row.maxDailyLossPercent }}% daily halt{{ row.allowLive ? '' : ' · paper only' }}</div>
+            <div class="tiny">Isolated · {{ row.riskPerTradePercent }}% R · {{ row.stopLossPercent }}% SL · {{ row.takeProfitPercent }}% TP · {{ row.maxLeverage }}x · {{ row.maxSimultaneousPositions }} / strategy{{ row.allowLive ? '' : ' · paper only' }}</div>
           </div>
           <span class="badge" [class.badge-running]="row.isActive" [class.badge-paused]="!row.isActive">{{ row.isActive ? 'Active' : 'Idle' }}</span>
         </div>
@@ -68,14 +68,13 @@ interface RiskDraft {
             <article class="card"><div class="metric-label">Stop loss</div><div class="metric-value">{{ row.stopLossPercent }}%</div></article>
             <article class="card"><div class="metric-label">Take profit</div><div class="metric-value">{{ row.takeProfitPercent }}%</div></article>
             <article class="card"><div class="metric-label">Max leverage</div><div class="metric-value">{{ row.maxLeverage }}x</div></article>
-            <article class="card"><div class="metric-label">Daily loss limit</div><div class="metric-value">{{ row.maxDailyLossPercent }}%</div></article>
             <article class="card"><div class="metric-label">Portfolio risk cap</div><div class="metric-value">{{ row.maxPortfolioRiskPercent }}%</div></article>
-            <article class="card"><div class="metric-label">Max positions</div><div class="metric-value">{{ row.maxSimultaneousPositions }}</div></article>
+            <article class="card"><div class="metric-label">Max per strategy</div><div class="metric-value">{{ row.maxSimultaneousPositions }}</div></article>
             <article class="card"><div class="metric-label">Cooldown</div><div class="metric-value">{{ row.cooldownMinutes }}m</div></article>
             <article class="card"><div class="metric-label">Liq. buffer</div><div class="metric-value">{{ row.minimumLiquidationSafetyBufferPercent }}%</div></article>
             <article class="card"><div class="metric-label">LIVE</div><div class="metric-value">{{ row.allowLive ? 'Allowed' : 'Paper' }}</div></article>
           </section>
-          <p class="tiny">LIVE places Binance SL/TP with the fill. Paper simulates them. Daily halt stops new entries only.</p>
+          <p class="tiny">LIVE places Binance SL/TP with the fill. Paper simulates them. Max positions and the portfolio risk cap apply to each running strategy separately. One Isolated coin still cannot be opened twice. There is no daily money halt — winning is not capped.</p>
           <div class="btn-row" style="margin-top:12px">
             <button class="btn" type="button" [disabled]="busy || row.isActive" (click)="activate(row)">Set active</button>
             <button class="btn secondary" type="button" [disabled]="busy || !row.id" (click)="beginEdit(row)">Edit</button>
@@ -90,9 +89,8 @@ interface RiskDraft {
           <label class="field">Stop loss % <input type="number" step="0.1" [(ngModel)]="form.stopLossPercent" /></label>
           <label class="field">Take profit % <input type="number" step="0.1" [(ngModel)]="form.takeProfitPercent" /></label>
           <label class="field">Max leverage <input type="number" step="1" min="1" [(ngModel)]="form.maxLeverage" /></label>
-          <label class="field">Daily loss limit % <input type="number" step="0.1" [(ngModel)]="form.maxDailyLossPercent" /></label>
           <label class="field">Max portfolio risk % <input type="number" step="0.1" [(ngModel)]="form.maxPortfolioRiskPercent" /></label>
-          <label class="field">Max positions <input type="number" step="1" min="1" [(ngModel)]="form.maxSimultaneousPositions" /></label>
+          <label class="field">Max positions per strategy <input type="number" step="1" min="1" [(ngModel)]="form.maxSimultaneousPositions" /></label>
           <label class="field">Consecutive losses <input type="number" step="1" min="1" [(ngModel)]="form.maxConsecutiveLosses" /></label>
           <label class="field">Cooldown minutes <input type="number" step="1" min="1" [(ngModel)]="form.cooldownMinutes" /></label>
           <label class="field">Liq. safety buffer % <input type="number" step="0.1" [(ngModel)]="form.minimumLiquidationSafetyBufferPercent" /></label>
@@ -189,7 +187,7 @@ export class RiskPage {
       this.cancel();
       this.toast.show('Risk saved', 'New entries use the active book. Open positions keep their snapshot.', 'success', 'risk');
     } catch {
-      this.toast.show('Save blocked', 'Check R%, stop, take profit, leverage, and daily halt.', 'error', 'risk');
+      this.toast.show('Save blocked', 'Check R%, stop, take profit, leverage, and max positions.', 'error', 'risk');
     } finally {
       this.busy = false;
     }
@@ -358,7 +356,7 @@ export class SettingsPage {
       {
         name: (row) => row.name,
         r: (row) => row.riskPerTradePercent,
-        halt: (row) => row.maxDailyLossPercent,
+        slots: (row) => row.maxSimultaneousPositions,
         lev: (row) => row.maxLeverage,
       },
     ),

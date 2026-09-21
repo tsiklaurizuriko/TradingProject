@@ -1356,6 +1356,7 @@ public sealed class TradingQueryService : ITradingQueryService
     {
         _ = mode;
         return (await _store.ListStrategiesAsync(cancellationToken))
+            .Where(IsOperatorStrategy)
             .Select(MapStrategy)
             .ToList();
     }
@@ -1476,6 +1477,11 @@ public sealed class TradingQueryService : ITradingQueryService
         }
 
         var parameters = StrategyTemplates.Validate(ToTemplateParams(request) with { Timeframe = timeframe.ToBinanceInterval() });
+        if (!StrategyTemplateKeys.IsOperatorCatalog(parameters.TemplateKey))
+        {
+            throw new DomainException(ErrorCodes.StrategyInvalid, "That template is retired from the operator catalog.");
+        }
+
         var strategy = new Strategy
         {
             UserId = user.Id,
@@ -1515,6 +1521,11 @@ public sealed class TradingQueryService : ITradingQueryService
         }
 
         var parameters = StrategyTemplates.Validate(ToTemplateParams(request) with { Timeframe = timeframe.ToBinanceInterval() });
+        if (!StrategyTemplateKeys.IsOperatorCatalog(parameters.TemplateKey))
+        {
+            throw new DomainException(ErrorCodes.StrategyInvalid, "That template is retired from the operator catalog.");
+        }
+
         strategy.Name = request.Name.Trim();
         strategy.Description = (request.Description ?? string.Empty).Trim();
         strategy.TemplateKey = parameters.TemplateKey;
@@ -1554,6 +1565,10 @@ public sealed class TradingQueryService : ITradingQueryService
     {
         var strategy = await _store.GetStrategyAsync(strategyId, cancellationToken)
             ?? throw new DomainException(ErrorCodes.StrategyInvalid, "Strategy was not found.");
+        if (enabled && (strategy.IsArchived || !IsOperatorStrategy(strategy)))
+        {
+            throw new DomainException(ErrorCodes.StrategyInvalid, $"{strategy.Name} is retired from the operator catalog.");
+        }
         strategy.IsEnabled = enabled;
         await _store.SaveChangesAsync(cancellationToken);
         return MapStrategy(strategy);
@@ -1691,11 +1706,6 @@ public sealed class TradingQueryService : ITradingQueryService
             throw new DomainException(ErrorCodes.ValidationFailed, "Take profit must be farther than stop loss.");
         }
 
-        if (request.MaxDailyLossPercent <= 0m || request.MaxDailyLossPercent > 50m)
-        {
-            throw new DomainException(ErrorCodes.ValidationFailed, "Daily loss halt must be between 0% and 50%.");
-        }
-
         if (request.MaxLeverage < 1m || request.MaxLeverage > 20m)
         {
             throw new DomainException(ErrorCodes.ValidationFailed, "Isolated leverage must be between 1x and 20x.");
@@ -1708,7 +1718,7 @@ public sealed class TradingQueryService : ITradingQueryService
 
         if (request.MaxSimultaneousPositions < 1 || request.MaxSimultaneousPositions > 20)
         {
-            throw new DomainException(ErrorCodes.ValidationFailed, "Maximum simultaneous positions must be between 1 and 20.");
+            throw new DomainException(ErrorCodes.ValidationFailed, "Maximum simultaneous positions per strategy must be between 1 and 20.");
         }
 
         if (request.MaxConsecutiveLosses < 1 || request.MaxConsecutiveLosses > 50)
@@ -1789,6 +1799,18 @@ public sealed class TradingQueryService : ITradingQueryService
                 ErrorCodes.StrategyInvalid,
                 $"{strategy.Name} is disabled. Enable it on Strategies. The template is not deleted.");
         }
+    }
+
+    private static bool IsOperatorStrategy(Strategy strategy)
+    {
+        var key = strategy.TemplateKey;
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            var latest = strategy.Versions.OrderByDescending(row => row.VersionNumber).FirstOrDefault();
+            key = latest is null ? string.Empty : StrategyTemplates.Read(latest.DefinitionJson).TemplateKey;
+        }
+
+        return StrategyTemplateKeys.IsOperatorCatalog(key);
     }
 
     private static StrategyDto MapStrategy(Strategy strategy)

@@ -39,6 +39,535 @@ if (args.Any(a => string.Equals(a, "--universe", StringComparison.OrdinalIgnoreC
     return 2;
 }
 
+if (args.Any(a => string.Equals(a, "--btc15m-fit", StringComparison.OrdinalIgnoreCase)))
+{
+    var wStart = new DateTimeOffset(2024, 9, 18, 0, 0, 0, TimeSpan.Zero);
+    var wEnd = new DateTimeOffset(2026, 9, 19, 21, 15, 0, TimeSpan.Zero);
+    Console.WriteLine("BTCUSDT 15m historically fitted search. LIVE off. Registry unchanged.");
+    using var btcFitHttp = new HttpClient { BaseAddress = new Uri("https://fapi.binance.com/"), Timeout = TimeSpan.FromSeconds(90) };
+    btcFitHttp.DefaultRequestHeaders.UserAgent.ParseAdd("TradingPlatformBtc15mFit/1.0");
+    var (loaded, hit, got) = await ResearchKlineCache.LoadAsync(btcFitHttp, candleCacheDir, "BTCUSDT", "15m", wStart, wEnd);
+    var closed = loaded.Where(c => c.IsClosed).OrderBy(c => c.OpenTime).ToList();
+    Console.WriteLine($"BTCUSDT 15m bars={closed.Count} cache {(hit ? "hit" : "miss")} dl={got} first={closed[0].OpenTime:u} last={closed[^1].CloseTime:u}");
+    var fit = Btc15mFit.Run(closed);
+    var reportPathBtc = Path.Combine(root, "docs", "btc-2y-15m-fitted-strategy-report.md");
+    var frozenPath = Path.Combine(root, "docs", "btc-2y-15m-fitted-strategy-frozen.json");
+    File.WriteAllText(reportPathBtc, Btc15mFitReport.Render(fit, closed));
+    File.WriteAllText(frozenPath, Btc15mFitReport.FrozenJson(fit));
+    Console.WriteLine($"Wrote {reportPathBtc}");
+    Console.WriteLine($"Wrote {frozenPath}");
+    Console.WriteLine($"class={fit.Classification} combos={fit.CombinationsTested} feasible={fit.AllFeasible.Count}");
+    Console.WriteLine("LIVE was not changed. Isolated LOW was not changed. Registry was not changed. No VALIDATED_FOR_PAPER.");
+    return 0;
+}
+
+if (args.Any(a => string.Equals(a, "--wave6", StringComparison.OrdinalIgnoreCase)))
+{
+    var wave6Dir = Path.Combine(root, "artifacts", "strategy-research", "wave-6");
+    Directory.CreateDirectory(wave6Dir);
+    var w6Start = new DateTimeOffset(2024, 9, 18, 0, 0, 0, TimeSpan.Zero);
+    var w6End = new DateTimeOffset(2026, 9, 19, 0, 0, 0, TimeSpan.Zero);
+    var w6Notes = new List<string>
+    {
+        "Wave-6 trade-path. Existing signals only. No new entries. No router. LIVE disabled. Isolated LOW unchanged.",
+        $"Window {w6Start:yyyy-MM-dd} → {w6End:yyyy-MM-dd}. Timeframes 5m/15m/1h. Coins {string.Join(",", symbols)}.",
+        "Path labels: MFE/MAE/first-touch. 1R = 2% slipped entry. 2%/4% is not the path exit.",
+        "Random entry: same coin/TF/phase/long-short counts, signal fills excluded, seed 42."
+    };
+    Console.WriteLine(w6Notes[0]);
+    var w6Universe = Wave5Catalog.RouterUniverse();
+    w6Notes.Add($"Strategy universe {w6Universe.Count}.");
+    using var w6Http = new HttpClient { BaseAddress = new Uri("https://fapi.binance.com/"), Timeout = TimeSpan.FromSeconds(90) };
+    w6Http.DefaultRequestHeaders.UserAgent.ParseAdd("TradingPlatformWave6Research/1.0");
+    var w6Series = new Dictionary<(string Symbol, string Timeframe), IReadOnlyList<MarketCandle>>();
+    foreach (var tf in new[] { "5m", "15m", "1h" })
+    {
+        foreach (var symbol in symbols)
+        {
+            Exception? last = null;
+            for (var attempt = 1; attempt <= 5; attempt++)
+            {
+                try
+                {
+                    var (loaded, hit, got) = await ResearchKlineCache.LoadAsync(w6Http, candleCacheDir, symbol, tf, w6Start, w6End);
+                    var closed = loaded.Where(c => c.IsClosed).OrderBy(c => c.OpenTime).ToList();
+                    w6Series[(symbol, tf)] = closed;
+                    w6Notes.Add($"{symbol} {tf} bars={closed.Count} cache {(hit ? "hit" : "miss")} dl={got}");
+                    Console.WriteLine(w6Notes[^1]);
+                    last = null;
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    last = ex;
+                    await Task.Delay(300 * attempt);
+                }
+            }
+
+            if (last is not null)
+            {
+                w6Notes.Add($"{symbol} {tf} load failed ({last.Message})");
+                Console.WriteLine(w6Notes[^1]);
+            }
+        }
+    }
+
+    var w6Events = new List<Wave5Event>();
+    foreach (var tf in new[] { "5m", "15m", "1h" })
+    {
+        Console.WriteLine($"Harvest {tf}...");
+        var slice = Wave5Harvest.Harvest(w6Universe, w6Series, tf, symbols);
+        w6Events.AddRange(slice);
+        w6Notes.Add($"Harvest {tf}: {slice.Count} events.");
+        Console.WriteLine(w6Notes[^1]);
+    }
+
+    Console.WriteLine($"Path labels for {w6Events.Count} events...");
+    var w6Result = Wave6Eval.Evaluate(w6Events, w6Series);
+    var w6Report = Path.Combine(root, "docs", "strategy-research-wave6-trade-path-report.md");
+    File.WriteAllText(w6Report, Wave6Report.Render(w6Result, w6Notes));
+    Wave6Report.WriteArtifacts(wave6Dir, w6Result);
+    Console.WriteLine($"Wrote {w6Report} class={w6Result.Classification} paths={w6Result.SignalCount}");
+    Console.WriteLine("LIVE was not changed. Isolated LOW was not changed. No VALIDATED_FOR_PAPER.");
+    return 0;
+}
+
+if (args.Any(a => string.Equals(a, "--wave5", StringComparison.OrdinalIgnoreCase)))
+{
+    var wave5Dir = Path.Combine(root, "artifacts", "strategy-research", "wave-5");
+    Directory.CreateDirectory(wave5Dir);
+    var w5Start = new DateTimeOffset(2024, 9, 18, 0, 0, 0, TimeSpan.Zero);
+    var w5End = new DateTimeOffset(2026, 9, 19, 0, 0, 0, TimeSpan.Zero);
+    var w5Notes = new List<string>
+    {
+        "Wave-5 router. Existing signals only. LIVE disabled. Isolated LOW $1000 / 0.5% / 3x unchanged.",
+        $"Window {w5Start:yyyy-MM-dd} → {w5End:yyyy-MM-dd}. Timeframes 5m/15m/1h. Coins {string.Join(",", symbols)}.",
+        "Harvest skips a second same-strategy same-coin signal while the Isolated book is still in the prior simulated trade (causal occupancy).",
+        "Funding/OI not joined (Wave-4 Vision OI exists but was not attached to 5m/15m events). Liquidations DATA_UNAVAILABLE.",
+        "Full 528-coin 5m harvest not loaded (cache JSON size). Router experiment is 10 liquid coins × 3 timeframes."
+    };
+    Console.WriteLine(w5Notes[0]);
+    var universe = Wave5Catalog.RouterUniverse();
+    w5Notes.Add($"Strategy universe {universe.Count}.");
+    Console.WriteLine(w5Notes[^1]);
+    using var w5Http = new HttpClient { BaseAddress = new Uri("https://fapi.binance.com/"), Timeout = TimeSpan.FromSeconds(90) };
+    w5Http.DefaultRequestHeaders.UserAgent.ParseAdd("TradingPlatformWave5Research/1.0");
+    var w5Series = new Dictionary<(string Symbol, string Timeframe), IReadOnlyList<MarketCandle>>();
+    foreach (var tf in new[] { "5m", "15m", "1h" })
+    {
+        foreach (var symbol in symbols)
+        {
+            Exception? last = null;
+            for (var attempt = 1; attempt <= 5; attempt++)
+            {
+                try
+                {
+                    var (loaded, hit, got) = await ResearchKlineCache.LoadAsync(w5Http, candleCacheDir, symbol, tf, w5Start, w5End);
+                    var closed = loaded.Where(c => c.IsClosed).OrderBy(c => c.OpenTime).ToList();
+                    w5Series[(symbol, tf)] = closed;
+                    w5Notes.Add($"{symbol} {tf} bars={closed.Count} cache {(hit ? "hit" : "miss")} dl={got}");
+                    Console.WriteLine(w5Notes[^1]);
+                    last = null;
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    last = ex;
+                    await Task.Delay(300 * attempt);
+                }
+            }
+
+            if (last is not null)
+            {
+                w5Notes.Add($"{symbol} {tf} load failed ({last.Message})");
+                Console.WriteLine(w5Notes[^1]);
+            }
+        }
+    }
+
+    var events = new List<Wave5Event>();
+    foreach (var tf in new[] { "5m", "15m", "1h" })
+    {
+        Console.WriteLine($"Harvest {tf}...");
+        var slice = Wave5Harvest.Harvest(universe, w5Series, tf, symbols);
+        events.AddRange(slice);
+        w5Notes.Add($"Harvest {tf}: {slice.Count} events.");
+        Console.WriteLine(w5Notes[^1]);
+    }
+
+    Console.WriteLine($"Scoring {events.Count} events...");
+    var w5Result = Wave5Router.Evaluate(universe, events);
+    var w5Report = Path.Combine(root, "docs", "strategy-research-wave5-router-report.md");
+    File.WriteAllText(w5Report, Wave5Report.Render(w5Result, w5Notes));
+    Wave5Report.WriteArtifacts(wave5Dir, w5Result);
+    Console.WriteLine($"Wrote {w5Report} class={w5Result.Classification} events={events.Count}");
+    Console.WriteLine("LIVE was not changed. Isolated LOW was not changed. No VALIDATED_FOR_PAPER.");
+    return 0;
+}
+
+if (args.Any(a => string.Equals(a, "--wave4-rerender", StringComparison.OrdinalIgnoreCase)))
+{
+    var wave4Dir = Path.Combine(root, "artifacts", "strategy-research", "wave-4");
+    var jsonPath = Path.Combine(wave4Dir, "wave4-signals.json");
+    var loaded = JsonSerializer.Deserialize<Wave4SignalResult>(File.ReadAllText(jsonPath), new JsonSerializerOptions
+    {
+        PropertyNameCaseInsensitive = true,
+        NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals
+    }) ?? throw new InvalidOperationException($"Missing {jsonPath}");
+    var w4Report = Path.Combine(root, "docs", "strategy-research-wave4-report.md");
+    File.WriteAllText(w4Report, Wave4Report.Render(loaded, ["Re-rendered classifications from cached Wave-4 artifacts. No re-download."]));
+    Console.WriteLine($"Wrote {w4Report}");
+    return 0;
+}
+
+if (args.Any(a => string.Equals(a, "--wave4", StringComparison.OrdinalIgnoreCase)))
+{
+    var wave4Dir = Path.Combine(root, "artifacts", "strategy-research", "wave-4");
+    var klineDir = Path.Combine(wave4Dir, "klines");
+    var visionDir = Path.Combine(wave4Dir, "vision", "metrics");
+    Directory.CreateDirectory(klineDir);
+    Directory.CreateDirectory(visionDir);
+    var w4Start = new DateTimeOffset(2024, 9, 18, 0, 0, 0, TimeSpan.Zero);
+    var w4End = new DateTimeOffset(2026, 9, 19, 0, 0, 0, TimeSpan.Zero);
+    var w4Notes = new List<string>
+    {
+        "Wave-4 information research. LIVE disabled. Frozen five / FrozenRisk / Isolated LOW unchanged.",
+        "Existing strategy-validation-cache was not overwritten. Taker klines written to artifacts/strategy-research/wave-4/klines.",
+        $"Window {w4Start:yyyy-MM-dd} → {w4End:yyyy-MM-dd}. Panel 1h inner-join. Coins {string.Join(",", symbols)}."
+    };
+    Console.WriteLine(w4Notes[0]);
+    using var w4Http = new HttpClient { BaseAddress = new Uri("https://fapi.binance.com/"), Timeout = TimeSpan.FromSeconds(90) };
+    w4Http.DefaultRequestHeaders.UserAgent.ParseAdd("TradingPlatformWave4Research/1.0");
+    using var visionHttp = new HttpClient { BaseAddress = new Uri("https://data.binance.vision/"), Timeout = TimeSpan.FromSeconds(120) };
+    visionHttp.DefaultRequestHeaders.UserAgent.ParseAdd("TradingPlatformWave4Research/1.0");
+
+    var bySymbol = new Dictionary<string, IReadOnlyList<MarketCandle>>(StringComparer.OrdinalIgnoreCase);
+    foreach (var symbol in symbols)
+    {
+        Exception? last = null;
+        for (var attempt = 1; attempt <= 6; attempt++)
+        {
+            try
+            {
+                var (loaded, hit, got) = await ResearchKlineCache.LoadAsync(
+                    w4Http, klineDir, symbol, "1h", w4Start, w4End, requireTaker: true);
+                var closed = loaded.Where(c => c.IsClosed).OrderBy(c => c.OpenTime).ToList();
+                bySymbol[symbol] = closed;
+                var takerN = closed.Count(c => c.TakerBuyVolume > 0m && c.TakerBuyVolume <= c.Volume);
+                w4Notes.Add($"{symbol} 1h bars={closed.Count} cache {(hit ? "hit" : "miss")} dl={got} takerOk {takerN}/{closed.Count} ({ResearchKlineCache.TakerCoverage(closed):P1})");
+                Console.WriteLine(w4Notes[^1]);
+                last = null;
+                break;
+            }
+            catch (Exception ex)
+            {
+                last = ex;
+                await Task.Delay(400 * attempt);
+            }
+        }
+
+        if (last is not null)
+        {
+            w4Notes.Add($"{symbol} 1h load failed ({last.Message})");
+            Console.WriteLine(w4Notes[^1]);
+        }
+    }
+
+    var panel = Wave3Panel.Align(bySymbol, symbols);
+    w4Notes.Add($"Aligned panel rows={panel.Length} coins={panel.Width} first={panel.OpenTimes[0]:u} last={panel.OpenTimes[^1]:u}");
+    Console.WriteLine(w4Notes[^1]);
+
+    Dictionary<string, IReadOnlyList<FundingPoint>>? fundingMap = null;
+    try
+    {
+        var dataRoot = FuturesHistoryCache.Root(Path.Combine(root, "artifacts"));
+        var client = new BinanceFuturesHistoryClient(w4Http);
+        fundingMap = new Dictionary<string, IReadOnlyList<FundingPoint>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var symbol in symbols)
+        {
+            var rows = await FuturesHistoryCache.LoadOrFetchFundingAsync(client, dataRoot, symbol, w4Start, w4End, force: false);
+            fundingMap[symbol] = rows;
+            w4Notes.Add($"{symbol} funding n={rows.Count}");
+            Console.WriteLine(w4Notes[^1]);
+        }
+    }
+    catch (Exception ex)
+    {
+        fundingMap = null;
+        w4Notes.Add($"Funding load failed ({ex.Message}). Not fabricated.");
+        Console.WriteLine(w4Notes[^1]);
+    }
+
+    var vision = new BinanceVisionClient(visionHttp);
+    var metricsMap = new Dictionary<string, IReadOnlyList<VisionMetricsPoint>>(StringComparer.OrdinalIgnoreCase);
+    var visionGate = new SemaphoreSlim(6);
+    await Task.WhenAll(symbols.Select(async symbol =>
+    {
+        await visionGate.WaitAsync();
+        try
+        {
+            var rows = await vision.LoadMetricsAsync(symbol, w4Start, w4End, visionDir);
+            lock (metricsMap)
+            {
+                metricsMap[symbol] = rows;
+            }
+
+            var line = $"{symbol} vision metrics n={rows.Count} first={(rows.Count == 0 ? "n/a" : rows[0].CreateTime.ToString("u"))} last={(rows.Count == 0 ? "n/a" : rows[^1].CreateTime.ToString("u"))}";
+            lock (w4Notes)
+            {
+                w4Notes.Add(line);
+            }
+
+            Console.WriteLine(line);
+        }
+        catch (Exception ex)
+        {
+            lock (w4Notes)
+            {
+                w4Notes.Add($"{symbol} vision metrics failed ({ex.Message}). Not fabricated.");
+            }
+
+            Console.WriteLine($"{symbol} vision metrics failed ({ex.Message})");
+        }
+        finally
+        {
+            visionGate.Release();
+        }
+    }));
+
+    double[,]? oi = null;
+    double[,]? oiValue = null;
+    double[,]? lsRatio = null;
+    double[,]? topLs = null;
+    double[,]? takerLs = null;
+    if (metricsMap.Count > 0)
+    {
+        oi = BinanceVisionClient.AlignToPanel(panel, metricsMap, p => (double)p.SumOpenInterest);
+        oiValue = BinanceVisionClient.AlignToPanel(panel, metricsMap, p => (double)p.SumOpenInterestValue);
+        lsRatio = BinanceVisionClient.AlignToPanel(panel, metricsMap, p => BinanceVisionClient.AsDouble(p.CountLongShortRatio));
+        topLs = BinanceVisionClient.AlignToPanel(panel, metricsMap, p => BinanceVisionClient.AsDouble(p.SumTopTraderLongShortRatio));
+        takerLs = BinanceVisionClient.AlignToPanel(panel, metricsMap, p => BinanceVisionClient.AsDouble(p.SumTakerLongShortVolRatio));
+    }
+
+    IReadOnlyList<Wave3IcRow> universeIc = [];
+    if (!args.Any(a => string.Equals(a, "--skip-universe", StringComparison.OrdinalIgnoreCase)))
+    {
+        try
+        {
+            var slim = new Dictionary<string, IReadOnlyList<(DateTimeOffset Open, decimal Close, decimal Volume)>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var file in Directory.GetFiles(candleCacheDir, "*_1h.json"))
+            {
+                var name = Path.GetFileNameWithoutExtension(file);
+                var symbolName = name.EndsWith("_1h", StringComparison.OrdinalIgnoreCase) ? name[..^3] : name;
+                await using var stream = File.OpenRead(file);
+                var bars = await JsonSerializer.DeserializeAsync<List<ResearchKlineCache.CachedBar>>(stream, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                }) ?? [];
+                var sliced = bars
+                    .Where(b => b.OpenTime >= w4Start && b.OpenTime <= w4End)
+                    .Select(b => (b.OpenTime, b.Close, b.Volume))
+                    .OrderBy(b => b.OpenTime)
+                    .ToList();
+                if (sliced.Count >= 400)
+                {
+                    slim[symbolName] = sliced;
+                }
+            }
+
+            w4Notes.Add($"Universe 1h OHLCV series loaded={slim.Count} from {candleCacheDir} (taker not required).");
+            Console.WriteLine(w4Notes[^1]);
+            universeIc = Wave4UniverseResearch.Evaluate(slim);
+            w4Notes.Add($"Universe IC rows={universeIc.Count}.");
+            Console.WriteLine(w4Notes[^1]);
+        }
+        catch (Exception ex)
+        {
+            w4Notes.Add($"Universe panel skipped ({ex.Message}). Not fabricated.");
+            Console.WriteLine(w4Notes[^1]);
+        }
+    }
+    else
+    {
+        w4Notes.Add("Universe panel skipped (--skip-universe).");
+    }
+
+    var coverage = new List<Wave4CoverageNote>
+    {
+        new("TAKER_KLINES", "GET /fapi/v1/klines field 9", "ACQUIRED", $"versioned cache {klineDir}"),
+        new("VISION_METRICS", BinanceVisionClient.Source, metricsMap.Count == symbols.Length ? "ACQUIRED" : "PARTIAL", $"symbols={metricsMap.Count} dir={visionDir}"),
+        new("LIQUIDATION", "Vision um/daily/liquidationSnapshot", "DATA_UNAVAILABLE", "prefix empty; Binance no longer provides USD-M snapshots"),
+        new("DEPTH", "Vision um/daily/bookDepth", "ARCHIVE_AVAILABLE_NOT_INGESTED", "exists from 2023; not downloaded this wave")
+    };
+
+    var w4Result = Wave4SignalResearch.Evaluate(panel, oi, oiValue, lsRatio, topLs, takerLs, fundingMap, universeIc) with
+    {
+        Coverage = coverage
+    };
+    var w4Report = Path.Combine(root, "docs", "strategy-research-wave4-report.md");
+    File.WriteAllText(w4Report, Wave4Report.Render(w4Result, w4Notes));
+    Wave4Report.WriteArtifacts(wave4Dir, w4Result);
+    Console.WriteLine($"Wrote {w4Report}");
+    Console.WriteLine("LIVE was not changed. Isolated LOW was not changed. 1,584-book validation was not launched.");
+    return 0;
+}
+
+if (args.Any(a => string.Equals(a, "--wave3", StringComparison.OrdinalIgnoreCase)))
+{
+    var wave3Dir = Path.Combine(root, "artifacts", "strategy-research", "wave-3");
+    Directory.CreateDirectory(wave3Dir);
+    var w3Start = new DateTimeOffset(2024, 9, 18, 0, 0, 0, TimeSpan.Zero);
+    var w3End = new DateTimeOffset(2026, 9, 19, 0, 0, 0, TimeSpan.Zero);
+    var w3Notes = new List<string>
+    {
+        "Wave-3 Stage 1 signal research. LIVE disabled. Frozen five / FrozenRisk / Isolated LOW unchanged.",
+        "No strategy promotion. No 528-universe run. OOS not used to mutate lookbacks.",
+        $"Window {w3Start:yyyy-MM-dd} → {w3End:yyyy-MM-dd}. Panel 1h inner-join. Coins {string.Join(",", symbols)}."
+    };
+    Console.WriteLine(w3Notes[0]);
+    using var w3Http = new HttpClient { BaseAddress = new Uri("https://fapi.binance.com/"), Timeout = TimeSpan.FromSeconds(60) };
+    w3Http.DefaultRequestHeaders.UserAgent.ParseAdd("TradingPlatformWave3Research/1.0");
+    var bySymbol = new Dictionary<string, IReadOnlyList<MarketCandle>>(StringComparer.OrdinalIgnoreCase);
+    foreach (var symbol in symbols)
+    {
+        Exception? last = null;
+        for (var attempt = 1; attempt <= 6; attempt++)
+        {
+            try
+            {
+                var (loaded, hit, got) = await ResearchKlineCache.LoadAsync(w3Http, candleCacheDir, symbol, "1h", w3Start, w3End);
+                var closed = loaded.Where(c => c.IsClosed).OrderBy(c => c.OpenTime).ToList();
+                bySymbol[symbol] = closed;
+                var takerN = closed.Count(c => c.TakerBuyVolume > 0m);
+                w3Notes.Add($"{symbol} 1h bars={closed.Count} cache {(hit ? "hit" : "miss")} dl={got} takerBuy>0 {takerN}");
+                Console.WriteLine(w3Notes[^1]);
+                last = null;
+                break;
+            }
+            catch (Exception ex)
+            {
+                last = ex;
+                await Task.Delay(400 * attempt);
+            }
+        }
+
+        if (last is not null)
+        {
+            w3Notes.Add($"{symbol} 1h load failed ({last.Message})");
+        }
+    }
+
+    var panel = Wave3Panel.Align(bySymbol, symbols);
+    w3Notes.Add($"Aligned panel rows={panel.Length} coins={panel.Width} first={panel.OpenTimes[0]:u} last={panel.OpenTimes[^1]:u}");
+    Console.WriteLine(w3Notes[^1]);
+
+    Dictionary<string, IReadOnlyList<FundingPoint>>? fundingMap = null;
+    try
+    {
+        var dataRoot = FuturesHistoryCache.Root(Path.Combine(root, "artifacts"));
+        Directory.CreateDirectory(dataRoot);
+        var client = new BinanceFuturesHistoryClient(w3Http);
+        fundingMap = new Dictionary<string, IReadOnlyList<FundingPoint>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var symbol in symbols)
+        {
+            var rows = await FuturesHistoryCache.LoadOrFetchFundingAsync(client, dataRoot, symbol, w3Start, w3End, force: false);
+            fundingMap[symbol] = rows;
+            w3Notes.Add($"{symbol} funding n={rows.Count} first={(rows.Count == 0 ? "n/a" : rows[0].FundingTime.ToString("u"))} last={(rows.Count == 0 ? "n/a" : rows[^1].FundingTime.ToString("u"))}");
+            Console.WriteLine(w3Notes[^1]);
+        }
+    }
+    catch (Exception ex)
+    {
+        fundingMap = null;
+        w3Notes.Add($"Funding load failed ({ex.Message}). H_FUNDING skipped. Not fabricated.");
+        Console.WriteLine(w3Notes[^1]);
+    }
+
+    var w3Result = Wave3SignalResearch.Evaluate(panel, fundingMap);
+    var w3Report = Path.Combine(root, "docs", "strategy-research-wave3-report.md");
+    File.WriteAllText(w3Report, Wave3Report.Render(w3Result, w3Notes));
+    Wave3Report.WriteArtifacts(wave3Dir, w3Result);
+    Console.WriteLine($"Wrote {w3Report}");
+    Console.WriteLine("LIVE was not changed. Isolated LOW was not changed. 528-universe was not launched.");
+    return 0;
+}
+
+if (args.Any(a => string.Equals(a, "--wave2", StringComparison.OrdinalIgnoreCase)))
+{
+    var waveDir = Path.Combine(root, "artifacts", "strategy-research", "wave-2");
+    Directory.CreateDirectory(waveDir);
+    var waveStart = new DateTimeOffset(2024, 9, 18, 0, 0, 0, TimeSpan.Zero);
+    var waveEnd = new DateTimeOffset(2026, 9, 19, 0, 0, 0, TimeSpan.Zero);
+    var waveTfs = (timeframeRaw ?? "1h,15m").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    var waveCandidates = string.IsNullOrWhiteSpace(candidateId)
+        ? ResearchRegistry.Wave2.ToList()
+        : ResearchRegistry.Wave2.Where(c => string.Equals(c.CandidateId, candidateId, StringComparison.OrdinalIgnoreCase)).ToList();
+    var waveNotes = new List<string>
+    {
+        "Wave-2 mechanism screen. LIVE disabled. Frozen five / FrozenRisk / Isolated LOW catalog numbers unchanged.",
+        "Book: LOW Isolated $1000, 0.5% risk, 3x, structural stops honor SuggestedStop, 2R when TP omitted.",
+        "OOS is reported and was not used to change parameters. Full 528-universe run is blocked.",
+        "Walk-forward TEST windows are skipped on this lightweight screen (SkipWalkForward). Re-run without that flag only after IS/VAL gates.",
+        $"Window {waveStart:yyyy-MM-dd} → {waveEnd:yyyy-MM-dd}. Timeframes {string.Join("/", waveTfs)}. Candidates {waveCandidates.Count}."
+    };
+    Console.WriteLine(waveNotes[0]);
+    using var waveHttp = new HttpClient { BaseAddress = new Uri("https://fapi.binance.com/"), Timeout = TimeSpan.FromSeconds(60) };
+    waveHttp.DefaultRequestHeaders.UserAgent.ParseAdd("TradingPlatformWave2Research/1.0");
+    var waveSeries = new Dictionary<(string Symbol, string Timeframe), IReadOnlyList<MarketCandle>>();
+    foreach (var symbol in symbols)
+    {
+        foreach (var tf in waveTfs)
+        {
+            Exception? last = null;
+            for (var attempt = 1; attempt <= 6; attempt++)
+            {
+                try
+                {
+                    var (loaded, hit, got) = await ResearchKlineCache.LoadAsync(waveHttp, candleCacheDir, symbol, tf, waveStart, waveEnd);
+                    var closed = loaded.Where(c => c.IsClosed).OrderBy(c => c.OpenTime).ToList();
+                    waveSeries[(symbol, tf)] = closed;
+                    waveNotes.Add($"{symbol} {tf}: bars={closed.Count} cache {(hit ? "hit" : "miss")} dl={got}");
+                    Console.WriteLine(waveNotes[^1]);
+                    last = null;
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    last = ex;
+                    await Task.Delay(400 * attempt);
+                }
+            }
+
+            if (last is not null)
+            {
+                waveNotes.Add($"{symbol} {tf}: load failed ({last.Message})");
+            }
+        }
+    }
+
+    var waveBooks = ResearchRunner.Evaluate(new ResearchRunRequest
+    {
+        Phase = ResearchPhases.Pilot,
+        Candidates = waveCandidates,
+        Symbols = symbols,
+        Timeframes = waveTfs,
+        Series = waveSeries,
+        CostLabels = [ResearchCostLabels.Base, ResearchCostLabels.Mild, ResearchCostLabels.High, ResearchCostLabels.Stress],
+        Force = true,
+        MaxParallel = maxParallel,
+        UseLowIsolated = true,
+        HonorSuggestedStops = true,
+        SkipWalkForward = true
+    });
+    var waveReport = Path.Combine(root, "docs", "strategy-research-wave2-report.md");
+    File.WriteAllText(waveReport, Wave2Report.RenderMarkdown(waveCandidates, waveBooks, waveNotes));
+    Wave2Report.WriteArtifacts(waveDir, waveBooks);
+    File.WriteAllText(Path.Combine(root, "artifacts", "strategy-research", "wave2-results.json"), JsonSerializer.Serialize(waveBooks));
+    Console.WriteLine($"Wrote {waveReport}");
+    Console.WriteLine($"Books {waveBooks.Count}. LIVE was not changed. Frozen five were not changed. 528-universe was not launched.");
+    return 0;
+}
+
 if (args.Any(a => string.Equals(a, "--futures-data", StringComparison.OrdinalIgnoreCase)))
 {
     var dataRoot = FuturesHistoryCache.Root(Path.Combine(root, "artifacts"));

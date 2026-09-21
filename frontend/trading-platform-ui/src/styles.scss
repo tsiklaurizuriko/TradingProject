@@ -1337,6 +1337,56 @@ app-emergency-stop {
   color: var(--text-primary);
 }
 
+.risk-overview .section-head { margin-bottom: 8px; }
+
+.risk-strategy-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin: 10px 0 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.risk-strategy-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 220px;
+  overflow: auto;
+  min-width: 0;
+  padding-right: 2px;
+}
+
+.risk-strategy {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.risk-strategy-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.risk-strategy strong {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.risk-strategy .num { text-align: right; white-space: nowrap; }
+.risk-strategy.is-full strong { color: #ffb020; }
+
+.dash-risk {
+  overflow: auto;
+}
+
 .fill-host, app-metric-card, app-goal-progress, app-market-watchlist, app-bot-table, app-position-table, app-trade-table, app-pnl-chart, app-allocation-chart, app-quick-actions, app-risk-overview {
   display: block;
   min-height: 0;

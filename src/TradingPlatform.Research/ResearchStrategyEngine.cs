@@ -33,43 +33,63 @@ public sealed class ResearchStrategyEngine : IStrategyEngine
         int index,
         out string reason)
     {
-        SignalType signal;
+        var detail = EvaluateDetailAt(definition, context, cache, index);
+        reason = detail.Reason;
+        return detail.Signal;
+    }
+
+    public StrategySignalDetail EvaluateDetailAt(
+        StrategyDefinition definition,
+        StrategyContext context,
+        CausalIndicatorCache cache,
+        int index)
+    {
+        StrategySignalDetail detail;
         if (string.Equals(_candidate.Kind, ResearchKinds.Native, StringComparison.OrdinalIgnoreCase))
         {
-            signal = ResearchNativeEvaluator.EvaluateAt(_candidate, context, cache, index, out reason);
+            detail = ResearchNativeEvaluator.EvaluateDetailAt(_candidate, context, cache, index);
         }
         else if (_parentDefinition is not null)
         {
-            signal = _inner.EvaluateAt(_parentDefinition, context, cache, index, out reason);
+            detail = _inner.EvaluateDetailAt(_parentDefinition, context, cache, index);
         }
         else
         {
-            reason = "Research candidate has no parent template and is not native.";
-            return SignalType.NoAction;
+            return new StrategySignalDetail(SignalType.NoAction, "Research candidate has no parent template and is not native.");
         }
 
-        if (signal is SignalType.Buy or SignalType.Sell && !PassesFilters(signal, cache, index, context, out var filterReason))
+        if (detail.Signal is SignalType.Buy or SignalType.Sell && !PassesFilters(detail.Signal, cache, index, context, out var filterReason))
         {
-            reason = filterReason;
-            return SignalType.NoAction;
+            return new StrategySignalDetail(SignalType.NoAction, filterReason);
         }
 
-        return signal;
+        return detail;
     }
+
+    StrategySignalDetail IStrategyEngine.EvaluateDetailAt(
+        StrategyDefinition definition,
+        StrategyContext context,
+        CausalIndicatorCache cache,
+        int index) =>
+        EvaluateDetailAt(definition, context, cache, index);
 
     public static int LastClosedHigherTimeframeIndex(CausalIndicatorCache htf, DateTimeOffset signalCloseTime)
     {
         var candles = htf.Candles;
+        var lo = 0;
+        var hi = candles.Count - 1;
         var idx = -1;
-        for (var i = 0; i < candles.Count; i++)
+        while (lo <= hi)
         {
-            if (candles[i].CloseTime <= signalCloseTime)
+            var mid = lo + ((hi - lo) / 2);
+            if (candles[mid].CloseTime <= signalCloseTime)
             {
-                idx = i;
+                idx = mid;
+                lo = mid + 1;
             }
             else
             {
-                break;
+                hi = mid - 1;
             }
         }
 

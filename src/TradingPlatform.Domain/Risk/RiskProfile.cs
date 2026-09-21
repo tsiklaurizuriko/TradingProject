@@ -26,13 +26,13 @@ public sealed class RiskProfile : SoftDeletableEntity
     /// <summary>Application ceiling. Isolated margin = notional / leverage. Not the planned risk.</summary>
     public decimal MaxLeverage { get; set; } = 3m;
 
-    /// <summary>Halt new entries when account MTM loss hits this percent of available. Positions stay open.</summary>
+    /// <summary>Stored on the book. Daily halt is not applied to Isolated entries.</summary>
     public decimal MaxDailyLossPercent { get; set; } = 3m;
 
-    /// <summary>Cap on sum of planned risk across open Isolated positions, as percent of available.</summary>
+    /// <summary>Cap on sum of planned risk across this strategy's open Isolated positions, as percent of available.</summary>
     public decimal MaxPortfolioRiskPercent { get; set; } = 4m;
 
-    /// <summary>Max open Isolated positions for new entries. One position per coin still applies.</summary>
+    /// <summary>Max open Isolated coins per running strategy. One position per coin still applies globally.</summary>
     public int MaxSimultaneousPositions { get; set; } = 2;
 
     /// <summary>Losing streak that activates Risk Lock.</summary>

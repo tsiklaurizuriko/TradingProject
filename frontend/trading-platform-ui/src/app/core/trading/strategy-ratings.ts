@@ -301,6 +301,22 @@ const ratings: Record<string, StrategyRating> = {
     bookReturnPct: null,
     sample: 'RESEARCHING n=0',
   },
+  vol_spike_ema_trend: {
+    stars: 1,
+    verdict: 'weak',
+    note: 'ისტორიულად მორგებული BTC 15m. 476 ტრეიდი / +$138 IS. არ არის validated. PAPER-ზე მხოლოდ დასაკვირვებლად. LIVE არა.',
+    pf: null,
+    bookReturnPct: 13.82,
+    sample: 'BTCUSDT 15m fitted 2y',
+  },
+  bb20_2_break: {
+    stars: 1,
+    verdict: 'weak',
+    note: 'ისტორიულად მორგებული BTC 15m. 408 ტრეიდი / +$112 IS. არ არის validated. PAPER-ზე მხოლოდ დასაკვირვებლად. LIVE არა.',
+    pf: null,
+    bookReturnPct: 11.26,
+    sample: 'BTCUSDT 15m fitted 2y',
+  },
 };
 
 const unrated: StrategyRating = {
@@ -311,6 +327,11 @@ const unrated: StrategyRating = {
   bookReturnPct: null,
   sample: 'unrated',
 };
+
+export function isOperatorCatalog(templateKey: string | undefined): boolean {
+  const verdict = ratingFor(templateKey).verdict;
+  return verdict === 'paper' || verdict === 'weak';
+}
 
 export function ratingFor(templateKey: string | undefined): StrategyRating {
   if (!templateKey) {

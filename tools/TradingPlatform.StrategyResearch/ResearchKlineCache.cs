@@ -6,15 +6,17 @@ namespace TradingPlatform.StrategyResearch;
 
 internal static class ResearchKlineCache
 {
-    internal sealed record CachedBar(
-        DateTimeOffset OpenTime,
-        DateTimeOffset CloseTime,
-        decimal Open,
-        decimal High,
-        decimal Low,
-        decimal Close,
-        decimal Volume,
-        decimal TakerBuyVolume = 0m);
+    internal sealed class CachedBar
+    {
+        public DateTimeOffset OpenTime { get; set; }
+        public DateTimeOffset CloseTime { get; set; }
+        public decimal Open { get; set; }
+        public decimal High { get; set; }
+        public decimal Low { get; set; }
+        public decimal Close { get; set; }
+        public decimal Volume { get; set; }
+        public decimal TakerBuyVolume { get; set; }
+    }
 
     public static async Task<(IReadOnlyList<MarketCandle> Candles, bool CacheHit, int Downloaded)> LoadAsync(
         HttpClient http,
@@ -23,8 +25,10 @@ internal static class ResearchKlineCache
         string timeframe,
         DateTimeOffset start,
         DateTimeOffset end,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool requireTaker = false)
     {
+        Directory.CreateDirectory(cacheDir);
         var path = Path.Combine(cacheDir, $"{symbol}_{timeframe}.json");
         var existing = await ReadAsync(path);
         var interval = IntervalMs(timeframe);
@@ -32,10 +36,21 @@ internal static class ResearchKlineCache
         List<MarketCandle> merged = existing.Count == 0
             ? []
             : existing.Select(ToCandle).OrderBy(c => c.OpenTime).ToList();
+        var takerOk = TakerCoverage(merged) >= 0.8;
+
+        if (requireTaker && !takerOk)
+        {
+            merged = await DownloadAsync(http, symbol, timeframe, start, end, cancellationToken);
+            downloaded = merged.Count;
+            var closedFresh = ClosedUnique(merged);
+            await File.WriteAllTextAsync(path, JsonSerializer.Serialize(closedFresh.Select(FromCandle).ToList()), cancellationToken);
+            return (Slice(closedFresh, start, end), false, downloaded);
+        }
 
         if (merged.Count >= 80
             && merged[0].OpenTime <= start.AddMilliseconds(interval * 2)
-            && merged[^1].CloseTime >= end.AddMilliseconds(-interval * 2))
+            && merged[^1].CloseTime >= end.AddMilliseconds(-interval * 2)
+            && (!requireTaker || takerOk))
         {
             return (Slice(merged, start, end), true, 0);
         }
@@ -59,15 +74,21 @@ internal static class ResearchKlineCache
             merged = Merge(merged, tail);
         }
 
-        var closed = merged
+        var closed = ClosedUnique(merged, preferLast: requireTaker);
+        await File.WriteAllTextAsync(path, JsonSerializer.Serialize(closed.Select(FromCandle).ToList()), cancellationToken);
+        return (Slice(closed, start, end), downloaded == 0 && existing.Count >= 80 && (!requireTaker || takerOk), downloaded);
+    }
+
+    public static double TakerCoverage(IReadOnlyList<MarketCandle> candles) =>
+        candles.Count == 0 ? 0 : candles.Count(c => c.TakerBuyVolume > 0m && c.TakerBuyVolume <= c.Volume) / (double)candles.Count;
+
+    private static List<MarketCandle> ClosedUnique(IReadOnlyList<MarketCandle> merged, bool preferLast = false) =>
+        merged
             .Where(c => c.IsClosed)
             .GroupBy(c => c.OpenTime)
-            .Select(g => g.First())
+            .Select(g => preferLast ? g.Last() : g.First())
             .OrderBy(c => c.OpenTime)
             .ToList();
-        await File.WriteAllTextAsync(path, JsonSerializer.Serialize(closed.Select(FromCandle).ToList()), cancellationToken);
-        return (Slice(closed, start, end), downloaded == 0 && existing.Count >= 80, downloaded);
-    }
 
     private static List<MarketCandle> Slice(IReadOnlyList<MarketCandle> candles, DateTimeOffset start, DateTimeOffset end) =>
         candles.Where(c => c.CloseTime >= start && c.OpenTime <= end).ToList();
@@ -82,7 +103,10 @@ internal static class ResearchKlineCache
         try
         {
             await using var stream = File.OpenRead(path);
-            return await JsonSerializer.DeserializeAsync<List<CachedBar>>(stream) ?? [];
+            return await JsonSerializer.DeserializeAsync<List<CachedBar>>(stream, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            }) ?? [];
         }
         catch
         {
@@ -192,8 +216,17 @@ internal static class ResearchKlineCache
     private static decimal Dec(JsonElement value) =>
         decimal.Parse(value.GetString() ?? value.ToString(), CultureInfo.InvariantCulture);
 
-    private static CachedBar FromCandle(MarketCandle c) =>
-        new(c.OpenTime, c.CloseTime, c.Open, c.High, c.Low, c.Close, c.Volume, c.TakerBuyVolume);
+    private static CachedBar FromCandle(MarketCandle c) => new()
+    {
+        OpenTime = c.OpenTime,
+        CloseTime = c.CloseTime,
+        Open = c.Open,
+        High = c.High,
+        Low = c.Low,
+        Close = c.Close,
+        Volume = c.Volume,
+        TakerBuyVolume = c.TakerBuyVolume
+    };
 
     private static MarketCandle ToCandle(CachedBar c) => new()
     {

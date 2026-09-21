@@ -7,16 +7,29 @@ public static class ResearchRegistry
     public static readonly DateTimeOffset CreatedAt = new(2026, 9, 19, 0, 0, 0, TimeSpan.Zero);
 
     public static IReadOnlyList<ResearchCandidate> All { get; } = Build();
+    public static IReadOnlyList<ResearchCandidate> Wave2 { get; } = BuildWave2();
+    public static IReadOnlyList<ResearchCandidate> Btc15mFitted { get; } = BuildBtc15mFitted();
 
     public static ResearchCandidate? Find(string candidateId) =>
-        All.FirstOrDefault(c => string.Equals(c.CandidateId, candidateId, StringComparison.OrdinalIgnoreCase));
+        All.Concat(Wave2).Concat(Btc15mFitted).FirstOrDefault(c =>
+            string.Equals(c.CandidateId, candidateId, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(c.NativeKey, candidateId, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(c.ParentStrategyId, candidateId, StringComparison.OrdinalIgnoreCase));
 
     public static IReadOnlyList<ResearchCandidate> Filter(string? candidateId, string? strategy, string? timeframe)
     {
         IEnumerable<ResearchCandidate> rows = All;
+        if (!string.IsNullOrWhiteSpace(candidateId) || !string.IsNullOrWhiteSpace(strategy))
+        {
+            rows = All.Concat(Wave2).Concat(Btc15mFitted);
+        }
+
         if (!string.IsNullOrWhiteSpace(candidateId))
         {
-            rows = rows.Where(c => string.Equals(c.CandidateId, candidateId, StringComparison.OrdinalIgnoreCase));
+            rows = rows.Where(c =>
+                string.Equals(c.CandidateId, candidateId, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(c.NativeKey, candidateId, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(c.ParentStrategyId, candidateId, StringComparison.OrdinalIgnoreCase));
         }
 
         if (!string.IsNullOrWhiteSpace(strategy))
@@ -24,6 +37,7 @@ public static class ResearchRegistry
             rows = rows.Where(c =>
                 string.Equals(c.ParentStrategyId, strategy, StringComparison.OrdinalIgnoreCase)
                 || string.Equals(c.ParentTemplateKey, strategy, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(c.NativeKey, strategy, StringComparison.OrdinalIgnoreCase)
                 || c.CandidateId.StartsWith(strategy, StringComparison.OrdinalIgnoreCase));
         }
 
@@ -258,6 +272,160 @@ public static class ResearchRegistry
                 CreatedAt,
                 "pilot: 10 liquid USDT-M perpetuals × selected TF; Phase 2 representative; Phase 3 full discovered universe",
                 ResearchStatuses.Researching);
+    }
+
+    private static IReadOnlyList<ResearchCandidate> BuildWave2()
+    {
+        var tf = StrategyTemplateKeys.SupportedTimeframes;
+        var sides = StrategyTemplateKeys.SupportedDirections;
+        var donchianGrid = Array.Empty<int>();
+        ResearchCandidate Native(
+            string id,
+            string hypothesis,
+            string[] indicators,
+            string entry,
+            string exit,
+            string nativeKey) =>
+            new(
+                id,
+                nativeKey,
+                1,
+                hypothesis,
+                ResearchKinds.Native,
+                null,
+                nativeKey,
+                indicators,
+                entry,
+                exit,
+                new ResearchFilters(),
+                new ResearchNativeParams(),
+                tf,
+                sides,
+                donchianGrid,
+                CreatedAt,
+                "wave2 screen: 10 liquid USDT-M perpetuals; LOW Isolated $1000 / 0.5% / 3x; structural stops; OOS not used to retune",
+                ResearchStatuses.Researching,
+                "research-layer-2");
+
+        return
+        [
+            Native(
+                "W2-SWEEP-RECLAIM-001",
+                "Stop-runs that immediately reclaim a confirmed swing with volume are liquidity grabs, not breakouts.",
+                ["ConfirmedSwing", "ATR14", "RelativeVolume20"],
+                "Sweep a confirmed swing, close back inside, close in reclaim direction, relative volume ≥ 1.2.",
+                "Structural stop beyond the sweep wick; 2R target. Isolated LOW $ risk unchanged.",
+                Wave2NativeEvaluator.SweepReclaim),
+            Native(
+                "W2-FAILED-BO-VOL-001",
+                "A Donchian break that fails back inside on dying volume is a fade, not a continuation.",
+                ["Donchian20", "RelativeVolume20", "ATR14"],
+                "Prior bar closes beyond Donchian with rel vol ≥ 1.2; this bar closes back inside with rel vol < 1.0.",
+                "Structural stop beyond the failed extreme; 2R target.",
+                Wave2NativeEvaluator.FailedBreakoutVolume),
+            Native(
+                "W2-SQUEEZE-EXP-001",
+                "ATR-percentile compression stores energy; the first volume Donchian break after expansion has directional expectancy.",
+                ["ATR-percentile", "ATR14", "Donchian20", "RelativeVolume20"],
+                "Prior ATR percentile ≤ 0.25, ATR expands, close breaks Donchian with rel vol ≥ 1.2.",
+                "Structural stop beyond the break bar; 2R target.",
+                Wave2NativeEvaluator.SqueezeExpansion),
+            Native(
+                "W2-VOL-EXHAUST-001",
+                "A high-volume small-body bar after a 3-bar run is exhaustion, not continuation.",
+                ["RelativeVolume20", "ATR14"],
+                "Rel vol ≥ 2, body ≤ 35% of range, 3-bar directional run, close in the opposite half of the bar.",
+                "Structural stop beyond the exhaustion wick; 2R target.",
+                Wave2NativeEvaluator.VolumeExhaustion),
+            Native(
+                "W2-VWAP-EXT-001",
+                "Session VWAP is a fair-value magnet after an ATR-normalized extension; reclaim continues toward VWAP.",
+                ["SessionVWAP", "ATR14", "RelativeVolume20"],
+                "Prior close ≥ 0.75 ATR beyond session VWAP, this close reclaims VWAP, rel vol ≥ 1.0.",
+                "Stop beyond the extension extreme; TP 0.5 ATR through VWAP.",
+                Wave2NativeEvaluator.VwapExtension),
+            Native(
+                "W2-BOS-PULLBACK-001",
+                "After a causal break of structure, a pullback that holds the broken swing continues the new structure.",
+                ["ConfirmedSwing", "ATR14"],
+                "BOS in the last 8 closed bars, this bar tags the broken swing within 0.15 ATR and closes back through it.",
+                "Structural stop beyond the pullback extreme; 2R target.",
+                Wave2NativeEvaluator.BosPullback),
+            Native(
+                "W2-DISPLACE-001",
+                "A ≥1.5 ATR displacement bar is informed flow; a later retrace into its midpoint continues that direction.",
+                ["ATR14"],
+                "Displacement bar in the last 6 closed bars; this bar retraces to the midpoint and closes in the displacement direction.",
+                "Stop beyond the displacement extreme; TP 0.5 ATR beyond the displacement high/low.",
+                Wave2NativeEvaluator.DisplacementRetrace),
+            Native(
+                "W2-REGIME-SWITCH-001",
+                "Low realized-vol regimes fade Donchian extremes; high realized-vol regimes follow Donchian breaks with volume.",
+                ["ATR-percentile", "Donchian20", "RelativeVolume20", "ATR14"],
+                "ATR percentile ≤ 0.35: rejection at Donchian. ATR percentile ≥ 0.65: Donchian break with rel vol ≥ 1.2. Mid-vol: no trade.",
+                "Structural stop beyond the event wick; 2R target.",
+                Wave2NativeEvaluator.RegimeSwitch)
+        ];
+    }
+
+    private static IReadOnlyList<ResearchCandidate> BuildBtc15mFitted()
+    {
+        var created = new DateTimeOffset(2026, 9, 21, 0, 0, 0, TimeSpan.Zero);
+        const string scope =
+            "BTCUSDT 15m historically fitted. Discovery 2024-09-18 00:00 UTC → 2026-09-19 21:14 UTC. Not validated alpha. Forward = bars after that cutoff only.";
+
+        ResearchCandidate Fitted(
+            string id,
+            string hypothesis,
+            string[] indicators,
+            string entry,
+            string exit,
+            decimal sl,
+            decimal tp) =>
+            new(
+                id,
+                id,
+                1,
+                hypothesis,
+                ResearchKinds.Native,
+                null,
+                id,
+                indicators,
+                entry,
+                exit,
+                new ResearchFilters(),
+                new ResearchNativeParams(),
+                ["15m"],
+                ["LONG", "SHORT"],
+                [],
+                created,
+                scope,
+                ResearchStatuses.HistoricallyFittedCandidate,
+                "btc-15m-fitted-v1",
+                "BTCUSDT",
+                sl,
+                tp,
+                192);
+
+        return
+        [
+            Fitted(
+                Btc15mFittedEvaluator.VolSpikeEmaTrend,
+                "HISTORICALLY_FITTED_CANDIDATE from the BTCUSDT 15m 2y search. Not validated. Do not retune.",
+                ["RelativeVolume20", "EMA21"],
+                "Long when relative volume>1.5 and close>EMA21; short when relative volume>1.5 and close<EMA21 (first bar of the spike).",
+                "Isolated LOW book SL 2.50% / TP 5.00% / time-exit 192 bars (48 hours). Opposite signal does not flatten.",
+                2.5m,
+                5.0m),
+            Fitted(
+                Btc15mFittedEvaluator.Bb202Break,
+                "HISTORICALLY_FITTED_CANDIDATE from the BTCUSDT 15m 2y search. Not validated. Do not retune.",
+                ["Bollinger20x2"],
+                "Long when close crosses above the upper Bollinger (20,2); short when close crosses below the lower band.",
+                "Isolated LOW book SL 4.00% / TP 5.00% / time-exit 192 bars (48 hours). Opposite signal does not flatten.",
+                4.0m,
+                5.0m)
+        ];
     }
 
     public static string NextHigherTimeframe(string timeframe) => timeframe switch

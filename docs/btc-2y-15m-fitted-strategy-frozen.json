@@ -1,0 +1,39 @@
+{
+  "classification": "NO STRATEGY FOUND UNDER CONSTRAINTS",
+  "createdUtc": "2026-09-21T18:07:54.2217957+00:00",
+  "symbol": "BTCUSDT",
+  "timeframe": "15m",
+  "market": "Binance USD-M Isolated",
+  "live": "OFF",
+  "validatedForPaper": false,
+  "dataStartUtc": "2024-09-18T00:00:00+00:00",
+  "dataEndUtc": "2026-09-19T21:14:59.999+00:00",
+  "recipe": null,
+  "rules": null,
+  "side": null,
+  "indicators": null,
+  "parameters": null,
+  "longRules": null,
+  "shortRules": null,
+  "sl": null,
+  "tp": null,
+  "timeExitBars": null,
+  "positionSizing": {
+    "startEquity": 1000,
+    "riskPercent": 0.5,
+    "leverageCap": 3,
+    "dailyHaltPercent": 3,
+    "maxPositions": 1,
+    "isolated": true
+  },
+  "execution": "Model B: closed 15m signal, next 15m open, SL before TP",
+  "fees": {
+    "takerPercentPerSide": 0.04,
+    "model": "percent of notional"
+  },
+  "slippage": {
+    "percentPerSide": 0.02,
+    "model": "fill price adjustment"
+  },
+  "funding": "NOT_APPLIED"
+}

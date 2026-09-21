@@ -56,6 +56,35 @@ public static class IsolatedOccupancy
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Count();
 
+    public static IReadOnlyList<Position> ForStrategy(IReadOnlyList<Position> book, Guid strategyId) =>
+        book.Where(row => row.Bot?.StrategyVersion?.StrategyId == strategyId).ToList();
+
+    public static decimal PlannedRiskPercent(IReadOnlyList<Position> book, decimal available) =>
+        available > 0m
+            ? book.Where(row => row.Quantity > 0m).Sum(row => row.InitialRiskUsdt) / available * 100m
+            : 0m;
+
+    /// <summary>
+    /// Max simultaneous Isolated slots are per running strategy. Live coins owned by other strategies are ignored.
+    /// One Isolated position per coin still applies globally via <see cref="IsCoinOpen"/>.
+    /// </summary>
+    public static int UniqueCoinsForStrategy(
+        IReadOnlyList<Position> book,
+        Guid strategyId,
+        IReadOnlyList<LiveOpenPosition>? live = null,
+        bool liveAuthoritative = false,
+        DateTimeOffset? now = null)
+    {
+        var strategyBook = ForStrategy(book, strategyId);
+        var owned = new HashSet<string>(
+            strategyBook.Where(row => row.Quantity > 0m).Select(row => CoinKey(row.Symbol)),
+            StringComparer.OrdinalIgnoreCase);
+        var scopedLive = live?
+            .Where(row => row.Quantity > 0m && owned.Contains(CoinKey(row.Symbol)))
+            .ToList();
+        return UniqueCoins(strategyBook, scopedLive, liveAuthoritative, now);
+    }
+
     public static int UniqueCoins(
         IReadOnlyList<Position> book,
         IReadOnlyList<LiveOpenPosition>? live = null,

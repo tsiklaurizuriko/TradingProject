@@ -180,7 +180,7 @@ public sealed class AdvancedStrategyTests
             "rsi_pullback",
             "bollinger_reversion",
             "donchian_breakout");
-        StrategyTemplateKeys.All.Should().HaveCount(35);
+        StrategyTemplateKeys.All.Should().HaveCount(37);
         StrategyTemplateKeys.AdvancedSix.Should().HaveCount(6);
     }
 

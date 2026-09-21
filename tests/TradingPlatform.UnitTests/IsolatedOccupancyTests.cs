@@ -1,7 +1,9 @@
 using FluentAssertions;
 using TradingPlatform.Application.Abstractions.Exchange;
 using TradingPlatform.Application.Trading;
+using TradingPlatform.Domain.Bots;
 using TradingPlatform.Domain.Positions;
+using TradingPlatform.Domain.Strategies;
 using TradingPlatform.Trading;
 using Xunit;
 
@@ -47,6 +49,43 @@ public sealed class IsolatedOccupancyTests
         ong.MarginUsdt.Should().Be(4.24m);
         merged.Single(row => row.Symbol == "OPUSDT").UnrealizedPnL.Should().Be(-0.02m);
         IsolatedOccupancy.UniqueCoins(["ONGUSDT", "ONGUSDT", "OPUSDT"]).Should().Be(2);
+    }
+
+    [Fact]
+    public void UniqueCoinsForStrategy_does_not_consume_another_strategy_slots()
+    {
+        var rsi = Guid.NewGuid();
+        var bollinger = Guid.NewGuid();
+        var book = new[]
+        {
+            Open("BTCUSDT", rsi),
+            Open("ETHUSDT", rsi),
+            Open("SOLUSDT", bollinger),
+            Open("XRPUSDT", bollinger),
+            Open("ADAUSDT", bollinger)
+        };
+
+        IsolatedOccupancy.UniqueCoins(book).Should().Be(5);
+        IsolatedOccupancy.UniqueCoinsForStrategy(book, rsi).Should().Be(2);
+        IsolatedOccupancy.UniqueCoinsForStrategy(book, bollinger).Should().Be(3);
+        IsolatedOccupancy.PlannedRiskPercent(IsolatedOccupancy.ForStrategy(book, rsi), 100m).Should().Be(1m);
+        IsolatedOccupancy.PlannedRiskPercent(IsolatedOccupancy.ForStrategy(book, bollinger), 100m).Should().Be(1.5m);
+    }
+
+    [Fact]
+    public void UniqueCoinsForStrategy_ignores_live_coins_owned_by_another_strategy()
+    {
+        var rsi = Guid.NewGuid();
+        var book = new[] { Open("BTCUSDT", rsi) };
+        var live = new LiveOpenPosition[]
+        {
+            new("BTCUSDT", "Long", 1m, 100m, 100m, 0m, "Futures"),
+            new("ETHUSDT", "Long", 2m, 200m, 200m, 0m, "Futures")
+        };
+
+        IsolatedOccupancy.UniqueCoins(book, live, liveAuthoritative: true, DateTimeOffset.UtcNow).Should().Be(2);
+        IsolatedOccupancy.UniqueCoinsForStrategy(book, rsi, live, liveAuthoritative: true, DateTimeOffset.UtcNow)
+            .Should().Be(1);
     }
 
     [Fact]
@@ -151,4 +190,19 @@ public sealed class IsolatedOccupancyTests
             0m,
             DateTimeOffset.UtcNow,
             "Binance");
+
+    private static Position Open(string symbol, Guid strategyId) =>
+        new()
+        {
+            Symbol = symbol,
+            Quantity = 1m,
+            AverageEntryPrice = 100m,
+            InitialRiskUsdt = 0.5m,
+            OpenedAt = DateTimeOffset.UtcNow,
+            Bot = new Bot
+            {
+                Symbol = symbol,
+                StrategyVersion = new StrategyVersion { StrategyId = strategyId }
+            }
+        };
 }

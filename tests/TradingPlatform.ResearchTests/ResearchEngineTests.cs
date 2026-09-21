@@ -23,8 +23,8 @@ public sealed class ResearchEngineTests
             "rsi_pullback",
             "bollinger_reversion",
             "donchian_breakout");
-        StrategyTemplateKeys.All.Should().HaveCount(35);
-        StrategyTemplateKeys.Research.Should().HaveCount(30);
+        StrategyTemplateKeys.All.Should().HaveCount(37);
+        StrategyTemplateKeys.Research.Should().HaveCount(32);
         StrategyTemplateKeys.AdvancedSix.Should().HaveCount(6);
         StrategyTemplateKeys.Alpha.Should().HaveCount(24);
     }
@@ -211,6 +211,58 @@ public sealed class ResearchEngineTests
     }
 
     [Fact]
+    public void Wave2_registry_has_eight_unique_natives()
+    {
+        ResearchRegistry.Wave2.Should().HaveCount(8);
+        ResearchRegistry.Wave2.Select(c => c.CandidateId).Should().OnlyHaveUniqueItems();
+        ResearchRegistry.Wave2.Select(c => c.NativeKey).Should().OnlyHaveUniqueItems();
+        ResearchRegistry.All.Select(c => c.CandidateId)
+            .Intersect(ResearchRegistry.Wave2.Select(c => c.CandidateId), StringComparer.OrdinalIgnoreCase)
+            .Should()
+            .BeEmpty();
+    }
+
+    [Fact]
+    public void Low_isolated_research_book_matches_catalog_and_does_not_change_frozen_risk()
+    {
+        var from = new DateTimeOffset(2024, 9, 18, 0, 0, 0, TimeSpan.Zero);
+        var to = new DateTimeOffset(2026, 9, 19, 0, 0, 0, TimeSpan.Zero);
+        var frozen = StrategyValidation.FrozenRisk(from, to);
+        frozen.InitialBalance.Should().Be(10_000m);
+        frozen.RiskPercent.Should().Be(1m);
+        frozen.Leverage.Should().Be(5m);
+        frozen.HonorSuggestedStops.Should().BeFalse();
+
+        var low = StrategyValidation.LowIsolatedRisk(from, to);
+        low.InitialBalance.Should().Be(1_000m);
+        low.RiskPercent.Should().Be(0.5m);
+        low.Leverage.Should().Be(3m);
+        low.StopLossPercent.Should().Be(2m);
+        low.TakeProfitPercent.Should().Be(4m);
+        low.MaxDailyLossPercent.Should().Be(3m);
+        low.MaxSimultaneousPositions.Should().Be(2);
+        low.MaxConsecutiveLosses.Should().Be(5);
+        low.CooldownMinutes.Should().Be(30);
+    }
+
+    [Fact]
+    public void Wave2_signal_at_index_does_not_change_when_future_bars_are_appended()
+    {
+        var t0 = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var prefix = Enumerable.Range(0, 80).Select(i => WaveBar(t0, i, 100m + (i % 7) - 3m)).ToList();
+        var full = prefix.Concat(Enumerable.Range(80, 20).Select(i => WaveBar(t0, i, 140m))).ToList();
+        var candidate = ResearchRegistry.Wave2.First(c => c.CandidateId == "W2-SWEEP-RECLAIM-001");
+        var engine = new ResearchStrategyEngine(candidate);
+        var definition = ResearchRunner.DefinitionFor(candidate, "1h");
+        var ctx = new StrategyContext { ClosedCandles = prefix, CurrentPrice = prefix[^1].Close };
+        var a = engine.EvaluateDetailAt(definition, ctx, new CausalIndicatorCache(prefix), 70);
+        var b = engine.EvaluateDetailAt(definition, ctx, new CausalIndicatorCache(full), 70);
+        a.Signal.Should().Be(b.Signal);
+        a.SuggestedStop.Should().Be(b.SuggestedStop);
+        a.SuggestedTakeProfit.Should().Be(b.SuggestedTakeProfit);
+    }
+
+    [Fact]
     public void Htf_aligner_does_not_use_unclosed_future_bars()
     {
         var t0 = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
@@ -224,6 +276,9 @@ public sealed class ResearchEngineTests
         var idx = ResearchStrategyEngine.LastClosedHigherTimeframeIndex(htf, signalClose);
         idx.Should().Be(0);
         htf.Candles[idx].CloseTime.Should().BeOnOrBefore(signalClose);
+
+        var later = ResearchStrategyEngine.LastClosedHigherTimeframeIndex(htf, t0.AddMinutes(45));
+        later.Should().Be(2);
     }
 
     [Fact]
@@ -332,5 +387,18 @@ public sealed class ResearchEngineTests
         OpenTime = t0.AddMinutes(minutes),
         CloseTime = t0.AddMinutes(minutes + length),
         ExchangeTimestamp = t0.AddMinutes(minutes + length)
+    };
+
+    private static MarketCandle WaveBar(DateTimeOffset t0, int i, decimal close) => new()
+    {
+        Open = close - 0.4m,
+        High = close + 0.8m,
+        Low = close - 0.8m,
+        Close = close,
+        Volume = 50m + (i % 5),
+        IsClosed = true,
+        OpenTime = t0.AddHours(i),
+        CloseTime = t0.AddHours(i + 1),
+        ExchangeTimestamp = t0.AddHours(i + 1)
     };
 }

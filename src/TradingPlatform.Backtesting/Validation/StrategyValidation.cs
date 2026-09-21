@@ -64,6 +64,13 @@ public static class StrategyValidation
     public static ReplaySettings FrozenRisk(DateTimeOffset from, DateTimeOffset to, decimal capital = 10_000m) =>
         new(from, to, capital, 1m, 5m, 0.04m, 0.02m, 2m, 4m, 5m, 4m, 2, 5, 30, 1m);
 
+    /// <summary>
+    /// Isolated USD-M LOW book used for research screens. Does not replace FrozenRisk.
+    /// $1,000, 0.5% risk, 3x, 2%/4% book SL/TP unless HonorSuggestedStops is set on the settings instance.
+    /// </summary>
+    public static ReplaySettings LowIsolatedRisk(DateTimeOffset from, DateTimeOffset to, decimal capital = 1_000m) =>
+        new(from, to, capital, 0.5m, 3m, 0.04m, 0.02m, 2m, 4m, 3m, 4m, 2, 5, 30, 1m);
+
     public static int RequiredLookback(StrategyDefinition definition)
     {
         var p = definition.Params;

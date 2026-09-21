@@ -387,6 +387,82 @@ export function groupPositionsByStrategy(
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+export function uniqueOpenCoins(rows: PositionDto[]): number {
+  const coins = new Set<string>();
+  for (const row of rows) {
+    if ((row.quantity ?? 0) > 0 && row.symbol) {
+      coins.add(row.symbol.trim().toUpperCase());
+    }
+  }
+  return coins.size;
+}
+
+export interface StrategyOccupancyRow {
+  key: string;
+  name: string;
+  runningBots: number;
+  openCoins: number;
+  maxPositions: number;
+  plannedRiskUsdt: number;
+  plannedRiskPercent: number;
+  capPercent: number;
+}
+
+export function strategyOccupancy(
+  bots: BotDto[],
+  positions: PositionDto[],
+  risk: RiskProfileDto | null,
+  available: number,
+): StrategyOccupancyRow[] {
+  const maxPositions = Math.max(1, risk?.maxSimultaneousPositions ?? 2);
+  const capPercent = risk?.maxPortfolioRiskPercent ?? 4;
+  const map = new Map<string, StrategyOccupancyRow>();
+  const ensure = (key: string, name: string): StrategyOccupancyRow => {
+    const existing = map.get(key);
+    if (existing) {
+      return existing;
+    }
+    const row: StrategyOccupancyRow = {
+      key,
+      name,
+      runningBots: 0,
+      openCoins: 0,
+      maxPositions,
+      plannedRiskUsdt: 0,
+      plannedRiskPercent: 0,
+      capPercent,
+    };
+    map.set(key, row);
+    return row;
+  };
+
+  for (const bot of bots) {
+    if (bot.status !== 'Running') {
+      continue;
+    }
+    const key = bot.strategyId || bot.strategyName || bot.id;
+    const name = (bot.strategyName || '').trim() || 'Unassigned strategy';
+    ensure(key, name).runningBots += 1;
+  }
+
+  for (const group of groupPositionsByStrategy(
+    positions.filter((row) => (row.quantity ?? 0) > 0),
+    bots,
+  )) {
+    const row = ensure(group.key, group.name);
+    row.openCoins = uniqueOpenCoins(group.rows);
+    row.plannedRiskUsdt = group.rows.reduce((sum, item) => sum + (item.initialRiskUsdt ?? 0), 0);
+    row.plannedRiskPercent = available > 0 ? (row.plannedRiskUsdt / available) * 100 : 0;
+  }
+
+  return [...map.values()].sort((a, b) => {
+    if (b.openCoins !== a.openCoins) {
+      return b.openCoins - a.openCoins;
+    }
+    return a.name.localeCompare(b.name);
+  });
+}
+
 export interface OrderDto {
   id: string;
   clientOrderId: string;

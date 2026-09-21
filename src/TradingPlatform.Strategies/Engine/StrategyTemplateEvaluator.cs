@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using TradingPlatform.Domain.Errors;
 using TradingPlatform.Domain.Market;
 using TradingPlatform.Domain.Positions;
@@ -8,6 +9,11 @@ namespace TradingPlatform.Strategies.Engine;
 
 internal static class StrategyTemplateEvaluator
 {
+    private static readonly ConditionalWeakTable<StrategyDefinition, StrategyTemplateParams> ParsedCache = new();
+
+    private static StrategyTemplateParams Parsed(StrategyDefinition definition) =>
+        ParsedCache.GetValue(definition, static d => StrategyTemplates.Validate(FromDefinition(d)));
+
     public static SignalType Evaluate(
         StrategyDefinition definition,
         StrategyContext context,
@@ -17,7 +23,7 @@ internal static class StrategyTemplateEvaluator
         StrategyTemplateParams parsed;
         try
         {
-            parsed = StrategyTemplates.Validate(FromDefinition(definition));
+            parsed = Parsed(definition);
         }
         catch (DomainException ex)
         {
@@ -126,65 +132,78 @@ internal static class StrategyTemplateEvaluator
         int index,
         out string reason)
     {
+        var detail = EvaluateDetailAt(definition, context, cache, index);
+        reason = detail.Reason;
+        return detail.Signal;
+    }
+
+    public static StrategySignalDetail EvaluateDetailAt(
+        StrategyDefinition definition,
+        StrategyContext context,
+        CausalIndicatorCache cache,
+        int index)
+    {
         StrategyTemplateParams parsed;
         try
         {
-            parsed = StrategyTemplates.Validate(FromDefinition(definition));
+            parsed = Parsed(definition);
         }
         catch (DomainException ex)
         {
-            reason = ex.Message;
-            return SignalType.NoAction;
+            return new StrategySignalDetail(SignalType.NoAction, ex.Message);
         }
 
         var candles = cache.Candles;
         if (index < 1 || index >= candles.Count)
         {
-            reason = "Not enough closed candles.";
-            return SignalType.NoAction;
+            return new StrategySignalDetail(SignalType.NoAction, "Not enough closed candles.");
         }
 
         var raw = EvaluateTemplate(parsed, candles, index, context, cache);
         if (raw.Signal is SignalType.Buy or SignalType.Sell && !PassesQuality(parsed.Quality, candles, index, cache))
         {
-            reason = "Quality filter skipped this bar (volume or ATR%).";
-            return SignalType.NoAction;
+            return new StrategySignalDetail(SignalType.NoAction, "Quality filter skipped this bar (volume or ATR%).");
         }
 
         if (raw.Signal == SignalType.Buy && !StrategySides.AllowsLong(parsed.AllowedSide))
         {
-            reason = "LONG signals are disabled on this strategy.";
-            return context.HasOpenPosition ? SignalType.Exit : SignalType.NoAction;
+            return new StrategySignalDetail(
+                context.HasOpenPosition ? SignalType.Exit : SignalType.NoAction,
+                "LONG signals are disabled on this strategy.");
         }
 
         if (raw.Signal == SignalType.Sell && !StrategySides.AllowsShort(parsed.AllowedSide))
         {
-            reason = "SHORT signals are disabled on this strategy.";
-            return context.HasOpenPosition ? SignalType.Exit : SignalType.NoAction;
+            return new StrategySignalDetail(
+                context.HasOpenPosition ? SignalType.Exit : SignalType.NoAction,
+                "SHORT signals are disabled on this strategy.");
         }
 
-        reason = raw.Reason;
-        return raw.Signal;
+        return raw;
     }
 
-    private static (SignalType Signal, string Reason) EvaluateTemplate(
+    private static StrategySignalDetail EvaluateTemplate(
         StrategyTemplateParams p,
         IReadOnlyList<MarketCandle> candles,
         int i,
         StrategyContext context,
         CausalIndicatorCache cache) =>
         StrategyTemplateKeys.IsResearch(p.TemplateKey)
-            ? AsTuple(AdvancedStrategyEvaluator.Evaluate(p, candles, i, context, cache))
-            : p.TemplateKey switch
+            ? AdvancedStrategyEvaluator.Evaluate(p, candles, i, context, cache)
+            : Wrap(p.TemplateKey switch
             {
                 StrategyTemplateKeys.MacdTrend => Macd(p, candles, i, context, cache),
                 StrategyTemplateKeys.RsiPullback => RsiPullback(p, candles, i, context, cache),
                 StrategyTemplateKeys.BollingerReversion => Bollinger(p, candles, i, context, cache),
                 StrategyTemplateKeys.DonchianBreakout => Donchian(p, candles, i, context, cache),
                 _ => EmaRsi(p, candles, i, context, cache)
-            };
+            }, candles, i);
 
-    private static (SignalType Signal, string Reason) AsTuple(StrategySignalDetail detail) => (detail.Signal, detail.Reason);
+    private static StrategySignalDetail Wrap(
+        (SignalType Signal, string Reason) tuple,
+        IReadOnlyList<MarketCandle> candles,
+        int i) =>
+        new(tuple.Signal, tuple.Reason, candles[Math.Clamp(i, 0, candles.Count - 1)].CloseTime);
 
     private static (SignalType Signal, string Reason) EmaRsi(
         StrategyTemplateParams p,

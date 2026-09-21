@@ -571,9 +571,9 @@ public sealed class BotEngine : IBotEngine
         var profile = bot.RiskProfile
             ?? await _store.GetConservativeRiskAsync(cancellationToken);
         var accountDaily = await _store.SumClosedPnLSinceForModeAsync(bot.Mode, dayStart, cancellationToken) + unrealized;
-        var openRisk = availableUsdt > 0m
-            ? book.Sum(p => p.InitialRiskUsdt) / availableUsdt * 100m
-            : 0m;
+        var strategyId = bot.StrategyVersion.StrategyId;
+        var strategyBook = IsolatedOccupancy.ForStrategy(book, strategyId);
+        var openRisk = IsolatedOccupancy.PlannedRiskPercent(strategyBook, availableUsdt);
         var streak = await _store.GetLossStreakForModeAsync(bot.Mode, cancellationToken);
         var exchangeCap = 0m;
         try
@@ -599,8 +599,9 @@ public sealed class BotEngine : IBotEngine
                 bot.Mode == TradingMode.Live ? _live.Current.OpenPositions : null,
                 bot.Mode == TradingMode.Live && IsolatedOccupancy.HasFreshFuturesBook(_live.Current),
                 now),
-            OpenPositionCount = IsolatedOccupancy.UniqueCoins(
+            OpenPositionCount = IsolatedOccupancy.UniqueCoinsForStrategy(
                 book,
+                strategyId,
                 bot.Mode == TradingMode.Live ? _live.Current.OpenPositions : null,
                 bot.Mode == TradingMode.Live && IsolatedOccupancy.HasFreshFuturesBook(_live.Current),
                 now),

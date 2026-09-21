@@ -16,8 +16,11 @@ public sealed class AlphaStrategyTests
         StrategyTemplateKeys.Frozen.Should().HaveCount(5);
         StrategyTemplateKeys.AdvancedSix.Should().HaveCount(6);
         StrategyTemplateKeys.Alpha.Should().HaveCount(24);
-        StrategyTemplateKeys.Research.Should().HaveCount(30);
-        StrategyTemplateKeys.All.Should().HaveCount(35);
+        StrategyTemplateKeys.Research.Should().HaveCount(32);
+        StrategyTemplateKeys.All.Should().HaveCount(37);
+        StrategyTemplateKeys.OperatorCatalog.Should().HaveCount(10);
+        StrategyTemplateKeys.IsOperatorCatalog(StrategyTemplateKeys.RsiPullback).Should().BeTrue();
+        StrategyTemplateKeys.IsOperatorCatalog(StrategyTemplateKeys.MacdTrend).Should().BeFalse();
         StrategyTemplateKeys.All.Should().Equal(StrategyTemplateKeys.Frozen.Concat(StrategyTemplateKeys.Research));
     }
 

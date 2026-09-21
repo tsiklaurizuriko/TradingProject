@@ -21,6 +21,8 @@ public static class AdvancedStrategyEvaluator
             StrategyTemplateKeys.SupertrendEmaTrend => SupertrendEma(p, candles, i, context, cache),
             StrategyTemplateKeys.OiPriceMomentum => OiMomentum(p, candles, i, context, cache),
             StrategyTemplateKeys.FundingOiRegime => FundingRegime(p, candles, i, context, cache),
+            StrategyTemplateKeys.VolSpikeEmaTrend => VolSpikeEma(p, candles, i, context, cache),
+            StrategyTemplateKeys.Bb202Break => BbBreak(p, candles, i, context, cache),
             _ => AlphaStrategyEvaluator.Evaluate(p, candles, i, context, cache)
         };
 
@@ -538,6 +540,88 @@ public static class AdvancedStrategyEvaluator
         }
 
         return Detail(SignalType.NoAction, "Funding/price/OI regime not matched.", candles, i);
+    }
+
+    private static StrategySignalDetail VolSpikeEma(
+        StrategyTemplateParams p,
+        IReadOnlyList<MarketCandle> candles,
+        int i,
+        StrategyContext context,
+        CausalIndicatorCache cache)
+    {
+        if (context.HasOpenPosition)
+        {
+            return Detail(SignalType.Hold, "Position open; Isolated book owns SL/TP/time-exit.", candles, i, status: "HISTORICALLY_FITTED_CANDIDATE");
+        }
+
+        if (i < 1)
+        {
+            return Detail(SignalType.NoAction, "Not enough closed candles.", candles, i);
+        }
+
+        var rel = cache.RelativeVolume(p.RelativeVolumePeriod);
+        var ema21 = cache.Ema(p.EmaSlow);
+        if (rel[i] is not { } rvNow || rel[i - 1] is not { } rvPrev || ema21[i] is not { } ema)
+        {
+            return Detail(SignalType.NoAction, "Relative volume / EMA21 not ready.", candles, i);
+        }
+
+        var spike = rvNow > p.MinimumRelativeVolume && rvPrev <= p.MinimumRelativeVolume;
+        if (!spike)
+        {
+            return Detail(SignalType.NoAction, "No first-bar relative-volume spike.", candles, i);
+        }
+
+        var close = candles[i].Close;
+        if (close > ema)
+        {
+            return Detail(SignalType.Buy, "Relative volume spike with close above EMA21.", candles, i);
+        }
+
+        if (close < ema)
+        {
+            return Detail(SignalType.Sell, "Relative volume spike with close below EMA21.", candles, i);
+        }
+
+        return Detail(SignalType.NoAction, "Volume spike but close equals EMA21.", candles, i);
+    }
+
+    private static StrategySignalDetail BbBreak(
+        StrategyTemplateParams p,
+        IReadOnlyList<MarketCandle> candles,
+        int i,
+        StrategyContext context,
+        CausalIndicatorCache cache)
+    {
+        if (context.HasOpenPosition)
+        {
+            return Detail(SignalType.Hold, "Position open; Isolated book owns SL/TP/time-exit.", candles, i, status: "HISTORICALLY_FITTED_CANDIDATE");
+        }
+
+        if (i < 1)
+        {
+            return Detail(SignalType.NoAction, "Not enough closed candles.", candles, i);
+        }
+
+        var (_, upper, lower) = cache.Bollinger(p.BbPeriod, p.BbStdDev);
+        if (upper[i] is not { } up || lower[i] is not { } lo || upper[i - 1] is not { } prevUp || lower[i - 1] is not { } prevLo)
+        {
+            return Detail(SignalType.NoAction, "Bollinger (20,2) not ready.", candles, i);
+        }
+
+        var close = candles[i].Close;
+        var prevClose = candles[i - 1].Close;
+        if (close > up && prevClose <= prevUp)
+        {
+            return Detail(SignalType.Buy, "Close crossed above upper Bollinger (20,2).", candles, i);
+        }
+
+        if (close < lo && prevClose >= prevLo)
+        {
+            return Detail(SignalType.Sell, "Close crossed below lower Bollinger (20,2).", candles, i);
+        }
+
+        return Detail(SignalType.NoAction, "No Bollinger (20,2) break.", candles, i);
     }
 
     private static StrategySignalDetail Detail(

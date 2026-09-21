@@ -15,21 +15,48 @@ public static class ResearchNativeEvaluator
         int index,
         out string reason)
     {
+        var detail = EvaluateDetailAt(candidate, context, cache, index);
+        reason = detail.Reason;
+        return detail.Signal;
+    }
+
+    public static StrategySignalDetail EvaluateDetailAt(
+        ResearchCandidate candidate,
+        StrategyContext context,
+        CausalIndicatorCache cache,
+        int index)
+    {
         var candles = cache.Candles;
         if (index < 1 || index >= candles.Count)
         {
-            reason = "Not enough closed candles.";
-            return SignalType.NoAction;
+            return new StrategySignalDetail(SignalType.NoAction, "Not enough closed candles.");
+        }
+
+        if (Btc15mFittedEvaluator.Handles(candidate.NativeKey))
+        {
+            return Btc15mFittedEvaluator.Evaluate(candidate, candles, cache, index, context);
+        }
+
+        if (Wave2NativeEvaluator.Handles(candidate.NativeKey))
+        {
+            return Wave2NativeEvaluator.Evaluate(candidate, candles, cache, index, context);
         }
 
         return candidate.NativeKey switch
         {
-            "vwap_reclaim" => VwapReclaim(candidate, candles, cache, index, context, out reason),
-            "supertrend_ema" => SupertrendEma(candidate, candles, cache, index, context, out reason),
-            "trend_pullback" => TrendPullback(candidate, candles, cache, index, context, out reason),
-            _ => Fail("Unknown native research template.", out reason)
+            "vwap_reclaim" => Wrap(VwapReclaim(candidate, candles, cache, index, context, out var r1), r1, candles, index),
+            "supertrend_ema" => Wrap(SupertrendEma(candidate, candles, cache, index, context, out var r2), r2, candles, index),
+            "trend_pullback" => Wrap(TrendPullback(candidate, candles, cache, index, context, out var r3), r3, candles, index),
+            _ => new StrategySignalDetail(SignalType.NoAction, "Unknown native research template.")
         };
     }
+
+    private static StrategySignalDetail Wrap(
+        SignalType signal,
+        string reason,
+        IReadOnlyList<MarketCandle> candles,
+        int i) =>
+        new(signal, reason, candles[Math.Clamp(i, 0, candles.Count - 1)].CloseTime);
 
     private static SignalType VwapReclaim(
         ResearchCandidate candidate,
@@ -197,10 +224,4 @@ public static class ResearchNativeEvaluator
     }
 
     private static bool IsLong(StrategyContext context) => context.PositionSide == PositionSide.Long;
-
-    private static SignalType Fail(string message, out string reason)
-    {
-        reason = message;
-        return SignalType.NoAction;
-    }
 }
