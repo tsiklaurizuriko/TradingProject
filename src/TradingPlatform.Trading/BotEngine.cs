@@ -38,6 +38,7 @@ public sealed class BotEngine : IBotEngine
     private readonly IClock _clock;
     private readonly ICorrelationIdAccessor _correlation;
     private readonly TradingOptions _options;
+    private readonly LiveIsolatedReconciler _reconcile;
     private readonly ILogger<BotEngine> _logger;
 
     public BotEngine(
@@ -53,6 +54,7 @@ public sealed class BotEngine : IBotEngine
         IClock clock,
         ICorrelationIdAccessor correlation,
         IOptions<TradingOptions> options,
+        LiveIsolatedReconciler reconcile,
         ILogger<BotEngine> logger)
     {
         _store = store;
@@ -67,39 +69,48 @@ public sealed class BotEngine : IBotEngine
         _clock = clock;
         _correlation = correlation;
         _options = options.Value;
+        _reconcile = reconcile;
         _logger = logger;
     }
 
     public async Task EvaluateRunningBotsAsync(CancellationToken cancellationToken = default)
     {
-        if (_options.KillSwitchEnabled)
+        try
         {
-            await _store.StopAllRunningBotsAsync("Kill switch is active.", cancellationToken);
+            if (_options.KillSwitchEnabled)
+            {
+                await _store.StopAllRunningBotsAsync("Kill switch is active.", cancellationToken);
+                await _store.SaveChangesAsync(cancellationToken);
+                return;
+            }
+
+            await _reconcile.ReconcileAsync(cancellationToken);
+            var bots = await _store.GetRunningBotsAsync(cancellationToken);
+            foreach (var bot in bots)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    await EvaluateBotAsync(bot, cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Bot {BotId} cycle failed", bot.Id);
+                    bot.LastError = ex.Message;
+                }
+            }
+
             await _store.SaveChangesAsync(cancellationToken);
-            return;
+            await _publisher.PublishOverviewAsync(cancellationToken);
         }
-
-        var bots = await _store.GetRunningBotsAsync(cancellationToken);
-        foreach (var bot in bots)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
-            {
-                await EvaluateBotAsync(bot, cancellationToken);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Bot {BotId} cycle failed", bot.Id);
-                bot.LastError = ex.Message;
-            }
+            throw;
         }
-
-        await _store.SaveChangesAsync(cancellationToken);
-        await _publisher.PublishOverviewAsync(cancellationToken);
     }
 
     public async Task ClosePositionAsync(Guid positionId, CancellationToken cancellationToken = default)
@@ -486,11 +497,17 @@ public sealed class BotEngine : IBotEngine
             Symbol = bot.Symbol,
             Price = lastPrice,
             AccountDailyPnL = accountDaily,
-            SymbolAlreadyOpen = book.Any(p =>
-                string.Equals(p.Symbol, bot.Symbol, StringComparison.OrdinalIgnoreCase))
-                || (bot.Mode == TradingMode.Live && _live.Current.OpenPositions.Any(p =>
-                    string.Equals(p.Symbol, bot.Symbol, StringComparison.OrdinalIgnoreCase))),
-            OpenPositionCount = book.Count,
+            SymbolAlreadyOpen = IsolatedOccupancy.IsCoinOpen(
+                bot.Symbol,
+                book,
+                bot.Mode == TradingMode.Live ? _live.Current.OpenPositions : null,
+                bot.Mode == TradingMode.Live && IsolatedOccupancy.HasFreshFuturesBook(_live.Current),
+                now),
+            OpenPositionCount = IsolatedOccupancy.UniqueCoins(
+                book,
+                bot.Mode == TradingMode.Live ? _live.Current.OpenPositions : null,
+                bot.Mode == TradingMode.Live && IsolatedOccupancy.HasFreshFuturesBook(_live.Current),
+                now),
             OpenRiskPercent = openRisk,
             ConsecutiveLosses = streak.ConsecutiveLosses,
             LastLossAt = streak.LastLossAt,
@@ -620,7 +637,6 @@ public sealed class BotEngine : IBotEngine
         };
         var source = bot.Mode == TradingMode.Live ? "binance-live" : "paper-engine";
         Record(order, OrderStatus.Submitting, source);
-        Record(order, OrderStatus.Submitted, source);
         order.SubmittedAt = _clock.UtcNow;
 
         ExchangeOrder fill;
@@ -643,15 +659,17 @@ public sealed class BotEngine : IBotEngine
             Record(order, OrderStatus.Failed, source);
             order.RejectReason = ex.Message;
             await _store.AddOrderAsync(order, cancellationToken);
+            await _store.SaveChangesAsync(cancellationToken);
             throw;
         }
 
         if (fill.Status is not OrderStatus.Filled and not OrderStatus.PartiallyFilled)
         {
-            Record(order, fill.Status == OrderStatus.Rejected ? OrderStatus.Rejected : OrderStatus.Failed, source);
+            Record(order, fill.Status, source);
             order.RejectReason = $"Binance status {fill.Status}";
             order.ExchangeOrderId = fill.ExchangeOrderId;
             await _store.AddOrderAsync(order, cancellationToken);
+            await _store.SaveChangesAsync(cancellationToken);
             throw new DomainException(ErrorCodes.OrderRejected, $"Live order was not filled ({fill.Status}).");
         }
 
@@ -677,6 +695,7 @@ public sealed class BotEngine : IBotEngine
 
         if (!flatten && bot.Mode == TradingMode.Live && fillPrice <= 0m)
         {
+            await _store.SaveChangesAsync(cancellationToken);
             bot.LastError = "Live fill had no price. Flattening so the Isolated position is not left unprotected.";
             var stamp = _clock.UtcNow.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture);
             var flattenId = $"LF{bot.Id:N}"[..12] + (stamp.Length <= 10 ? stamp : stamp[^10..]);
@@ -727,6 +746,7 @@ public sealed class BotEngine : IBotEngine
                 baseAsset,
                 correlationId,
                 cancellationToken);
+            await _store.SaveChangesAsync(cancellationToken);
             return;
         }
 
@@ -749,16 +769,31 @@ public sealed class BotEngine : IBotEngine
                 openedMargin = plan?.IsolatedMargin ?? PortfolioRisk.IsolatedMargin(notional, leverage);
             }
 
-            var slPrice = plan?.StopLossPrice
-                ?? (openedSide == PositionSide.Short
-                    ? fillPrice * (1m + slPercent / 100m)
-                    : fillPrice * (1m - slPercent / 100m));
-            var tpPrice = plan?.TakeProfitPrice
-                ?? (tpPercent > 0m
-                    ? openedSide == PositionSide.Short
-                        ? fillPrice * (1m - tpPercent / 100m)
-                        : fillPrice * (1m + tpPercent / 100m)
-                    : 0m);
+            var market = await _store.GetSymbolAsync(bot.Symbol, cancellationToken);
+            decimal slPrice;
+            decimal tpPrice;
+            try
+            {
+                (slPrice, tpPrice) = LiveProtectivePrices.FromEntry(
+                    fillPrice,
+                    slPercent,
+                    tpPercent,
+                    market?.TickSize ?? 0m,
+                    openedSide);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    ex,
+                    "Could not compute Isolated SL/TP from fill {Fill} R {Stop}%/{Take}% tick {Tick} for {Symbol}",
+                    fillPrice,
+                    slPercent,
+                    tpPercent,
+                    market?.TickSize ?? 0m,
+                    bot.Symbol);
+                slPrice = 0m;
+                tpPrice = 0m;
+            }
             var opened = new Position
             {
                 BotId = bot.Id,
@@ -809,24 +844,37 @@ public sealed class BotEngine : IBotEngine
                 OpenedAt = _clock.UtcNow,
                 CorrelationId = correlationId
             }, cancellationToken);
+            await _store.SaveChangesAsync(cancellationToken);
 
             if (bot.Mode == TradingMode.Live)
             {
+                var closeSide = openedSide == PositionSide.Short ? OrderSide.Buy : OrderSide.Sell;
                 var stops = await AttachLiveProtectiveStopsAsync(
                     bot,
                     connector,
-                    fillPrice,
-                    slPercent,
-                    tpPercent,
+                    slPrice,
+                    tpPrice,
                     openedSide,
                     cancellationToken);
+                await PersistProtectiveOrdersAsync(
+                    bot,
+                    closeSide,
+                    slPrice,
+                    tpPrice,
+                    quantity,
+                    correlationId,
+                    stops,
+                    cancellationToken);
+                await _store.SaveChangesAsync(cancellationToken);
                 if (!stops.StopPlaced)
                 {
                     bot.LastError =
-                        $"Live {(openedSide == PositionSide.Short ? "sell" : "buy")} filled. STOP_MARKET failed — flattening. {stops.StopError}";
+                        $"Live {(openedSide == PositionSide.Short ? "sell" : "buy")} filled at {fillPrice}. STOP trigger {slPrice} failed — flattening. {stops.StopError}";
                     _logger.LogError(
-                        "Binance STOP_MARKET failed after live fill for bot {BotId}: {Error}",
+                        "Binance STOP_MARKET algo failed after live fill for bot {BotId} {Symbol} trigger {Stop}: {Error}",
                         bot.Id,
+                        bot.Symbol,
+                        slPrice,
                         stops.StopError);
                     var stamp = _clock.UtcNow.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture);
                     var flattenId = $"LF{bot.Id:N}"[..12] + (stamp.Length <= 10 ? stamp : stamp[^10..]);
@@ -847,8 +895,8 @@ public sealed class BotEngine : IBotEngine
                 }
 
                 bot.LastError = stops.TakePlaced
-                    ? $"Live {(openedSide == PositionSide.Short ? "short" : "buy")} filled. Binance SL {slPercent:0.##}% / TP {tpPercent:0.##}% placed."
-                    : $"Live {(openedSide == PositionSide.Short ? "short" : "buy")} filled. SL placed. TP failed: {stops.TakeError}";
+                    ? $"Live {(openedSide == PositionSide.Short ? "short" : "buy")} filled at {fillPrice}. Isolated SL {slPrice} / TP {tpPrice} placed."
+                    : $"Live {(openedSide == PositionSide.Short ? "short" : "buy")} filled at {fillPrice}. Isolated SL {slPrice} placed. TP {tpPrice} failed: {stops.TakeError}";
             }
             else
             {
@@ -874,6 +922,8 @@ public sealed class BotEngine : IBotEngine
                 correlationId,
                 cancellationToken);
         }
+
+        await _store.SaveChangesAsync(cancellationToken);
     }
 
     private async Task CloseFilledPositionAsync(
@@ -969,25 +1019,17 @@ public sealed class BotEngine : IBotEngine
     private async Task<ProtectiveStopsResult> AttachLiveProtectiveStopsAsync(
         Bot bot,
         IExchangeConnector connector,
-        decimal fillPrice,
-        decimal stopLossPercent,
-        decimal takeProfitPercent,
+        decimal stop,
+        decimal take,
         PositionSide side,
         CancellationToken cancellationToken)
     {
         await CancelLiveProtectiveOrdersAsync(bot, cancellationToken);
-        if (fillPrice <= 0m)
+        if (stop <= 0m)
         {
-            return new ProtectiveStopsResult(false, false, "Fill price missing.", "Fill price missing.");
+            return new ProtectiveStopsResult(false, false, "Stop trigger is invalid.", "Stop trigger is invalid.");
         }
 
-        var symbol = await _store.GetSymbolAsync(bot.Symbol, cancellationToken);
-        var (stop, take) = LiveProtectivePrices.FromEntry(
-            fillPrice,
-            stopLossPercent,
-            takeProfitPercent,
-            symbol?.TickSize ?? 0m,
-            side);
         return await connector.PlaceClosePositionStopsAsync(
             bot.Symbol,
             side == PositionSide.Short ? OrderSide.Buy : OrderSide.Sell,
@@ -1003,6 +1045,105 @@ public sealed class BotEngine : IBotEngine
         var connector = _connectors.Create(bot.Mode, bot.ExchangeAccountId);
         await connector.CancelOrderAsync(bot.Symbol, LiveProtectivePrices.StopClientOrderId(bot.Id), null, cancellationToken);
         await connector.CancelOrderAsync(bot.Symbol, LiveProtectivePrices.TakeClientOrderId(bot.Id), null, cancellationToken);
+        await MarkProtectiveCancelledAsync(LiveProtectivePrices.StopClientOrderId(bot.Id), cancellationToken);
+        await MarkProtectiveCancelledAsync(LiveProtectivePrices.TakeClientOrderId(bot.Id), cancellationToken);
+    }
+
+    private async Task PersistProtectiveOrdersAsync(
+        Bot bot,
+        OrderSide closeSide,
+        decimal stop,
+        decimal take,
+        decimal quantity,
+        string correlationId,
+        ProtectiveStopsResult stops,
+        CancellationToken cancellationToken)
+    {
+        await UpsertProtectiveOrderAsync(
+            bot,
+            closeSide,
+            OrderType.StopMarket,
+            stop,
+            quantity,
+            LiveProtectivePrices.StopClientOrderId(bot.Id),
+            correlationId,
+            stops.StopPlaced,
+            stops.StopError,
+            cancellationToken);
+        await UpsertProtectiveOrderAsync(
+            bot,
+            closeSide,
+            OrderType.TakeProfitMarket,
+            take,
+            quantity,
+            LiveProtectivePrices.TakeClientOrderId(bot.Id),
+            correlationId,
+            stops.TakePlaced,
+            stops.TakeError,
+            cancellationToken);
+    }
+
+    private async Task UpsertProtectiveOrderAsync(
+        Bot bot,
+        OrderSide closeSide,
+        OrderType type,
+        decimal triggerPrice,
+        decimal quantity,
+        string clientOrderId,
+        string correlationId,
+        bool placed,
+        string? error,
+        CancellationToken cancellationToken)
+    {
+        var existing = await _store.GetOrderByClientOrderIdAsync(clientOrderId, cancellationToken);
+        var status = placed ? OrderStatus.Submitted : OrderStatus.Rejected;
+        if (existing is not null)
+        {
+            existing.Side = closeSide;
+            existing.Type = type;
+            existing.Symbol = bot.Symbol;
+            existing.Price = triggerPrice > 0m ? triggerPrice : existing.Price;
+            existing.Quantity = quantity;
+            existing.RemainingQuantity = placed ? quantity : 0m;
+            existing.Status = status;
+            existing.RejectReason = placed ? null : error;
+            existing.SubmittedAt = _clock.UtcNow;
+            existing.CorrelationId = correlationId;
+            return;
+        }
+
+        await _store.AddOrderAsync(new Order
+        {
+            BotId = bot.Id,
+            ExchangeAccountId = bot.ExchangeAccountId,
+            StrategyId = bot.StrategyVersion.StrategyId,
+            StrategyVersionId = bot.StrategyVersionId,
+            Symbol = bot.Symbol,
+            Side = closeSide,
+            Type = type,
+            Status = status,
+            Price = triggerPrice > 0m ? triggerPrice : null,
+            Quantity = quantity,
+            RemainingQuantity = placed ? quantity : 0m,
+            ClientOrderId = clientOrderId,
+            IdempotencyKey = clientOrderId,
+            Mode = bot.Mode,
+            CorrelationId = correlationId,
+            SubmittedAt = _clock.UtcNow,
+            RejectReason = placed ? null : error
+        }, cancellationToken);
+    }
+
+    private async Task MarkProtectiveCancelledAsync(string clientOrderId, CancellationToken cancellationToken)
+    {
+        var existing = await _store.GetOrderByClientOrderIdAsync(clientOrderId, cancellationToken);
+        if (existing is null || existing.Status is OrderStatus.Filled or OrderStatus.Cancelled or OrderStatus.Rejected or OrderStatus.Failed)
+        {
+            return;
+        }
+
+        existing.Status = OrderStatus.Cancelled;
+        existing.RemainingQuantity = 0m;
     }
 
     private static decimal? PositivePrice(decimal? value) => value is > 0m ? value : null;

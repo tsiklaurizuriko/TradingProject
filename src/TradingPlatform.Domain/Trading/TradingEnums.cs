@@ -55,7 +55,9 @@ public enum OrderSide
 public enum OrderType
 {
     Market = 0,
-    Limit = 1
+    Limit = 1,
+    StopMarket = 2,
+    TakeProfitMarket = 3
 }
 
 public enum OrderStatus

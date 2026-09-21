@@ -1,10 +1,11 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { TradingService } from '../../core/trading/trading.service';
-import { PositionDto, feeCash, formatTime, money, modeBadge, notionalUsdt, pct, pnlClass, price, qty, signedMoney } from '../../core/trading/trading.models';
+import { PositionDto, feeCash, formatTime, groupPositionsByStrategy, isProtectionOrder, money, modeBadge, notionalUsdt, orderKindLabel, orderStatusLabel, pct, pnlClass, price, qty, signedMoney } from '../../core/trading/trading.models';
 import { ToastService } from '../../core/ui/toast.service';
 import { UiStateService } from '../../core/ui/ui-state.service';
 import { ListQuery, timeValue } from '../../shared/lists/list-query';
 import { SortBtnComponent } from '../../shared/lists/list-tools';
+import { IconComponent } from '../../shared/icon/icon';
 import { ConfirmModalComponent, EmptyStateComponent } from '../../shared/ui/ui-kit';
 
 @Component({
@@ -12,14 +13,27 @@ import { ConfirmModalComponent, EmptyStateComponent } from '../../shared/ui/ui-k
   imports: [EmptyStateComponent, SortBtnComponent],
   template: `
     <section class="panel">
-      @if (trading.workspaceOrders().length === 0) {
-        <app-empty-state title="No orders yet" message="Orders for the current header mode appear here." />
+      <div class="section-head" style="margin:0 0 14px">
+        <div class="tabs" role="tablist">
+          <button type="button" [class.is-on]="tab() === 'fills'" (click)="tab.set('fills')">Fills ({{ fillCount() }})</button>
+          <button type="button" [class.is-on]="tab() === 'protection'" (click)="tab.set('protection')">Stops / TP ({{ protectionCount() }})</button>
+          <button type="button" [class.is-on]="tab() === 'all'" (click)="tab.set('all')">All ({{ trading.workspaceOrders().length }})</button>
+        </div>
+      </div>
+      @if (visible().length === 0) {
+        <app-empty-state
+          [title]="tab() === 'protection' ? 'No working stops' : 'No orders yet'"
+          [message]="tab() === 'protection'
+            ? 'Isolated stop and take-profit waiting on Binance appear here.'
+            : 'Orders for the current header mode appear here.'"
+        />
       } @else {
         <table class="data-table">
           <thead>
             <tr>
               <th><app-sort-btn column="created" [query]="list">Created</app-sort-btn></th>
               <th><app-sort-btn column="symbol" [query]="list">Coin</app-sort-btn></th>
+              <th><app-sort-btn column="kind" [query]="list">Kind</app-sort-btn></th>
               <th><app-sort-btn column="side" [query]="list">Side</app-sort-btn></th>
               <th><app-sort-btn column="status" [query]="list">Status</app-sort-btn></th>
               <th class="num"><app-sort-btn column="qty" [query]="list" align="end">Qty</app-sort-btn></th>
@@ -35,13 +49,14 @@ import { ConfirmModalComponent, EmptyStateComponent } from '../../shared/ui/ui-k
               <tr>
                 <td>{{ formatTime(row.createdAt) }}</td>
                 <td>{{ row.symbol }}</td>
+                <td><span class="badge" [class.badge-paused]="isProtectionOrder(row)" [class.badge-ok]="!isProtectionOrder(row)">{{ orderKindLabel(row) }}</span></td>
                 <td><span class="badge" [class.badge-long]="row.side === 'Buy'" [class.badge-short]="row.side !== 'Buy'">{{ row.side }}</span></td>
-                <td>{{ row.status }}</td>
+                <td>{{ orderStatusLabel(row) }}</td>
                 <td class="num">{{ qty(row.quantity) }}</td>
                 <td class="num">{{ price(row.price) }}</td>
                 <td class="num" [class]="pnlClass(row.pnL)">{{ signedMoney(row.pnL) }}</td>
                 <td class="num" [class]="pnlClass(feeCash(row.fee))">{{ signedMoney(feeCash(row.fee), 4) }}</td>
-                <td><span class="badge" [class]="modeBadge(trading.workspace())">{{ trading.workspace() }}</span></td>
+                <td><span class="badge" [class]="modeBadge(row.mode || trading.workspace())">{{ row.mode || trading.workspace() }}</span></td>
                 <td class="tiny">{{ row.exchangeOrderId }}</td>
               </tr>
             }
@@ -60,21 +75,39 @@ export class OrdersPage {
   readonly pnlClass = pnlClass;
   readonly feeCash = feeCash;
   readonly modeBadge = modeBadge;
+  readonly isProtectionOrder = isProtectionOrder;
+  readonly orderKindLabel = orderKindLabel;
+  readonly orderStatusLabel = orderStatusLabel;
   readonly list = new ListQuery();
+  readonly tab = signal<'fills' | 'protection' | 'all'>('all');
+  readonly fillCount = computed(() => this.trading.workspaceOrders().filter((row) => !isProtectionOrder(row)).length);
+  readonly protectionCount = computed(() => this.trading.workspaceOrders().filter((row) => isProtectionOrder(row)).length);
+  readonly visible = computed(() => {
+    const rows = this.trading.workspaceOrders();
+    const tab = this.tab();
+    if (tab === 'fills') {
+      return rows.filter((row) => !isProtectionOrder(row));
+    }
+    if (tab === 'protection') {
+      return rows.filter((row) => isProtectionOrder(row));
+    }
+    return rows;
+  });
   readonly rows = computed(() =>
     this.list.apply(
-      this.trading.workspaceOrders(),
-      (row) => [row.symbol, row.side, row.status, row.exchangeOrderId],
+      this.visible(),
+      (row) => [row.symbol, row.side, row.status, row.exchangeOrderId, orderKindLabel(row)],
       {
         created: (row) => timeValue(row.createdAt),
         symbol: (row) => row.symbol,
+        kind: (row) => orderKindLabel(row),
         side: (row) => row.side,
-        status: (row) => row.status,
+        status: (row) => orderStatusLabel(row),
         qty: (row) => row.quantity,
         price: (row) => row.price,
         pnl: (row) => row.pnL,
         fee: (row) => row.fee,
-        mode: () => this.trading.workspace(),
+        mode: (row) => row.mode || this.trading.workspace(),
         id: (row) => row.exchangeOrderId,
       },
     ),
@@ -83,66 +116,84 @@ export class OrdersPage {
 
 @Component({
   selector: 'app-positions-page',
-  imports: [EmptyStateComponent, SortBtnComponent, ConfirmModalComponent],
+  imports: [EmptyStateComponent, SortBtnComponent, ConfirmModalComponent, IconComponent],
   template: `
-    <section class="panel">
-      @if (trading.workspacePositions().length === 0) {
+    @if (trading.workspacePositions().length === 0) {
+      <section class="panel">
         <app-empty-state title="No active positions" message="No open position in this workspace." actionLabel="View Market" actionLink="/trading" />
-      } @else {
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th><app-sort-btn column="symbol" [query]="list">Coin</app-sort-btn></th>
-              <th><app-sort-btn column="side" [query]="list">Side</app-sort-btn></th>
-              <th class="num"><app-sort-btn column="entry" [query]="list" align="end">Entry</app-sort-btn></th>
-              <th class="num"><app-sort-btn column="mark" [query]="list" align="end">Mark</app-sort-btn></th>
-              <th class="num"><app-sort-btn column="qty" [query]="list" align="end">Qty</app-sort-btn></th>
-              <th class="num"><app-sort-btn column="size" [query]="list" align="end">Notional</app-sort-btn></th>
-              <th class="num"><app-sort-btn column="risk" [query]="list" align="end">Planned Risk</app-sort-btn></th>
-              <th class="num"><app-sort-btn column="margin" [query]="list" align="end">Margin</app-sort-btn></th>
-              <th class="num"><app-sort-btn column="lev" [query]="list" align="end">Lev</app-sort-btn></th>
-              <th class="num"><app-sort-btn column="sl" [query]="list" align="end">SL</app-sort-btn></th>
-              <th class="num"><app-sort-btn column="tp" [query]="list" align="end">TP</app-sort-btn></th>
-              <th class="num"><app-sort-btn column="liq" [query]="list" align="end">Liq</app-sort-btn></th>
-              <th>Margin mode</th>
-              <th class="num"><app-sort-btn column="pnl" [query]="list" align="end">PnL</app-sort-btn></th>
-              <th><app-sort-btn column="mode" [query]="list">Mode</app-sort-btn></th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            @for (row of rows(); track row.id) {
-              <tr>
-                <td>{{ row.symbol }}</td>
-                <td><span class="badge badge-long">{{ row.side === 'Buy' ? 'LONG' : row.side }}</span></td>
-                <td class="num">{{ price(row.averageEntryPrice) }}</td>
-                <td class="num">{{ price(row.currentPrice) }}</td>
-                <td class="num">{{ qty(row.quantity) }}</td>
-                <td class="num">{{ money(row.notionalUsdt || notionalUsdt(row.quantity, row.averageEntryPrice)) }}</td>
-                <td class="num">{{ row.initialRiskUsdt ? money(row.initialRiskUsdt) : '—' }}</td>
-                <td class="num">{{ row.marginUsdt ? money(row.marginUsdt) : '—' }}</td>
-                <td class="num">{{ row.leverage ? row.leverage + 'x' : '—' }}</td>
-                <td class="num">{{ row.stopLossPercent ? row.stopLossPercent + '%' : '—' }}{{ row.stopLossPrice ? ' @ ' + price(row.stopLossPrice) : '' }}</td>
-                <td class="num">{{ row.takeProfitPercent ? row.takeProfitPercent + '%' : '—' }}{{ row.takeProfitPrice ? ' @ ' + price(row.takeProfitPrice) : '' }}</td>
-                <td class="num">{{ row.liquidationPrice ? price(row.liquidationPrice) : '—' }}</td>
-                <td>Isolated</td>
-                <td class="num" [class]="pnlClass(row.unrealizedPnL)">{{ signedMoney(row.unrealizedPnL) }}</td>
-                <td><span class="badge" [class]="modeBadge(trading.workspace())">{{ trading.workspace() }}</span></td>
-                <td>
-                  <button
-                    class="btn sm"
-                    type="button"
-                    [class.danger]="ui.isLive()"
-                    [disabled]="busyId() === row.id"
-                    (click)="requestClose(row)"
-                  >{{ busyId() === row.id ? 'Closing…' : 'Close' }}</button>
-                </td>
-              </tr>
+      </section>
+    } @else {
+      <div style="display:grid;gap:12px">
+        @for (group of groups(); track group.key) {
+          <section class="panel" [class.is-collapsed]="ui.isCollapsed(groupKey(group.key))">
+            <div class="section-head">
+              <button type="button" class="section-fold" (click)="ui.toggleCollapsed(groupKey(group.key))" [attr.aria-expanded]="!ui.isCollapsed(groupKey(group.key))">
+                <app-icon name="chevron" [class.is-closed]="ui.isCollapsed(groupKey(group.key))" />
+                <h2>{{ group.name }} ({{ group.rows.length }})</h2>
+              </button>
+              <div class="section-head-meta">
+                <span class="tiny">{{ money(group.notional) }} notional</span>
+                <span class="tiny" [class]="pnlClass(group.pnl)">{{ signedMoney(group.pnl) }}</span>
+              </div>
+            </div>
+            @if (!ui.isCollapsed(groupKey(group.key))) {
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th><app-sort-btn column="symbol" [query]="list">Coin</app-sort-btn></th>
+                    <th><app-sort-btn column="side" [query]="list">Side</app-sort-btn></th>
+                    <th class="num"><app-sort-btn column="entry" [query]="list" align="end">Entry</app-sort-btn></th>
+                    <th class="num"><app-sort-btn column="mark" [query]="list" align="end">Mark</app-sort-btn></th>
+                    <th class="num"><app-sort-btn column="qty" [query]="list" align="end">Qty</app-sort-btn></th>
+                    <th class="num"><app-sort-btn column="size" [query]="list" align="end">Notional</app-sort-btn></th>
+                    <th class="num"><app-sort-btn column="risk" [query]="list" align="end">Planned Risk</app-sort-btn></th>
+                    <th class="num"><app-sort-btn column="margin" [query]="list" align="end">Margin</app-sort-btn></th>
+                    <th class="num"><app-sort-btn column="lev" [query]="list" align="end">Lev</app-sort-btn></th>
+                    <th class="num"><app-sort-btn column="sl" [query]="list" align="end">SL</app-sort-btn></th>
+                    <th class="num"><app-sort-btn column="tp" [query]="list" align="end">TP</app-sort-btn></th>
+                    <th class="num"><app-sort-btn column="liq" [query]="list" align="end">Liq</app-sort-btn></th>
+                    <th>Margin mode</th>
+                    <th class="num"><app-sort-btn column="pnl" [query]="list" align="end">PnL</app-sort-btn></th>
+                    <th><app-sort-btn column="mode" [query]="list">Mode</app-sort-btn></th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (row of group.rows; track row.id) {
+                    <tr>
+                      <td>{{ row.symbol }}</td>
+                      <td><span class="badge" [class.badge-long]="row.side === 'Buy' || row.side === 'Long'" [class.badge-short]="row.side !== 'Buy' && row.side !== 'Long'">{{ row.side === 'Buy' ? 'LONG' : row.side }}</span></td>
+                      <td class="num">{{ price(row.averageEntryPrice) }}</td>
+                      <td class="num">{{ price(row.currentPrice) }}</td>
+                      <td class="num">{{ qty(row.quantity) }}</td>
+                      <td class="num">{{ money(row.notionalUsdt || notionalUsdt(row.quantity, row.averageEntryPrice)) }}</td>
+                      <td class="num">{{ row.initialRiskUsdt ? money(row.initialRiskUsdt) : '—' }}</td>
+                      <td class="num">{{ row.marginUsdt ? money(row.marginUsdt) : '—' }}</td>
+                      <td class="num">{{ row.leverage ? row.leverage + 'x' : '—' }}</td>
+                      <td class="num">{{ row.stopLossPercent ? row.stopLossPercent + '%' : '—' }}{{ row.stopLossPrice ? ' @ ' + price(row.stopLossPrice) : '' }}</td>
+                      <td class="num">{{ row.takeProfitPercent ? row.takeProfitPercent + '%' : '—' }}{{ row.takeProfitPrice ? ' @ ' + price(row.takeProfitPrice) : '' }}</td>
+                      <td class="num">{{ row.liquidationPrice ? price(row.liquidationPrice) : '—' }}</td>
+                      <td>Isolated</td>
+                      <td class="num" [class]="pnlClass(row.unrealizedPnL)">{{ signedMoney(row.unrealizedPnL) }}</td>
+                      <td><span class="badge" [class]="modeBadge(trading.workspace())">{{ trading.workspace() }}</span></td>
+                      <td>
+                        <button
+                          class="btn sm"
+                          type="button"
+                          [class.danger]="ui.isLive()"
+                          [disabled]="busyId() === row.id"
+                          (click)="requestClose(row)"
+                        >{{ busyId() === row.id ? 'Closing…' : 'Close' }}</button>
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
             }
-          </tbody>
-        </table>
-      }
-    </section>
+          </section>
+        }
+      </div>
+    }
     <app-confirm-modal
       [open]="!!pending()"
       [title]="ui.isLive() ? 'Close LIVE position' : 'Close paper position'"
@@ -171,28 +222,32 @@ export class PositionsPage {
   readonly list = new ListQuery();
   readonly pending = signal<PositionDto | null>(null);
   readonly busyId = signal<string | null>(null);
-  readonly rows = computed(() =>
-    this.list.apply(
-      this.trading.workspacePositions(),
-      (row) => [row.symbol, row.side],
-      {
-        symbol: (row) => row.symbol,
-        side: (row) => row.side,
-        entry: (row) => row.averageEntryPrice,
-        mark: (row) => row.currentPrice,
-        qty: (row) => row.quantity,
-        size: (row) => row.notionalUsdt || notionalUsdt(row.quantity, row.averageEntryPrice),
-        risk: (row) => row.initialRiskUsdt ?? 0,
-        margin: (row) => row.marginUsdt ?? 0,
-        lev: (row) => row.leverage ?? 0,
-        sl: (row) => row.stopLossPercent ?? 0,
-        tp: (row) => row.takeProfitPercent ?? 0,
-        liq: (row) => row.liquidationPrice ?? 0,
-        pnl: (row) => row.unrealizedPnL,
-        mode: () => this.trading.workspace(),
-      },
-    ),
-  );
+  readonly groups = computed(() => {
+    const sort = {
+      symbol: (row: PositionDto) => row.symbol,
+      side: (row: PositionDto) => row.side,
+      entry: (row: PositionDto) => row.averageEntryPrice,
+      mark: (row: PositionDto) => row.currentPrice,
+      qty: (row: PositionDto) => row.quantity,
+      size: (row: PositionDto) => row.notionalUsdt || notionalUsdt(row.quantity, row.averageEntryPrice),
+      risk: (row: PositionDto) => row.initialRiskUsdt ?? 0,
+      margin: (row: PositionDto) => row.marginUsdt ?? 0,
+      lev: (row: PositionDto) => row.leverage ?? 0,
+      sl: (row: PositionDto) => row.stopLossPercent ?? 0,
+      tp: (row: PositionDto) => row.takeProfitPercent ?? 0,
+      liq: (row: PositionDto) => row.liquidationPrice ?? 0,
+      pnl: (row: PositionDto) => row.unrealizedPnL,
+      mode: () => this.trading.workspace(),
+    };
+    return groupPositionsByStrategy(this.trading.workspacePositions(), this.trading.workspaceBots()).map((group) => ({
+      ...group,
+      rows: this.list.apply(group.rows, (row) => [row.symbol, row.side], sort),
+    }));
+  });
+
+  groupKey(key: string): string {
+    return `positions-strategy-${key}`;
+  }
 
   requestClose(row: PositionDto): void {
     this.pending.set(row);

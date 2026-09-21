@@ -51,7 +51,29 @@ public static class LiveProtectivePrices
             }
         }
 
+        if (!IsValidTrigger(entryPrice, stop, take, side))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(entryPrice),
+                $"Protective prices are not a valid Isolated SL/TP around entry {entryPrice}: SL {stop}, TP {take}.");
+        }
+
         return (stop, take);
+    }
+
+    public static bool IsValidTrigger(decimal entryPrice, decimal stop, decimal take, PositionSide side)
+    {
+        if (entryPrice <= 0m || stop <= 0m || take <= 0m)
+        {
+            return false;
+        }
+
+        if (side == PositionSide.Short)
+        {
+            return stop > entryPrice && take < entryPrice;
+        }
+
+        return stop < entryPrice && take > entryPrice;
     }
 
     public static string StopClientOrderId(Guid botId) => $"sl{botId:N}"[..18];

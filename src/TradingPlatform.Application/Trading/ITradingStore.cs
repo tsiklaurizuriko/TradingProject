@@ -59,6 +59,8 @@ public interface ITradingStore
     Task StopRunningBotsForModeAsync(TradingMode mode, string reason, CancellationToken cancellationToken = default);
     Task AddPositionAsync(Position position, CancellationToken cancellationToken = default);
     Task<bool> HasClientOrderAsync(string clientOrderId, CancellationToken cancellationToken = default);
+    Task<bool> HasKnownOrderAsync(string? clientOrderId, string? exchangeOrderId, CancellationToken cancellationToken = default);
+    Task<Order?> GetOrderByClientOrderIdAsync(string clientOrderId, CancellationToken cancellationToken = default);
     Task<int> CountOrdersSinceAsync(Guid botId, DateTimeOffset sinceUtc, CancellationToken cancellationToken = default);
     Task AddOrderAsync(Order order, CancellationToken cancellationToken = default);
     Task AddExecutionAsync(Execution execution, CancellationToken cancellationToken = default);

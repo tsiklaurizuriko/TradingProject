@@ -7,20 +7,9 @@
 
 .strategies-toolbar {
   display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-
-.strategies-toolbar-copy {
-  min-width: 220px;
-  flex: 1;
-}
-
-.strategies-toolbar-copy p {
-  margin: 6px 0 0;
-  max-width: 640px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
 }
 
 .strategies-toolbar-actions {
@@ -217,8 +206,7 @@
     grid-template-columns: 1fr;
   }
 
-  .strategy-card-head,
-  .strategies-toolbar {
+  .strategy-card-head {
     align-items: stretch;
     flex-direction: column;
   }

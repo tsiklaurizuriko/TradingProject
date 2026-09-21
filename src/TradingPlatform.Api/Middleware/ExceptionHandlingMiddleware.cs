@@ -36,7 +36,7 @@ public sealed class ExceptionHandlingMiddleware
             _logger.LogWarning(ex, "Domain error {ErrorCode}", ex.Code);
             await WriteAsync(context, MapStatus(ex.Code), ex.Code, ex.Message, ex.Details);
         }
-        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
             if (!context.Response.HasStarted)
             {

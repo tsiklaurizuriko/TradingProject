@@ -18,6 +18,7 @@ public static class DependencyInjection
         services.AddSingleton<ITradingRealtimePublisher, NullTradingRealtimePublisher>();
         services.AddSingleton<PaperExchangeConnector>();
         services.AddScoped<IExchangeConnectorFactory, ExchangeConnectorFactory>();
+        services.AddScoped<LiveIsolatedReconciler>();
         services.AddScoped<IBotEngine, BotEngine>();
         services.AddScoped<IBotLifecycleService, BotLifecycleService>();
         services.AddScoped<ITradingQueryService, TradingQueryService>();

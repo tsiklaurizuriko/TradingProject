@@ -14,6 +14,7 @@ import {
   TradeDto,
   botStatus,
   formatTime,
+  groupPositionsByStrategy,
   money,
   pct,
   pnlClass,
@@ -157,28 +158,37 @@ export class BotTableComponent {
                 </tr>
               </thead>
               <tbody>
-                @for (row of visible(); track row.id) {
-                  <tr>
-                    <td><strong>{{ row.symbol }}</strong></td>
-                    <td><span class="badge" [class.badge-long]="row.side === 'Buy' || row.side === 'Long'" [class.badge-short]="row.side !== 'Buy' && row.side !== 'Long'">{{ row.side === 'Buy' ? 'LONG' : row.side }}</span></td>
-                    <td class="num">{{ price(row.averageEntryPrice) }}</td>
-                    <td class="num">{{ price(row.currentPrice) }}</td>
-                    <td class="num">{{ money(size(row)) }}</td>
-                    <td class="num">{{ row.initialRiskUsdt ? money(row.initialRiskUsdt) : '—' }}</td>
-                    <td class="num">{{ row.marginUsdt ? money(row.marginUsdt) : '—' }}</td>
-                    <td class="num">{{ row.leverage ? row.leverage + 'x' : '—' }}</td>
-                    <td class="num" [class]="pnlClass(row.unrealizedPnL)"><strong>{{ signedMoney(row.unrealizedPnL) }}</strong></td>
-                    <td class="num" [class]="pnlClass(change(row))">{{ pct(change(row)) }}</td>
-                    <td>
-                      <button
-                        class="btn sm"
-                        type="button"
-                        [class.danger]="ui.isLive()"
-                        [disabled]="busyId() === row.id"
-                        (click)="requestClose(row)"
-                      >{{ busyId() === row.id ? 'Closing…' : 'Close' }}</button>
+                @for (group of groups(); track group.key) {
+                  <tr class="group-row">
+                    <td colspan="11">
+                      <strong>{{ group.name }}</strong>
+                      <span class="tiny" style="margin-left:8px">{{ group.rows.length }}</span>
+                      <span class="tiny" style="margin-left:8px" [class]="pnlClass(group.pnl)">{{ signedMoney(group.pnl) }}</span>
                     </td>
                   </tr>
+                  @for (row of group.rows; track row.id) {
+                    <tr>
+                      <td><strong>{{ row.symbol }}</strong></td>
+                      <td><span class="badge" [class.badge-long]="row.side === 'Buy' || row.side === 'Long'" [class.badge-short]="row.side !== 'Buy' && row.side !== 'Long'">{{ row.side === 'Buy' ? 'LONG' : row.side }}</span></td>
+                      <td class="num">{{ price(row.averageEntryPrice) }}</td>
+                      <td class="num">{{ price(row.currentPrice) }}</td>
+                      <td class="num">{{ money(size(row)) }}</td>
+                      <td class="num">{{ row.initialRiskUsdt ? money(row.initialRiskUsdt) : '—' }}</td>
+                      <td class="num">{{ row.marginUsdt ? money(row.marginUsdt) : '—' }}</td>
+                      <td class="num">{{ row.leverage ? row.leverage + 'x' : '—' }}</td>
+                      <td class="num" [class]="pnlClass(row.unrealizedPnL)"><strong>{{ signedMoney(row.unrealizedPnL) }}</strong></td>
+                      <td class="num" [class]="pnlClass(change(row))">{{ pct(change(row)) }}</td>
+                      <td>
+                        <button
+                          class="btn sm"
+                          type="button"
+                          [class.danger]="ui.isLive()"
+                          [disabled]="busyId() === row.id"
+                          (click)="requestClose(row)"
+                        >{{ busyId() === row.id ? 'Closing…' : 'Close' }}</button>
+                      </td>
+                    </tr>
+                  }
                 }
               </tbody>
             </table>
@@ -229,6 +239,14 @@ export class PositionTableComponent {
       },
     ),
   );
+  readonly groups = computed(() => {
+    const sorted = this.visible();
+    const order = new Map(sorted.map((row, index) => [row.id, index]));
+    return groupPositionsByStrategy(sorted, this.trading.workspaceBots()).map((group) => ({
+      ...group,
+      rows: [...group.rows].sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0)),
+    }));
+  });
   size(row: PositionDto): number {
     return row.notionalUsdt || (row.quantity ?? 0) * (row.averageEntryPrice ?? 0);
   }

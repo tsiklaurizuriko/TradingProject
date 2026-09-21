@@ -38,6 +38,16 @@ public sealed class BinanceSignedRestClient
     public Task<JsonElement> GetFuturesOpenOrdersAsync(string apiKey, string apiSecret, CancellationToken cancellationToken) =>
         SendAsync(_futures, HttpMethod.Get, "fapi/v1/openOrders", new Dictionary<string, string>(), apiKey, apiSecret, cancellationToken);
 
+    public Task<JsonElement> GetFuturesOpenAlgoOrdersAsync(string apiKey, string apiSecret, CancellationToken cancellationToken) =>
+        SendAsync(
+            _futures,
+            HttpMethod.Get,
+            BinanceConditionalAlgoOrder.OpenPath,
+            new Dictionary<string, string>(),
+            apiKey,
+            apiSecret,
+            cancellationToken);
+
     public Task<JsonElement> GetFuturesPositionsAsync(string apiKey, string apiSecret, CancellationToken cancellationToken) =>
         SendAsync(_futures, HttpMethod.Get, "fapi/v2/positionRisk", new Dictionary<string, string>(), apiKey, apiSecret, cancellationToken);
 
@@ -129,30 +139,50 @@ public sealed class BinanceSignedRestClient
         return SendAsync(_futures, HttpMethod.Post, "fapi/v1/leverage", fields, apiKey, apiSecret, cancellationToken);
     }
 
-    public Task<JsonElement> PlaceFuturesClosePositionOrderAsync(
+    public Task<JsonElement> PlaceFuturesConditionalCloseAlgoAsync(
         string apiKey,
         string apiSecret,
         string symbol,
         OrderSide closeSide,
         string type,
-        decimal stopPrice,
-        string clientOrderId,
+        decimal triggerPrice,
+        string clientAlgoId,
         CancellationToken cancellationToken,
         bool priceProtect = true)
     {
-        var fields = new Dictionary<string, string>
-        {
-            ["symbol"] = symbol.ToUpperInvariant(),
-            ["side"] = closeSide == OrderSide.Buy ? "BUY" : "SELL",
-            ["type"] = type,
-            ["stopPrice"] = BinanceHmac.FormatDecimal(stopPrice),
-            ["closePosition"] = "true",
-            ["workingType"] = "MARK_PRICE",
-            ["priceProtect"] = priceProtect ? "TRUE" : "FALSE",
-            ["newClientOrderId"] = clientOrderId,
-            ["newOrderRespType"] = "RESULT"
-        };
-        return SendAsync(_futures, HttpMethod.Post, "fapi/v1/order", fields, apiKey, apiSecret, cancellationToken);
+        var fields = BinanceConditionalAlgoOrder.PlaceFields(
+            symbol,
+            closeSide,
+            type,
+            triggerPrice,
+            clientAlgoId,
+            priceProtect);
+        return SendAsync(
+            _futures,
+            HttpMethod.Post,
+            BinanceConditionalAlgoOrder.PlacePath,
+            fields,
+            apiKey,
+            apiSecret,
+            cancellationToken);
+    }
+
+    public Task<JsonElement> CancelFuturesAlgoOrderAsync(
+        string apiKey,
+        string apiSecret,
+        string symbol,
+        string clientAlgoId,
+        CancellationToken cancellationToken)
+    {
+        var fields = BinanceConditionalAlgoOrder.CancelFields(symbol, clientAlgoId);
+        return SendAsync(
+            _futures,
+            HttpMethod.Delete,
+            BinanceConditionalAlgoOrder.CancelPath,
+            fields,
+            apiKey,
+            apiSecret,
+            cancellationToken);
     }
 
     public Task<JsonElement> GetFuturesUserTradesAsync(
@@ -160,11 +190,13 @@ public sealed class BinanceSignedRestClient
         string apiSecret,
         string symbol,
         string? orderId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int limit = 50)
     {
         var fields = new Dictionary<string, string>
         {
-            ["symbol"] = symbol.ToUpperInvariant()
+            ["symbol"] = symbol.ToUpperInvariant(),
+            ["limit"] = Math.Clamp(limit, 1, 1000).ToString(CultureInfo.InvariantCulture)
         };
         if (!string.IsNullOrWhiteSpace(orderId))
         {

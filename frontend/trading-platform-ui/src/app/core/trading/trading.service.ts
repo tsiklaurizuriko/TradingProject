@@ -46,6 +46,8 @@ export class TradingService {
   readonly restLatencyMs = signal<number | null>(null);
   readonly lastRestAt = signal<Date | null>(null);
   readonly performance = signal<PerformanceDto | null>(null);
+  private overviewInFlight = false;
+  private overviewPoll: ReturnType<typeof setInterval> | null = null;
 
   readonly tickers = computed(() => this.overview()?.tickers ?? []);
   readonly bots = computed(() => this.overview()?.bots ?? []);
@@ -68,7 +70,33 @@ export class TradingService {
   readonly workspacePositions = computed(() => {
     const ids = this.workspaceBotIds();
     const live = this.ui.isLive();
-    return this.positions().filter((row) => ids.has(row.botId) || (live && row.source === 'Binance'));
+    const rows = this.positions().filter(
+      (row) => row.quantity > 0 && (ids.has(row.botId) || (live && row.source === 'Binance')),
+    );
+    if (!live) {
+      return rows;
+    }
+    const byCoin = new Map<string, PositionDto>();
+    for (const row of rows) {
+      const key = row.symbol.trim().toUpperCase();
+      const existing = byCoin.get(key);
+      if (!existing) {
+        byCoin.set(key, row);
+        continue;
+      }
+      const filled = row.source === 'Binance' ? row : existing.source === 'Binance' ? existing : row;
+      const snapshot = row.source !== 'Binance' ? row : existing.source !== 'Binance' ? existing : filled;
+      const entry = filled.averageEntryPrice || snapshot.averageEntryPrice;
+      byCoin.set(key, {
+        ...snapshot,
+        quantity: filled.quantity,
+        averageEntryPrice: entry,
+        currentPrice: filled.currentPrice || snapshot.currentPrice,
+        unrealizedPnL: filled.unrealizedPnL,
+        notionalUsdt: filled.quantity * entry,
+      });
+    }
+    return [...byCoin.values()];
   });
   readonly workspaceTrades = computed(() => {
     const ids = this.workspaceBotIds();
@@ -89,7 +117,12 @@ export class TradingService {
   readonly workspaceOrders = computed(() => {
     const ids = this.workspaceBotIds();
     const live = this.ui.isLive();
-    return this.orders().filter((row) => ids.has(row.botId) || (live && row.source === 'Binance'));
+    return this.orders().filter((row) => {
+      if (row.mode) {
+        return (row.mode === 'Live') === live;
+      }
+      return ids.has(row.botId) || (live && row.source === 'Binance');
+    });
   });
   readonly workspaceSignals = computed(() => {
     const ids = this.workspaceBotIds();
@@ -166,8 +199,14 @@ export class TradingService {
     );
   }
 
-  async refresh(): Promise<void> {
-    this.loading.set(true);
+  async refresh(quiet = false): Promise<void> {
+    if (this.overviewInFlight) {
+      return;
+    }
+    this.overviewInFlight = true;
+    if (!quiet) {
+      this.loading.set(true);
+    }
     this.error.set(null);
     const started = performance.now();
     try {
@@ -176,9 +215,28 @@ export class TradingService {
       this.restLatencyMs.set(Math.round(performance.now() - started));
       this.lastRestAt.set(new Date());
     } catch {
-      this.error.set('Binance connection lost. Market data is temporarily unavailable.');
+      if (!quiet) {
+        this.error.set('Binance connection lost. Market data is temporarily unavailable.');
+      }
     } finally {
-      this.loading.set(false);
+      this.overviewInFlight = false;
+      if (!quiet) {
+        this.loading.set(false);
+      }
+    }
+  }
+
+  startOverviewPoll(periodMs = 12_000): void {
+    this.stopOverviewPoll();
+    this.overviewPoll = setInterval(() => {
+      void this.refresh(true);
+    }, periodMs);
+  }
+
+  stopOverviewPoll(): void {
+    if (this.overviewPoll !== null) {
+      clearInterval(this.overviewPoll);
+      this.overviewPoll = null;
     }
   }
 
@@ -307,10 +365,22 @@ export class TradingService {
         tickers.push(next);
       }
       tickers.sort((a, b) => a.marketCapRank - b.marketCapRank);
+      const positions = (current.positions ?? []).map((row) => {
+        if (row.quantity <= 0 || row.symbol.trim().toUpperCase() !== symbol.trim().toUpperCase()) {
+          return row;
+        }
+        const long = row.side === 'Long' || row.side === 'Buy' || row.side === 'BUY';
+        const unrealized = (long ? price - row.averageEntryPrice : row.averageEntryPrice - price) * row.quantity;
+        return { ...row, currentPrice: price, unrealizedPnL: unrealized };
+      });
+      const unrealizedTotal = uniqueUnrealized(positions);
       this.overview.set({
         ...current,
         ticker: symbol === current.ticker?.symbol ? next : (current.ticker ?? next),
         tickers,
+        positions,
+        unrealizedPnL: this.ui.isLive() ? current.unrealizedPnL : unrealizedTotal,
+        liveUnrealizedPnL: this.ui.isLive() ? unrealizedTotal : current.liveUnrealizedPnL,
         health: 'Healthy',
       });
     }
@@ -411,6 +481,23 @@ export class TradingService {
       this.ui.setPreferredRiskId(profiles.find((row) => row.isActive)?.id ?? profiles[0]?.id ?? '');
     }
   }
+}
+
+function uniqueUnrealized(positions: PositionDto[]): number {
+  const taken = new Set<string>();
+  let sum = 0;
+  for (const row of positions) {
+    if (row.quantity <= 0) {
+      continue;
+    }
+    const key = row.symbol.trim().toUpperCase();
+    if (taken.has(key)) {
+      continue;
+    }
+    taken.add(key);
+    sum += row.unrealizedPnL;
+  }
+  return sum;
 }
 
 function readApiMessage(error: unknown): string {

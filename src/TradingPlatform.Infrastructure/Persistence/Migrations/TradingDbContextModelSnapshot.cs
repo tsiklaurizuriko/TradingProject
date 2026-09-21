@@ -1577,8 +1577,8 @@ namespace TradingPlatform.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("TemplateKey")
                         .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");

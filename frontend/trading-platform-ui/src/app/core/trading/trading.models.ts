@@ -351,6 +351,42 @@ export interface PositionDto {
   riskPerTradePercent?: number;
 }
 
+export function resolvePositionStrategy(
+  row: PositionDto,
+  bots: BotDto[],
+): { key: string; name: string } {
+  const coin = row.symbol.trim().toUpperCase();
+  const bot =
+    bots.find((item) => item.id === row.botId) ??
+    bots.find((item) => item.symbol.trim().toUpperCase() === coin);
+  const name = (bot?.strategyName || '').trim() || 'Unassigned strategy';
+  const key = bot?.strategyId || name;
+  return { key, name };
+}
+
+export function groupPositionsByStrategy(
+  rows: PositionDto[],
+  bots: BotDto[],
+): { key: string; name: string; rows: PositionDto[]; pnl: number; notional: number }[] {
+  const groups = new Map<string, { key: string; name: string; rows: PositionDto[] }>();
+  for (const row of rows) {
+    const { key, name } = resolvePositionStrategy(row, bots);
+    const current = groups.get(key) ?? { key, name, rows: [] };
+    current.rows.push(row);
+    groups.set(key, current);
+  }
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      pnl: group.rows.reduce((sum, row) => sum + (row.unrealizedPnL ?? 0), 0),
+      notional: group.rows.reduce(
+        (sum, row) => sum + (row.notionalUsdt || row.quantity * row.averageEntryPrice),
+        0,
+      ),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export interface OrderDto {
   id: string;
   clientOrderId: string;
@@ -367,6 +403,42 @@ export interface OrderDto {
   source?: string;
   pnL?: number | null;
   fee?: number | null;
+  mode?: string;
+  kind?: string;
+}
+
+export function isProtectionOrder(row: OrderDto): boolean {
+  const kind = (row.kind || '').toLowerCase();
+  if (kind === 'stop' || kind === 'takeprofit') {
+    return true;
+  }
+  const type = (row.type || '').replace(/[_-\s]/g, '').toUpperCase();
+  return type.includes('STOP') || type.includes('TAKEPROFIT');
+}
+
+export function orderKindLabel(row: OrderDto): string {
+  if (!isProtectionOrder(row)) {
+    return 'Fill';
+  }
+  const kind = (row.kind || row.type || '').toLowerCase();
+  return kind.includes('take') ? 'Take profit' : 'Stop';
+}
+
+export function orderStatusLabel(row: OrderDto): string {
+  const status = (row.status || '').toUpperCase();
+  if (isProtectionOrder(row) && (status === 'SUBMITTED' || status === 'NEW' || status === 'WORKING')) {
+    return 'Waiting';
+  }
+  if (status === 'FILLED') {
+    return 'Filled';
+  }
+  if (status === 'CANCELLED' || status === 'CANCELED') {
+    return 'Cancelled';
+  }
+  if (status === 'REJECTED' || status === 'FAILED') {
+    return 'Failed';
+  }
+  return row.status;
 }
 
 export interface TradeDto {

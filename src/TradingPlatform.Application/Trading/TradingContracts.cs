@@ -58,7 +58,9 @@ public sealed record OrderDto(
     DateTimeOffset CreatedAt,
     string Source = "Bot",
     decimal? PnL = null,
-    decimal? Fee = null);
+    decimal? Fee = null,
+    string Mode = "Paper",
+    string Kind = "Fill");
 
 public sealed record TradeDto(
     Guid Id,

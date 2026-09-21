@@ -714,6 +714,7 @@ public sealed class TradingQueryService : ITradingQueryService
     private readonly IExchangeAccountService _accounts;
     private readonly IStrategyEngine _strategy;
     private readonly StrategyDefinitionValidator _validator;
+    private readonly LiveIsolatedReconciler _reconcile;
     private readonly TradingOptions _options;
 
     public TradingQueryService(
@@ -724,6 +725,7 @@ public sealed class TradingQueryService : ITradingQueryService
         IExchangeAccountService accounts,
         IStrategyEngine strategy,
         StrategyDefinitionValidator validator,
+        LiveIsolatedReconciler reconcile,
         IOptions<TradingOptions> options)
     {
         _store = store;
@@ -733,14 +735,13 @@ public sealed class TradingQueryService : ITradingQueryService
         _accounts = accounts;
         _strategy = strategy;
         _validator = validator;
+        _reconcile = reconcile;
         _options = options.Value;
     }
 
     public async Task<PortfolioDto> GetOverviewAsync(CancellationToken cancellationToken = default)
     {
         var bots = (await GetBotsAsync(cancellationToken)).ToList();
-        var positions = (await GetPositionsAsync(cancellationToken)).ToList();
-        var orders = (await GetOrdersAsync(cancellationToken)).ToList();
         var trades = await GetTradesAsync(cancellationToken);
         var signals = (await _store.GetRecentSignalsAsync(20, cancellationToken))
             .Select(s => new SignalDto(s.Id, s.BotId, s.Symbol, s.SignalType.ToString(), s.Price, s.Reason, s.Timestamp))
@@ -778,9 +779,29 @@ public sealed class TradingQueryService : ITradingQueryService
             .ToList();
 
         await RefreshLiveCacheIfStaleAsync(cancellationToken);
+        await _reconcile.ReconcileAsync(cancellationToken);
         var live = _live.Current;
-        positions.AddRange(live.OpenPositions.Select(MapExchangePosition));
-        orders.AddRange(live.OpenOrders.Select(MapExchangeOrder));
+        var positions = IsolatedOccupancy.MergeBotAndExchange(
+            await GetPositionsAsync(cancellationToken),
+            live.OpenPositions,
+            MapExchangePosition,
+            IsolatedOccupancy.HasFreshFuturesBook(live),
+            DateTimeOffset.UtcNow);
+        positions = await StampMissingIsolatedProtectionAsync(positions, bots, cancellationToken);
+        var orders = (await GetOrdersAsync(cancellationToken)).ToList();
+        foreach (var liveOrder in live.OpenOrders)
+        {
+            if (orders.Any(existing => OrderLedger.Same(
+                    existing.ClientOrderId,
+                    existing.ExchangeOrderId,
+                    liveOrder.ClientOrderId,
+                    liveOrder.ExchangeOrderId)))
+            {
+                continue;
+            }
+
+            orders.Add(MapExchangeOrder(liveOrder));
+        }
 
         var paperFree = balances.Where(b => b.Asset == "USDT").Sum(b => b.Free);
         var paperUsdt = balances.Where(b => b.Asset == "USDT").Sum(b => b.Free + b.Locked);
@@ -788,8 +809,8 @@ public sealed class TradingQueryService : ITradingQueryService
         var liveBotIds = bots.Where(b => string.Equals(b.Mode, "Live", StringComparison.OrdinalIgnoreCase)).Select(b => b.Id).ToHashSet();
         var paperUnrealized = positions.Where(p => paperBotIds.Contains(p.BotId)).Sum(p => p.UnrealizedPnL);
         var paperEquity = paperUsdt + paperUnrealized;
-        var liveBotUnrealized = positions.Where(p => liveBotIds.Contains(p.BotId) && p.Source != "Binance").Sum(p => p.UnrealizedPnL);
-        var liveUnrealized = liveBotUnrealized + positions.Where(p => p.Source == "Binance").Sum(p => p.UnrealizedPnL);
+        var liveBotUnrealized = positions.Where(p => liveBotIds.Contains(p.BotId) || p.Source == "Binance").Sum(p => p.UnrealizedPnL);
+        var liveUnrealized = liveBotUnrealized;
         var todayStart = new DateTimeOffset(DateTime.UtcNow.Date, TimeSpan.Zero);
         var paperRealized = await _store.SumClosedPnLSinceForModeAsync(TradingMode.Paper, DateTimeOffset.UnixEpoch, cancellationToken);
         var paperTodays = await _store.SumClosedPnLSinceForModeAsync(TradingMode.Paper, todayStart, cancellationToken) + paperUnrealized;
@@ -832,7 +853,7 @@ public sealed class TradingQueryService : ITradingQueryService
     private async Task RefreshLiveCacheIfStaleAsync(CancellationToken cancellationToken)
     {
         var current = _live.Current;
-        if (current.UpdatedAt is { } at && DateTimeOffset.UtcNow - at < TimeSpan.FromSeconds(20))
+        if (current.UpdatedAt is { } at && DateTimeOffset.UtcNow - at < TimeSpan.FromSeconds(8))
         {
             return;
         }
@@ -872,6 +893,62 @@ public sealed class TradingQueryService : ITradingQueryService
         return value;
     }
 
+    private async Task<List<PositionDto>> StampMissingIsolatedProtectionAsync(
+        List<PositionDto> positions,
+        IReadOnlyList<BotDto> bots,
+        CancellationToken cancellationToken)
+    {
+        if (positions.TrueForAll(row => row.StopLossPrice > 0m && row.MarginUsdt > 0m))
+        {
+            return positions;
+        }
+
+        var books = (await _store.ListRiskProfilesAsync(cancellationToken))
+            .ToDictionary(row => row.Id);
+        var active = books.Values.FirstOrDefault(row => row.IsActive)
+            ?? await _store.GetConservativeRiskAsync(cancellationToken);
+        var liveBots = bots
+            .Where(bot => string.Equals(bot.Mode, "Live", StringComparison.OrdinalIgnoreCase))
+            .GroupBy(bot => IsolatedOccupancy.CoinKey(bot.Symbol), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group => group.OrderBy(bot => bot.Status == "Running" ? 0 : 1).First(),
+                StringComparer.OrdinalIgnoreCase);
+
+        var stamped = new List<PositionDto>(positions.Count);
+        foreach (var row in positions)
+        {
+            if (row.StopLossPrice > 0m && row.MarginUsdt > 0m)
+            {
+                stamped.Add(row);
+                continue;
+            }
+
+            liveBots.TryGetValue(IsolatedOccupancy.CoinKey(row.Symbol), out var bot);
+            var book = bot is not null && books.TryGetValue(bot.RiskProfileId, out var matched)
+                ? matched
+                : active;
+            var market = await _store.GetSymbolAsync(row.Symbol, cancellationToken);
+            try
+            {
+                stamped.Add(IsolatedOccupancy.StampProtection(
+                    row,
+                    book.StopLossPercent,
+                    book.TakeProfitPercent,
+                    book.RiskPerTradePercent,
+                    book.MaxLeverage,
+                    market?.TickSize ?? 0m,
+                    bot?.Id));
+            }
+            catch (Exception)
+            {
+                stamped.Add(row);
+            }
+        }
+
+        return stamped;
+    }
+
     private static PositionDto MapExchangePosition(LiveOpenPosition position) =>
         new(
             StableGuid($"pos:{position.Venue}:{position.Symbol}:{position.Side}"),
@@ -902,7 +979,11 @@ public sealed class TradingQueryService : ITradingQueryService
             order.FilledQuantity,
             order.Status,
             order.CreatedAt,
-            "Binance");
+            "Binance",
+            null,
+            null,
+            "Live",
+            OrderLedger.Kind(order.Type));
 
     private static Guid StableGuid(string seed)
     {
@@ -917,7 +998,7 @@ public sealed class TradingQueryService : ITradingQueryService
 
     public async Task<IReadOnlyList<OrderDto>> GetOrdersAsync(CancellationToken cancellationToken = default)
     {
-        var orders = await _store.GetRecentOrdersAsync(50, cancellationToken);
+        var orders = await _store.GetRecentOrdersAsync(2000, cancellationToken);
         var trades = await _store.GetRecentTradesAsync(200, cancellationToken);
         var pnlByExit = trades
             .Where(t => t.ExitOrderId is not null && t.ClosedAt is not null)
@@ -937,10 +1018,12 @@ public sealed class TradingQueryService : ITradingQueryService
                 o.Quantity,
                 o.FilledQuantity,
                 o.Status.ToString(),
-                o.CreatedAt,
+                o.ExchangeTimestamp ?? o.CreatedAt,
                 "Bot",
                 pnlByExit.TryGetValue(o.Id, out var pnl) ? pnl : null,
-                o.Executions.Count == 0 ? null : o.Executions.Sum(e => e.Fee)))
+                o.Executions.Count == 0 ? null : o.Executions.Sum(e => e.Fee),
+                o.Mode.ToString(),
+                OrderLedger.Kind(o.Type.ToString())))
             .ToList();
     }
 
@@ -981,19 +1064,21 @@ public sealed class TradingQueryService : ITradingQueryService
         var tradingMode = string.Equals(mode, "Live", StringComparison.OrdinalIgnoreCase) ? TradingMode.Live : TradingMode.Paper;
         var modeLabel = tradingMode == TradingMode.Live ? "Live" : "Paper";
         var rows = await _store.GetPerformanceTradesAsync(tradingMode, cancellationToken);
-        var positions = (await _store.GetOpenPositionsForModeAsync(tradingMode, cancellationToken)).ToList();
         var bots = (await GetBotsAsync(cancellationToken))
             .Where(b => string.Equals(b.Mode, modeLabel, StringComparison.OrdinalIgnoreCase))
             .ToList();
 
         await RefreshLiveCacheIfStaleAsync(cancellationToken);
+        await _reconcile.ReconcileAsync(cancellationToken);
         var live = _live.Current;
+        var positions = (await _store.GetOpenPositionsForModeAsync(tradingMode, cancellationToken)).ToList();
+        var liveAuth = tradingMode == TradingMode.Live && IsolatedOccupancy.HasFreshFuturesBook(live);
         var botUnrealized = positions.Sum(p => p.UnrealizedPnL);
         var unrealized = tradingMode == TradingMode.Live
-            ? botUnrealized + live.OpenPositions.Sum(p => p.UnrealizedPnL)
+            ? IsolatedOccupancy.UniqueUnrealized(positions, live.OpenPositions, liveAuth)
             : botUnrealized;
         var openPositions = tradingMode == TradingMode.Live
-            ? positions.Count + live.OpenPositions.Count
+            ? IsolatedOccupancy.UniqueCoins(positions, live.OpenPositions, liveAuth)
             : positions.Count;
 
         return BuildPerformance(modeLabel, rows, bots, unrealized, openPositions, tradingMode == TradingMode.Paper ? _options.PaperDefaultBalance : 0m);

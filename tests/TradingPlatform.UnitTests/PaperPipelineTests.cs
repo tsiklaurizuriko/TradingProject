@@ -168,6 +168,9 @@ public sealed class PaperPipelineTests
         var last = candles[^1].Close;
         var cache = new MarketDataCache();
         var store = new TradingStore(db);
+        var live = new LiveAccountCache();
+        var clock = new SystemClock();
+        var correlation = new CorrelationIdAccessor();
         var engine = new BotEngine(
             store,
             new FakeMarket(candles, last),
@@ -178,11 +181,12 @@ public sealed class PaperPipelineTests
             new ExchangeConnectorFactory(
                 new PaperExchangeConnector(cache, new SystemClock(), Options.Create(new TradingOptions())),
                 Array.Empty<ILiveExchangeConnectorFactory>()),
-            new LiveAccountCache(),
+            live,
             new NullTradingRealtimePublisher(),
-            new SystemClock(),
-            new CorrelationIdAccessor(),
+            clock,
+            correlation,
             Options.Create(new TradingOptions()),
+            new LiveIsolatedReconciler(store, live, cache, clock, correlation, NullLogger<LiveIsolatedReconciler>.Instance),
             NullLogger<BotEngine>.Instance);
 
         await engine.EvaluateRunningBotsAsync();
@@ -286,6 +290,9 @@ public sealed class PaperPipelineTests
         var last = candles[^1].Close;
         var cache = new MarketDataCache();
         var store = new TradingStore(db);
+        var live = new LiveAccountCache();
+        var clock = new SystemClock();
+        var correlation = new CorrelationIdAccessor();
         var engine = new BotEngine(
             store,
             new FakeMarket(candles, last),
@@ -296,11 +303,12 @@ public sealed class PaperPipelineTests
             new ExchangeConnectorFactory(
                 new PaperExchangeConnector(cache, new SystemClock(), Options.Create(new TradingOptions())),
                 Array.Empty<ILiveExchangeConnectorFactory>()),
-            new LiveAccountCache(),
+            live,
             new NullTradingRealtimePublisher(),
-            new SystemClock(),
-            new CorrelationIdAccessor(),
+            clock,
+            correlation,
             Options.Create(new TradingOptions()),
+            new LiveIsolatedReconciler(store, live, cache, clock, correlation, NullLogger<LiveIsolatedReconciler>.Instance),
             NullLogger<BotEngine>.Instance);
 
         await engine.EvaluateRunningBotsAsync();

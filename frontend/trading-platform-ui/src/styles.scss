@@ -926,6 +926,13 @@ a.btn { text-decoration: none; }
 
 .data-table td.num, .data-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .data-table tbody tr:hover { background: rgba(26, 39, 64, 0.55); }
+.data-table tbody tr.group-row td {
+  background: var(--bg-secondary);
+  height: 34px;
+  font-size: 12px;
+  letter-spacing: 0.01em;
+}
+.data-table tbody tr.group-row:hover { background: var(--bg-secondary); }
 .data-table tbody tr.clickable { cursor: pointer; }
 
 .pnl-pos { color: var(--success); }

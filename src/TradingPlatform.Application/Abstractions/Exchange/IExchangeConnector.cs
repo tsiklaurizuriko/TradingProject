@@ -134,6 +134,7 @@ public sealed class LiveAccountSnapshot
     public IReadOnlyList<LiveHolding> Holdings { get; set; } = [];
     public IReadOnlyList<LiveOpenOrder> OpenOrders { get; set; } = [];
     public IReadOnlyList<LiveOpenPosition> OpenPositions { get; set; } = [];
+    public bool FuturesBookFresh { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
 }
 

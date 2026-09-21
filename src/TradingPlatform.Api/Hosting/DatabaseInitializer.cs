@@ -28,9 +28,17 @@ public static class DatabaseInitializer
             await store.SaveChangesAsync(cancellationToken);
             logger.LogInformation("No bot is running until a coin is started manually.");
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (InvalidOperationException)
         {
             throw;
+        }
+        catch (DbUpdateException ex)
+        {
+            logger.LogWarning(ex, "Catalog seed failed. API will start with the existing catalog.");
         }
         catch (Exception ex)
         {

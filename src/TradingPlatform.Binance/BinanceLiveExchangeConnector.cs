@@ -176,6 +176,11 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
         string clientOrderId,
         CancellationToken cancellationToken)
     {
+        if (stopPrice <= 0m)
+        {
+            return "Protective trigger price is invalid.";
+        }
+
         var error = await PlaceOnceAsync(priceProtect: true);
         if (error is null || IsImmediateTrigger(error))
         {
@@ -188,7 +193,7 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
         {
             try
             {
-                await _signed.PlaceFuturesClosePositionOrderAsync(
+                await _signed.PlaceFuturesConditionalCloseAlgoAsync(
                     key,
                     secret,
                     symbol,
@@ -225,7 +230,19 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
         }
         catch (DomainException)
         {
-            // Already filled, cancelled, or unknown — position protection may have already triggered.
+            // Classic order book has no matching id after the Algo migration.
+        }
+
+        if (!string.IsNullOrWhiteSpace(clientOrderId))
+        {
+            try
+            {
+                await _signed.CancelFuturesAlgoOrderAsync(key, secret, symbol, clientOrderId, cancellationToken);
+            }
+            catch (DomainException)
+            {
+                // Already filled, cancelled, or unknown — Isolated protection may have already triggered.
+            }
         }
     }
 

@@ -22,4 +22,14 @@ public sealed class OrderStateMachineTests
         OrderStateMachine.CanTransition(OrderStatus.Filled, OrderStatus.Cancelled).Should().BeFalse();
         OrderStateMachine.CanTransition(OrderStatus.Rejected, OrderStatus.Submitted).Should().BeFalse();
     }
+
+    [Fact]
+    public void Cancel_or_place_fail_after_submit_does_not_throw()
+    {
+        OrderStateMachine.CanTransition(OrderStatus.Submitting, OrderStatus.Failed).Should().BeTrue();
+        OrderStateMachine.CanTransition(OrderStatus.Submitted, OrderStatus.Failed).Should().BeTrue();
+        OrderStateMachine.CanTransition(OrderStatus.Submitted, OrderStatus.Cancelled).Should().BeTrue();
+        OrderStateMachine.Transition(OrderStatus.Submitted, OrderStatus.Failed).Should().Be(OrderStatus.Failed);
+        OrderStateMachine.Transition(OrderStatus.Filled, OrderStatus.Failed).Should().Be(OrderStatus.Filled);
+    }
 }

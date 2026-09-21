@@ -274,15 +274,6 @@ function depsFor(key: string): string {
   template: `
     <div class="strategies-page">
       <header class="strategies-toolbar">
-        <div class="strategies-toolbar-copy">
-          <div class="list-sorts">
-            <app-sort-btn column="name" [query]="list">Name</app-sort-btn>
-            <app-sort-btn column="tf" [query]="list">TF</app-sort-btn>
-            <app-sort-btn column="rating" [query]="list">Rating</app-sort-btn>
-          </div>
-          <p class="tiny">ვარსკვლავი ოპერატორისთვისაა: რომელი PAPER-ზე და რომელი არა. არცერთი არ არის მომგებიანი. 5★ არ არსებობს. LIVE გამორთულია. Size/SL/TP რჩება Risk-ზე.</p>
-          <p class="tiny">One catalog. Paper and LIVE bots share these strategies; they hit different accounts.</p>
-        </div>
         <div class="strategies-toolbar-actions">
           <label class="field">Use
             <select [ngModel]="useFilter()" (ngModelChange)="useFilter.set($event)">
@@ -347,6 +338,11 @@ function depsFor(key: string): string {
             </select>
           </label>
           <button class="btn accent" type="button" [disabled]="busy" (click)="beginCreate()">Add strategy</button>
+        </div>
+        <div class="list-sorts">
+          <app-sort-btn column="name" [query]="list">Name</app-sort-btn>
+          <app-sort-btn column="tf" [query]="list">TF</app-sort-btn>
+          <app-sort-btn column="rating" [query]="list">Rating</app-sort-btn>
         </div>
       </header>
 

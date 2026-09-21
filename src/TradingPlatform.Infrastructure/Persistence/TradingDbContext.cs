@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
+using Npgsql;
 using TradingPlatform.Application.Abstractions;
 using TradingPlatform.Domain.Backtesting;
 using TradingPlatform.Domain.Balances;
@@ -70,6 +71,11 @@ public sealed class TradingDbContext : DbContext, IUnitOfWork
             {
                 return await base.SaveChangesAsync(cancellationToken);
             }
+            catch (DbUpdateException ex) when (attempt < attempts && IsDuplicateClosedCandle(ex))
+            {
+                DetachAddedCandles();
+                StampAndBumpVersions();
+            }
             catch (DbUpdateConcurrencyException ex) when (attempt < attempts)
             {
                 await MergeConcurrencyAsync(ex, cancellationToken);
@@ -81,6 +87,19 @@ public sealed class TradingDbContext : DbContext, IUnitOfWork
                     ErrorCodes.ReconciliationRequired,
                     "This row was updated at the same time. Try Close again.");
             }
+        }
+    }
+
+    private static bool IsDuplicateClosedCandle(DbUpdateException exception) =>
+        exception.InnerException is PostgresException postgres
+        && postgres.SqlState == PostgresErrorCodes.UniqueViolation
+        && postgres.ConstraintName == "IX_MarketCandles_SymbolId_Timeframe_OpenTime";
+
+    private void DetachAddedCandles()
+    {
+        foreach (var entry in ChangeTracker.Entries<MarketCandle>().Where(row => row.State == EntityState.Added))
+        {
+            entry.State = EntityState.Detached;
         }
     }
 

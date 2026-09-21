@@ -33,11 +33,29 @@ public sealed class TradingStore : ITradingStore
     public Task<User?> GetUserAsync(Guid userId, CancellationToken cancellationToken = default) =>
         _db.Users.FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
 
-    public async Task<IReadOnlyList<Bot>> GetRunningBotsAsync(CancellationToken cancellationToken = default) =>
-        await BotsWithGraph().Where(b => b.Status == BotStatus.Running).ToListAsync(cancellationToken);
+    public async Task<IReadOnlyList<Bot>> GetRunningBotsAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            return await BotsWithGraph().Where(b => b.Status == BotStatus.Running).ToListAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+    }
 
-    public async Task<IReadOnlyList<Bot>> ListBotsAsync(CancellationToken cancellationToken = default) =>
-        await BotsWithGraph().ToListAsync(cancellationToken);
+    public async Task<IReadOnlyList<Bot>> ListBotsAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            return await BotsWithGraph().ToListAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+    }
 
     public async Task<IReadOnlyList<Bot>> ListWorkspaceBotsAsync(
         Guid userId,
@@ -227,36 +245,39 @@ public sealed class TradingStore : ITradingStore
 
     public async Task UpsertClosedCandleAsync(Guid symbolId, Timeframe timeframe, MarketCandle candle, CancellationToken cancellationToken = default)
     {
-        var existing = await _db.MarketCandles.FirstOrDefaultAsync(
-            c => c.SymbolId == symbolId && c.Timeframe == timeframe && c.OpenTime == candle.OpenTime,
-            cancellationToken);
-        if (existing is null)
+        var local = _db.MarketCandles.Local.FirstOrDefault(row =>
+            row.SymbolId == symbolId && row.Timeframe == timeframe && row.OpenTime == candle.OpenTime);
+        if (local is not null)
         {
-            await _db.MarketCandles.AddAsync(new MarketCandle
-            {
-                SymbolId = symbolId,
-                Timeframe = timeframe,
-                OpenTime = candle.OpenTime,
-                CloseTime = candle.CloseTime,
-                Open = candle.Open,
-                High = candle.High,
-                Low = candle.Low,
-                Close = candle.Close,
-                Volume = candle.Volume,
-                TradeCount = candle.TradeCount,
-                IsClosed = true,
-                ExchangeTimestamp = candle.ExchangeTimestamp
-            }, cancellationToken);
+            CopyClosedCandle(local, candle);
             return;
         }
 
-        existing.High = candle.High;
-        existing.Low = candle.Low;
-        existing.Close = candle.Close;
-        existing.Volume = candle.Volume;
-        existing.TradeCount = candle.TradeCount;
-        existing.IsClosed = true;
-        existing.ExchangeTimestamp = candle.ExchangeTimestamp;
+        var now = DateTimeOffset.UtcNow;
+        await _db.Database.ExecuteSqlInterpolatedAsync(
+            $"""
+            INSERT INTO "MarketCandles" (
+                "Id", "SymbolId", "Timeframe", "OpenTime", "CloseTime",
+                "Open", "High", "Low", "Close", "Volume", "TradeCount",
+                "IsClosed", "ExchangeTimestamp", "CreatedAt", "UpdatedAt")
+            VALUES (
+                {Guid.NewGuid()}, {symbolId}, {(int)timeframe}, {candle.OpenTime}, {candle.CloseTime},
+                {candle.Open}, {candle.High}, {candle.Low}, {candle.Close}, {candle.Volume}, {candle.TradeCount},
+                TRUE, {candle.ExchangeTimestamp}, {now}, {now})
+            ON CONFLICT ("SymbolId", "Timeframe", "OpenTime")
+            DO UPDATE SET
+                "CloseTime" = EXCLUDED."CloseTime",
+                "Open" = EXCLUDED."Open",
+                "High" = EXCLUDED."High",
+                "Low" = EXCLUDED."Low",
+                "Close" = EXCLUDED."Close",
+                "Volume" = EXCLUDED."Volume",
+                "TradeCount" = EXCLUDED."TradeCount",
+                "IsClosed" = TRUE,
+                "ExchangeTimestamp" = EXCLUDED."ExchangeTimestamp",
+                "UpdatedAt" = EXCLUDED."UpdatedAt"
+            """,
+            cancellationToken);
     }
 
     public Task<Position?> GetOpenPositionAsync(Guid botId, string symbol, CancellationToken cancellationToken = default) =>
@@ -269,19 +290,37 @@ public sealed class TradingStore : ITradingStore
             p => p.Id == positionId && p.ClosedAt == null && p.Quantity > 0m,
             cancellationToken);
 
-    public async Task<IReadOnlyList<Position>> GetOpenPositionsAsync(CancellationToken cancellationToken = default) =>
-        await _db.Positions
-            .Where(p => p.ClosedAt == null && p.Quantity > 0m)
-            .OrderByDescending(p => p.OpenedAt)
-            .ToListAsync(cancellationToken);
+    public async Task<IReadOnlyList<Position>> GetOpenPositionsAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            return await _db.Positions
+                .Where(p => p.ClosedAt == null && p.Quantity > 0m)
+                .OrderByDescending(p => p.OpenedAt)
+                .ToListAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+    }
 
-    public async Task<IReadOnlyList<Position>> GetOpenPositionsForModeAsync(TradingMode mode, CancellationToken cancellationToken = default) =>
-        await _db.Positions
-            .Include(p => p.Bot)
-            .ThenInclude(b => b.StrategyVersion)
-            .Where(p => p.ClosedAt == null && p.Quantity > 0m && p.Bot.Mode == mode)
-            .OrderByDescending(p => p.OpenedAt)
-            .ToListAsync(cancellationToken);
+    public async Task<IReadOnlyList<Position>> GetOpenPositionsForModeAsync(TradingMode mode, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            return await _db.Positions
+                .Include(p => p.Bot)
+                .ThenInclude(b => b.StrategyVersion)
+                .Where(p => p.ClosedAt == null && p.Quantity > 0m && p.Bot.Mode == mode)
+                .OrderByDescending(p => p.OpenedAt)
+                .ToListAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+    }
 
     public Task<int> CountOpenPositionsAsync(Guid botId, CancellationToken cancellationToken = default) =>
         _db.Positions.CountAsync(p => p.BotId == botId && p.ClosedAt == null && p.Quantity > 0m, cancellationToken);
@@ -315,6 +354,24 @@ public sealed class TradingStore : ITradingStore
 
     public Task<bool> HasClientOrderAsync(string clientOrderId, CancellationToken cancellationToken = default) =>
         _db.Orders.AnyAsync(o => o.ClientOrderId == clientOrderId, cancellationToken);
+
+    public async Task<bool> HasKnownOrderAsync(
+        string? clientOrderId,
+        string? exchangeOrderId,
+        CancellationToken cancellationToken = default)
+    {
+        if (!string.IsNullOrWhiteSpace(clientOrderId)
+            && await _db.Orders.AnyAsync(o => o.ClientOrderId == clientOrderId, cancellationToken))
+        {
+            return true;
+        }
+
+        return !string.IsNullOrWhiteSpace(exchangeOrderId)
+            && await _db.Orders.AnyAsync(o => o.ExchangeOrderId == exchangeOrderId, cancellationToken);
+    }
+
+    public Task<Order?> GetOrderByClientOrderIdAsync(string clientOrderId, CancellationToken cancellationToken = default) =>
+        _db.Orders.FirstOrDefaultAsync(o => o.ClientOrderId == clientOrderId, cancellationToken);
 
     public Task<int> CountOrdersSinceAsync(Guid botId, DateTimeOffset sinceUtc, CancellationToken cancellationToken = default) =>
         _db.Orders.CountAsync(o => o.BotId == botId && o.CreatedAt >= sinceUtc, cancellationToken);
@@ -521,4 +578,17 @@ public sealed class TradingStore : ITradingStore
             .ThenInclude(v => v.Strategy)
             .Include(b => b.RiskProfile)
             .Include(b => b.ExchangeAccount);
+
+    private static void CopyClosedCandle(MarketCandle target, MarketCandle source)
+    {
+        target.CloseTime = source.CloseTime;
+        target.Open = source.Open;
+        target.High = source.High;
+        target.Low = source.Low;
+        target.Close = source.Close;
+        target.Volume = source.Volume;
+        target.TradeCount = source.TradeCount;
+        target.IsClosed = true;
+        target.ExchangeTimestamp = source.ExchangeTimestamp;
+    }
 }

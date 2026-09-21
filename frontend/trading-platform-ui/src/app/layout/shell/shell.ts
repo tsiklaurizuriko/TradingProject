@@ -149,6 +149,7 @@ export class Shell {
     } catch {
       this.toast.show('Realtime offline', 'REST data still loads. SignalR hub is not connected.', 'error', 'connection');
     }
+    this.trading.startOverviewPoll();
   }
 
   private routeMeta(): { title: string; subtitle: string } {

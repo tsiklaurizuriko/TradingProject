@@ -109,7 +109,7 @@ internal static class TradingModelConfiguration
             b.HasQueryFilter(x => x.DeletedAt == null);
             b.Property(x => x.Name).HasMaxLength(128).IsRequired();
             b.Property(x => x.AllowedSymbolsCsv).HasMaxLength(4000);
-            b.Property(x => x.TemplateKey).HasMaxLength(32).IsRequired();
+            b.Property(x => x.TemplateKey).HasMaxLength(64).IsRequired();
             b.Property(x => x.AllowedSide).HasMaxLength(16).IsRequired();
             b.Property(x => x.IsEnabled).IsRequired();
             b.Property(x => x.ValidationStatus).HasMaxLength(32).IsRequired();

@@ -3,8 +3,11 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using TradingPlatform.Application.Abstractions.Exchange;
 using TradingPlatform.Application.Trading;
+using TradingPlatform.Domain.Bots;
 using TradingPlatform.Domain.Errors;
 using TradingPlatform.Domain.Identity;
+using TradingPlatform.Domain.Orders;
+using TradingPlatform.Domain.Trading;
 
 namespace TradingPlatform.Binance;
 
@@ -53,7 +56,9 @@ public sealed class ExchangeAccountService : IExchangeAccountService
             var fundingUsdt = StableFree(fundingHoldings);
             var futures = await TryFuturesAsync(keys.Value.ApiKey, keys.Value.ApiSecret, cancellationToken);
             var openOrders = await TryOpenOrdersAsync(keys.Value.ApiKey, keys.Value.ApiSecret, cancellationToken);
-            var openPositions = await TryFuturesPositionsAsync(keys.Value.ApiKey, keys.Value.ApiSecret, cancellationToken);
+            var previous = _cache.Current;
+            var (positionsOk, fetchedPositions) = await TryFuturesPositionsAsync(keys.Value.ApiKey, keys.Value.ApiSecret, cancellationToken);
+            var openPositions = positionsOk ? fetchedPositions : previous.OpenPositions;
             var merged = Merge(spotHoldings, fundingHoldings);
             var hint = Hint(keys.Value.ApiKey);
             var futuresEquity = futures.Equity > 0m ? futures.Equity : futures.Wallet;
@@ -84,8 +89,22 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                 Holdings = merged,
                 OpenOrders = openOrders,
                 OpenPositions = openPositions,
+                FuturesBookFresh = positionsOk,
                 UpdatedAt = DateTimeOffset.UtcNow
             });
+            try
+            {
+                await PersistFuturesLedgerAsync(
+                    keys.Value.ApiKey,
+                    keys.Value.ApiSecret,
+                    openOrders,
+                    openPositions,
+                    cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Live Isolated order ledger persist failed");
+            }
             return new ExchangeConnectionDto(
                 true,
                 canTrade,
@@ -116,6 +135,7 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                 Holdings = previous.Holdings,
                 OpenOrders = previous.OpenOrders,
                 OpenPositions = previous.OpenPositions,
+                FuturesBookFresh = false,
                 UpdatedAt = DateTimeOffset.UtcNow
             });
             return new ExchangeConnectionDto(
@@ -244,17 +264,26 @@ public sealed class ExchangeAccountService : IExchangeAccountService
             _logger.LogInformation("Futures open orders skipped: {Message}", ex.Message);
         }
 
+        try
+        {
+            list.AddRange(ParseAlgoOrders(await _signed.GetFuturesOpenAlgoOrdersAsync(apiKey, apiSecret, cancellationToken)));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogInformation("Futures open algo orders skipped: {Message}", ex.Message);
+        }
+
         return list;
     }
 
-    private async Task<IReadOnlyList<LiveOpenPosition>> TryFuturesPositionsAsync(string apiKey, string apiSecret, CancellationToken cancellationToken)
+    private async Task<(bool Ok, IReadOnlyList<LiveOpenPosition> Rows)> TryFuturesPositionsAsync(string apiKey, string apiSecret, CancellationToken cancellationToken)
     {
         try
         {
             var json = await _signed.GetFuturesPositionsAsync(apiKey, apiSecret, cancellationToken);
             if (json.ValueKind != JsonValueKind.Array)
             {
-                return [];
+                return (false, []);
             }
 
             var list = new List<LiveOpenPosition>();
@@ -277,13 +306,267 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                     "Futures"));
             }
 
-            return list;
+            return (true, list);
         }
         catch (Exception ex)
         {
             _logger.LogInformation("Futures positions skipped: {Message}", ex.Message);
+            return (false, []);
+        }
+    }
+
+    private async Task PersistFuturesLedgerAsync(
+        string apiKey,
+        string apiSecret,
+        IReadOnlyList<LiveOpenOrder> openOrders,
+        IReadOnlyList<LiveOpenPosition> openPositions,
+        CancellationToken cancellationToken)
+    {
+        var user = await _trading.GetFirstAdminAsync(cancellationToken);
+        var bots = new Dictionary<string, Bot>(StringComparer.OrdinalIgnoreCase);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        async Task<Bot?> BotFor(string symbol)
+        {
+            var key = symbol.Trim().ToUpperInvariant();
+            if (key.Length == 0)
+            {
+                return null;
+            }
+
+            if (bots.TryGetValue(key, out var cached))
+            {
+                return cached;
+            }
+
+            var bot = await _trading.FindBotBySymbolAsync(user.Id, key, TradingMode.Live, null, null, cancellationToken);
+            if (bot is not null)
+            {
+                bots[key] = bot;
+            }
+
+            return bot;
+        }
+
+        foreach (var row in openOrders.Where(item =>
+                     string.Equals(item.Venue, "Futures", StringComparison.OrdinalIgnoreCase)))
+        {
+            var bot = await BotFor(row.Symbol);
+            if (bot is null)
+            {
+                continue;
+            }
+
+            var qty = row.Quantity > 0m
+                ? row.Quantity
+                : openPositions.FirstOrDefault(item =>
+                    string.Equals(item.Symbol, row.Symbol, StringComparison.OrdinalIgnoreCase))?.Quantity ?? 0m;
+            await UpsertLiveOrderAsync(
+                bot,
+                row.Symbol,
+                OrderLedger.ParseSide(row.Side),
+                OrderLedger.ParseType(row.Type),
+                OrderLedger.ParseStatus(row.Status),
+                row.Price is > 0m ? row.Price : null,
+                qty,
+                row.FilledQuantity,
+                row.ClientOrderId,
+                row.ExchangeOrderId,
+                row.CreatedAt,
+                seen,
+                cancellationToken);
+        }
+
+        foreach (var position in openPositions.Where(item => item.Quantity > 0m))
+        {
+            var bot = await BotFor(position.Symbol);
+            if (bot is null)
+            {
+                continue;
+            }
+
+            try
+            {
+                var json = await _signed.GetFuturesUserTradesAsync(
+                    apiKey,
+                    apiSecret,
+                    position.Symbol,
+                    null,
+                    cancellationToken);
+                foreach (var trade in ParseUserTrades(json))
+                {
+                    await UpsertLiveOrderAsync(
+                        bot,
+                        position.Symbol,
+                        trade.Side,
+                        OrderType.Market,
+                        OrderStatus.Filled,
+                        trade.Price,
+                        trade.Quantity,
+                        trade.Quantity,
+                        null,
+                        trade.OrderId,
+                        trade.Time,
+                        seen,
+                        cancellationToken,
+                        trade.Fee,
+                        trade.TradeId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogInformation("userTrades skipped for {Symbol}: {Message}", position.Symbol, ex.Message);
+            }
+        }
+
+        await _trading.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task UpsertLiveOrderAsync(
+        Bot bot,
+        string symbol,
+        OrderSide side,
+        OrderType type,
+        OrderStatus status,
+        decimal? price,
+        decimal quantity,
+        decimal filled,
+        string? clientOrderId,
+        string? exchangeOrderId,
+        DateTimeOffset createdAt,
+        HashSet<string> seen,
+        CancellationToken cancellationToken,
+        decimal? fee = null,
+        string? tradeId = null)
+    {
+        var clientKey = OrderLedger.ClientKey(clientOrderId, exchangeOrderId);
+        if (clientKey.Length == 0)
+        {
+            return;
+        }
+
+        if (!seen.Add("c:" + clientKey)
+            || (!string.IsNullOrWhiteSpace(exchangeOrderId) && !seen.Add("x:" + exchangeOrderId))
+            || await _trading.HasKnownOrderAsync(clientKey, exchangeOrderId, cancellationToken)
+            || (!string.IsNullOrWhiteSpace(clientOrderId)
+                && !string.Equals(clientOrderId, clientKey, StringComparison.Ordinal)
+                && await _trading.HasKnownOrderAsync(clientOrderId, exchangeOrderId, cancellationToken)))
+        {
+            return;
+        }
+
+        var order = new Order
+        {
+            BotId = bot.Id,
+            ExchangeAccountId = bot.ExchangeAccountId,
+            StrategyId = bot.StrategyVersion.StrategyId,
+            StrategyVersionId = bot.StrategyVersionId,
+            Symbol = symbol.ToUpperInvariant(),
+            Side = side,
+            Type = type,
+            Status = status,
+            Price = price,
+            AverageFillPrice = status == OrderStatus.Filled ? price : null,
+            Quantity = quantity,
+            FilledQuantity = filled,
+            RemainingQuantity = Math.Max(0m, quantity - filled),
+            ClientOrderId = clientKey,
+            IdempotencyKey = clientKey,
+            ExchangeOrderId = exchangeOrderId,
+            Mode = TradingMode.Live,
+            CorrelationId = "binance-ledger",
+            SubmittedAt = createdAt,
+            ExchangeTimestamp = createdAt,
+            CreatedAt = createdAt
+        };
+        await _trading.AddOrderAsync(order, cancellationToken);
+        if (status == OrderStatus.Filled && filled > 0m)
+        {
+            await _trading.AddExecutionAsync(new Execution
+            {
+                OrderId = order.Id,
+                Order = order,
+                ExchangeTradeId = tradeId,
+                Price = price ?? 0m,
+                Quantity = filled,
+                Fee = fee ?? 0m,
+                FeeAsset = "USDT",
+                IsMaker = false,
+                ExchangeTimestamp = createdAt,
+                CorrelationId = "binance-ledger"
+            }, cancellationToken);
+        }
+    }
+
+    private static IEnumerable<(string OrderId, OrderSide Side, decimal Price, decimal Quantity, decimal Fee, DateTimeOffset Time, string TradeId)> ParseUserTrades(JsonElement json)
+    {
+        if (json.ValueKind != JsonValueKind.Array)
+        {
+            yield break;
+        }
+
+        foreach (var row in json.EnumerateArray())
+        {
+            var orderId = row.TryGetProperty("orderId", out var orderEl) ? orderEl.ToString() : "";
+            var tradeId = row.TryGetProperty("id", out var idEl) ? idEl.ToString() : orderId;
+            var created = DateTimeOffset.UtcNow;
+            if (row.TryGetProperty("time", out var timeEl) && timeEl.TryGetInt64(out var ms))
+            {
+                created = DateTimeOffset.FromUnixTimeMilliseconds(ms);
+            }
+
+            yield return (
+                orderId,
+                OrderLedger.ParseSide(row.TryGetProperty("side", out var sideEl) ? sideEl.GetString() : null),
+                ParseDecimal(row, "price"),
+                ParseDecimal(row, "qty"),
+                Math.Abs(ParseDecimal(row, "commission")),
+                created,
+                tradeId);
+        }
+    }
+
+    private static IReadOnlyList<LiveOpenOrder> ParseAlgoOrders(JsonElement json)
+    {
+        if (json.ValueKind != JsonValueKind.Array)
+        {
             return [];
         }
+
+        var list = new List<LiveOpenOrder>();
+        foreach (var row in json.EnumerateArray())
+        {
+            var symbol = row.TryGetProperty("symbol", out var symbolEl) ? symbolEl.GetString() ?? "" : "";
+            var side = row.TryGetProperty("side", out var sideEl) ? sideEl.GetString() ?? "" : "";
+            var type = row.TryGetProperty("orderType", out var typeEl)
+                ? typeEl.GetString() ?? ""
+                : row.TryGetProperty("type", out var fallbackType)
+                    ? fallbackType.GetString() ?? ""
+                    : "";
+            var status = row.TryGetProperty("algoStatus", out var statusEl) ? statusEl.GetString() ?? "WORKING" : "WORKING";
+            var orderId = row.TryGetProperty("algoId", out var idEl) ? idEl.ToString() : null;
+            var clientId = row.TryGetProperty("clientAlgoId", out var cidEl) ? cidEl.GetString() : null;
+            var created = DateTimeOffset.UtcNow;
+            if (row.TryGetProperty("createTime", out var timeEl) && timeEl.TryGetInt64(out var ms))
+            {
+                created = DateTimeOffset.FromUnixTimeMilliseconds(ms);
+            }
+
+            var trigger = ParseDecimal(row, "triggerPrice");
+            list.Add(new LiveOpenOrder(
+                symbol,
+                string.Equals(side, "SELL", StringComparison.OrdinalIgnoreCase) ? "Sell" : "Buy",
+                string.IsNullOrWhiteSpace(type) ? "STOP_MARKET" : type,
+                status,
+                ParseDecimal(row, "quantity"),
+                0m,
+                trigger,
+                orderId,
+                clientId,
+                created,
+                "Futures"));
+        }
+
+        return list;
     }
 
     private static IReadOnlyList<LiveOpenOrder> ParseOrders(JsonElement json, string venue)
