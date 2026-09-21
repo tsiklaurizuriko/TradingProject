@@ -136,22 +136,15 @@ export class Shell {
 
   private async bootstrap(): Promise<void> {
     await Promise.all([this.trading.refresh(), this.trading.refreshMarkets(), this.trading.refreshHealth(), this.trading.refreshRisk(), this.trading.refreshCatalog()]);
-    try {
-      const status = await this.trading.exchangeStatus();
-      if (this.ui.isLive() && !status.hasKeys) {
-        this.ui.setMode('paper', true);
-      }
-    } catch {
-      if (this.ui.isLive()) {
-        this.ui.setMode('paper', true);
-      }
+    if (this.ui.isLive() && !this.trading.overview()?.liveHasKeys) {
+      this.ui.setMode('paper', true);
     }
     try {
       await this.hub.connect();
     } catch {
       this.toast.show('Realtime offline', 'REST data still loads. SignalR hub is not connected.', 'error', 'connection');
     }
-    this.trading.startOverviewPoll();
+    this.trading.startOverviewPoll(() => this.hub.connected());
   }
 
   private routeMeta(): { title: string; subtitle: string } {

@@ -40,6 +40,7 @@ public sealed class BotEngine : IBotEngine
     private readonly TradingOptions _options;
     private readonly LiveIsolatedReconciler _reconcile;
     private readonly ILogger<BotEngine> _logger;
+    private readonly IExchangeAccountService? _accounts;
 
     public BotEngine(
         ITradingStore store,
@@ -55,7 +56,8 @@ public sealed class BotEngine : IBotEngine
         ICorrelationIdAccessor correlation,
         IOptions<TradingOptions> options,
         LiveIsolatedReconciler reconcile,
-        ILogger<BotEngine> logger)
+        ILogger<BotEngine> logger,
+        IExchangeAccountService? accounts = null)
     {
         _store = store;
         _market = market;
@@ -71,6 +73,7 @@ public sealed class BotEngine : IBotEngine
         _options = options.Value;
         _reconcile = reconcile;
         _logger = logger;
+        _accounts = accounts;
     }
 
     public async Task EvaluateRunningBotsAsync(CancellationToken cancellationToken = default)
@@ -84,14 +87,17 @@ public sealed class BotEngine : IBotEngine
                 return;
             }
 
+            await RefreshLiveIsolatedBookAsync(cancellationToken);
             await _reconcile.ReconcileAsync(cancellationToken);
             var bots = await _store.GetRunningBotsAsync(cancellationToken);
+            var cycleKlines = new Dictionary<string, IReadOnlyList<MarketCandle>>(StringComparer.OrdinalIgnoreCase);
+            var cyclePrices = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
             foreach (var bot in bots)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 try
                 {
-                    await EvaluateBotAsync(bot, cancellationToken);
+                    await EvaluateBotAsync(bot, cycleKlines, cyclePrices, cancellationToken);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
@@ -105,11 +111,37 @@ public sealed class BotEngine : IBotEngine
             }
 
             await _store.SaveChangesAsync(cancellationToken);
-            await _publisher.PublishOverviewAsync(cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
+        }
+    }
+
+    private async Task RefreshLiveIsolatedBookAsync(CancellationToken cancellationToken)
+    {
+        if (_accounts is null)
+        {
+            return;
+        }
+
+        var current = _live.Current;
+        if (current.UpdatedAt is { } at && DateTimeOffset.UtcNow - at < TimeSpan.FromSeconds(15))
+        {
+            return;
+        }
+
+        try
+        {
+            await _accounts.GetStatusAsync(Guid.Empty, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "LIVE Isolated snapshot skipped this cycle");
         }
     }
 
@@ -308,7 +340,60 @@ public sealed class BotEngine : IBotEngine
         return new Guid(hash.AsSpan(0, 16));
     }
 
-    private async Task EvaluateBotAsync(Bot bot, CancellationToken cancellationToken)
+    private static string CycleKlineKey(string symbol, Timeframe timeframe) =>
+        $"{symbol.ToUpperInvariant()}|{timeframe}";
+
+    private async Task<IReadOnlyList<MarketCandle>> GetCycleKlinesAsync(
+        string symbol,
+        Timeframe timeframe,
+        Dictionary<string, IReadOnlyList<MarketCandle>> cycleKlines,
+        CancellationToken cancellationToken)
+    {
+        var key = CycleKlineKey(symbol, timeframe);
+        if (cycleKlines.TryGetValue(key, out var hit))
+        {
+            return hit;
+        }
+
+        var candles = await _market.GetClosedKlinesAsync(symbol, timeframe, _options.KlineLimit, cancellationToken);
+        cycleKlines[key] = candles;
+        return candles;
+    }
+
+    private async Task<decimal> GetCycleLastPriceAsync(
+        string symbol,
+        IReadOnlyList<MarketCandle> candles,
+        Dictionary<string, decimal> cyclePrices,
+        CancellationToken cancellationToken)
+    {
+        if (cyclePrices.TryGetValue(symbol, out var hit))
+        {
+            return hit;
+        }
+
+        decimal lastPrice;
+        try
+        {
+            lastPrice = await _market.GetLastPriceAsync(symbol, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception) when (candles.Count > 0)
+        {
+            lastPrice = candles[^1].Close;
+        }
+
+        cyclePrices[symbol] = lastPrice;
+        return lastPrice;
+    }
+
+    private async Task EvaluateBotAsync(
+        Bot bot,
+        Dictionary<string, IReadOnlyList<MarketCandle>> cycleKlines,
+        Dictionary<string, decimal> cyclePrices,
+        CancellationToken cancellationToken)
     {
         if (bot.Status is not BotStatus.Running)
         {
@@ -320,8 +405,8 @@ public sealed class BotEngine : IBotEngine
             throw new DomainException(ErrorCodes.LiveTradingDisabled, "This bot mode cannot run.");
         }
 
-        var candles = await _market.GetClosedKlinesAsync(bot.Symbol, bot.Timeframe, _options.KlineLimit, cancellationToken);
-        var lastPrice = await _market.GetLastPriceAsync(bot.Symbol, cancellationToken);
+        var candles = await GetCycleKlinesAsync(bot.Symbol, bot.Timeframe, cycleKlines, cancellationToken);
+        var lastPrice = await GetCycleLastPriceAsync(bot.Symbol, candles, cyclePrices, cancellationToken);
         var now = _clock.UtcNow;
         _cache.SetKlines(bot.Symbol, bot.Timeframe, candles);
         _cache.SetTicker(bot.Symbol, lastPrice, now);
@@ -330,7 +415,18 @@ public sealed class BotEngine : IBotEngine
         var symbol = await _store.GetSymbolAsync(bot.Symbol);
         if (symbol is not null && candles.Count > 0)
         {
-            await _store.UpsertClosedCandleAsync(symbol.Id, bot.Timeframe, candles[^1], cancellationToken);
+            try
+            {
+                await _store.UpsertClosedCandleAsync(symbol.Id, bot.Timeframe, candles[^1], cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Closed candle persist skipped for {Symbol} {Timeframe}", bot.Symbol, bot.Timeframe);
+            }
         }
 
         var position = await _store.GetOpenPositionAsync(bot.Id, bot.Symbol, cancellationToken);

@@ -328,6 +328,7 @@ export class NotificationsPage {
       this.toast.history(),
       (item) => [item.title, item.message],
       {
+        time: (item) => item.id,
         title: (item) => item.title,
         message: (item) => item.message,
       },

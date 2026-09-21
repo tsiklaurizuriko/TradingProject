@@ -24,6 +24,10 @@ import { LedgerBookComponent, LedgerBookTab } from '../../shared/tables/ledger-b
 export class OrdersPage {
   readonly trading = inject(TradingService);
   readonly orderTabs: LedgerBookTab[] = ['open', 'history'];
+
+  constructor() {
+    void this.trading.loadLedgerBook();
+  }
 }
 
 @Component({
@@ -41,6 +45,10 @@ export class OrdersPage {
 export class FillsPage {
   readonly trading = inject(TradingService);
   readonly fillTabs: LedgerBookTab[] = ['fills'];
+
+  constructor() {
+    void this.trading.loadLedgerBook();
+  }
 }
 
 @Component({
@@ -156,6 +164,7 @@ export class PositionsPage {
   readonly busyId = signal<string | null>(null);
   readonly groups = computed(() => {
     const sort = {
+      opened: (row: PositionDto) => timeValue(row.openedAt),
       symbol: (row: PositionDto) => row.symbol,
       side: (row: PositionDto) => row.side,
       entry: (row: PositionDto) => row.averageEntryPrice,
@@ -275,6 +284,10 @@ export class TradesPage {
   readonly pct = pct;
   readonly modeBadge = modeBadge;
   readonly list = new ListQuery();
+
+  constructor() {
+    void this.trading.loadLedgerBook();
+  }
   readonly rows = computed(() =>
     this.list.apply(
       this.trading.workspaceTrades(),

@@ -436,7 +436,7 @@ function depsFor(key: string): string {
                         </tr>
                       </thead>
                       <tbody>
-                        @for (bar of snap.bars; track bar.time) {
+                        @for (bar of newestBars(snap.bars); track bar.time) {
                           <tr>
                             <td>{{ formatTime(bar.time) }}</td>
                             <td [class]="signalClass(bar.signal)">{{ bar.signal }}</td>
@@ -628,6 +628,10 @@ export class StrategiesPage {
   readonly sides = sideOptions;
   readonly formatTime = formatTime;
   readonly money = money;
+
+  newestBars(bars: StrategyPreviewDto['bars']): StrategyPreviewDto['bars'] {
+    return [...bars].sort((a, b) => timeValue(b.time) - timeValue(a.time));
+  }
   readonly creating = signal<StrategyDraft | null>(null);
   readonly editingId = signal<string | null>(null);
   readonly draft = signal<StrategyDraft | null>(null);

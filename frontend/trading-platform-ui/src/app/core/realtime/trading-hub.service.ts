@@ -28,6 +28,9 @@ export class TradingHubService implements OnDestroy {
     this.connection.on('overview', (payload: PortfolioDto) => {
       this.trading.applyOverview(payload);
     });
+    this.connection.onreconnecting(() => this.connected.set(false));
+    this.connection.onreconnected(() => this.connected.set(true));
+    this.connection.onclose(() => this.connected.set(false));
     await this.connection.start();
     this.connected.set(true);
   }

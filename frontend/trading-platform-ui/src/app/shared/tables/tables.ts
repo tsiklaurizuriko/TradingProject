@@ -231,6 +231,7 @@ export class PositionTableComponent {
       this.positions(),
       (row) => [row.symbol, row.side],
       {
+        opened: (row) => timeValue(row.openedAt),
         symbol: (row) => row.symbol,
         side: (row) => row.side,
         entry: (row) => row.averageEntryPrice,

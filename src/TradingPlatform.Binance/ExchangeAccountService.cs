@@ -55,30 +55,22 @@ public sealed class ExchangeAccountService : IExchangeAccountService
 
         try
         {
-            var snapshot = await _signed.GetAccountAsync(keys.Value.ApiKey, keys.Value.ApiSecret, cancellationToken);
-            var canTrade = snapshot.ValueKind == JsonValueKind.Object
-                && snapshot.TryGetProperty("canTrade", out var trade)
-                && trade.GetBoolean();
-            var spotHoldings = HoldingsFromAccount(snapshot);
-            var spotUsdt = StableFree(spotHoldings);
-            var fundingHoldings = await TryFundingAsync(keys.Value.ApiKey, keys.Value.ApiSecret, cancellationToken);
-            var fundingUsdt = StableFree(fundingHoldings);
-            var futures = await TryFuturesAsync(keys.Value.ApiKey, keys.Value.ApiSecret, cancellationToken);
-            var openOrders = await TryOpenOrdersAsync(keys.Value.ApiKey, keys.Value.ApiSecret, cancellationToken);
             var previous = _cache.Current;
+            var futures = await TryFuturesAsync(keys.Value.ApiKey, keys.Value.ApiSecret, cancellationToken);
+            var canTrade = futures.CanTrade;
+            var openOrders = await TryOpenOrdersAsync(keys.Value.ApiKey, keys.Value.ApiSecret, cancellationToken);
             var (positionsOk, fetchedPositions) = await TryFuturesPositionsAsync(keys.Value.ApiKey, keys.Value.ApiSecret, cancellationToken);
             var openPositions = positionsOk ? fetchedPositions : previous.OpenPositions;
-            var merged = Merge(spotHoldings, fundingHoldings);
             var hint = Hint(keys.Value.ApiKey);
             var futuresEquity = futures.Equity > 0m ? futures.Equity : futures.Wallet;
             var tradable = futures.Available;
+            var spotUsdt = previous.SpotUsdt;
+            var fundingUsdt = previous.FundingUsdt;
             var usdtTotal = spotUsdt + fundingUsdt + futuresEquity;
             var message = BuildMessage(canTrade, spotUsdt, fundingUsdt, futures.Wallet, futures.Available);
 
             _logger.LogInformation(
-                "Binance wallets spotUsdt={Spot} fundingUsdt={Funding} futuresWallet={Futures} futuresFree={Free} orders={Orders} positions={Positions}",
-                spotUsdt,
-                fundingUsdt,
+                "Binance USD-M Isolated snapshot futuresWallet={Futures} futuresFree={Free} orders={Orders} positions={Positions}",
                 futures.Wallet,
                 futures.Available,
                 openOrders.Count,
@@ -95,7 +87,7 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                 FuturesUsdt = futures.Wallet,
                 FuturesEquity = futuresEquity,
                 Message = message,
-                Holdings = merged,
+                Holdings = previous.Holdings,
                 OpenOrders = openOrders,
                 OpenPositions = openPositions,
                 FuturesBookFresh = positionsOk,
@@ -201,16 +193,17 @@ public sealed class ExchangeAccountService : IExchangeAccountService
         }
     }
 
-    private async Task<(decimal Available, decimal Wallet, decimal Equity)> TryFuturesAsync(string apiKey, string apiSecret, CancellationToken cancellationToken)
+    private async Task<(decimal Available, decimal Wallet, decimal Equity, bool CanTrade)> TryFuturesAsync(string apiKey, string apiSecret, CancellationToken cancellationToken)
     {
         try
         {
             var json = await _signed.GetFuturesAccountAsync(apiKey, apiSecret, cancellationToken);
             if (json.ValueKind != JsonValueKind.Object)
             {
-                return (0m, 0m, 0m);
+                return (0m, 0m, 0m, false);
             }
 
+            var canTrade = !json.TryGetProperty("canTrade", out var trade) || trade.GetBoolean();
             var available = 0m;
             var wallet = 0m;
             var equity = 0m;
@@ -239,28 +232,19 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                 equity = json.TryGetProperty("totalMarginBalance", out var accountMargin) ? ParseDecimal(accountMargin) : wallet;
             }
 
-            return (available, wallet, equity > 0m ? equity : wallet);
+            return (available, wallet, equity > 0m ? equity : wallet, canTrade);
         }
         catch (Exception ex)
         {
             _logger.LogInformation("USD-M futures wallet skipped: {Message}", ex.Message);
         }
 
-        return (0m, 0m, 0m);
+        return (0m, 0m, 0m, false);
     }
 
     private async Task<IReadOnlyList<LiveOpenOrder>> TryOpenOrdersAsync(string apiKey, string apiSecret, CancellationToken cancellationToken)
     {
         var list = new List<LiveOpenOrder>();
-        try
-        {
-            list.AddRange(ParseOrders(await _signed.GetSpotOpenOrdersAsync(apiKey, apiSecret, cancellationToken), "Spot"));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogInformation("Spot open orders skipped: {Message}", ex.Message);
-        }
-
         try
         {
             list.AddRange(ParseOrders(await _signed.GetFuturesOpenOrdersAsync(apiKey, apiSecret, cancellationToken), "Futures"));

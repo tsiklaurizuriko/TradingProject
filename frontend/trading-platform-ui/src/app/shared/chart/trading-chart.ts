@@ -164,6 +164,7 @@ export class TradingChartComponent implements OnDestroy {
           text: 'EXIT',
         })),
     ];
+    markers.sort((a, b) => Number(a.time) - Number(b.time));
     this.markers?.setMarkers(markers);
     if (bars.length) {
       this.chart.timeScale().fitContent();

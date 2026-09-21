@@ -3,6 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import { UiStateService, WorkspaceMode } from '../ui/ui-state.service';
+import { byTimeDesc } from '../../shared/lists/list-query';
 import {
   BotDto,
   CreateBotsResult,
@@ -48,12 +49,15 @@ export class TradingService {
   readonly performance = signal<PerformanceDto | null>(null);
   private overviewInFlight = false;
   private overviewPoll: ReturnType<typeof setInterval> | null = null;
+  private hubConnected: (() => boolean) | null = null;
 
   readonly tickers = computed(() => this.overview()?.tickers ?? []);
   readonly bots = computed(() => this.overview()?.bots ?? []);
   readonly positions = computed(() => this.overview()?.positions ?? []);
-  readonly trades = computed(() => this.overview()?.trades ?? []);
-  readonly orders = computed(() => this.overview()?.orders ?? []);
+  readonly ledgerOrders = signal<OrderDto[] | null>(null);
+  readonly ledgerTrades = signal<TradeDto[] | null>(null);
+  readonly trades = computed(() => this.ledgerTrades() ?? this.overview()?.trades ?? []);
+  readonly orders = computed(() => this.ledgerOrders() ?? this.overview()?.orders ?? []);
   readonly signals = computed(() => this.overview()?.signals ?? []);
   readonly workspace = computed<WorkspaceMode>(() => this.ui.workspace());
   readonly workspaceBots = computed(() => {
@@ -74,7 +78,7 @@ export class TradingService {
       (row) => row.quantity > 0 && (ids.has(row.botId) || (live && row.source === 'Binance')),
     );
     if (!live) {
-      return rows;
+      return [...rows].sort((a, b) => byTimeDesc(a.openedAt, b.openedAt));
     }
     const byCoin = new Map<string, PositionDto>();
     for (const row of rows) {
@@ -96,7 +100,7 @@ export class TradingService {
         notionalUsdt: filled.quantity * entry,
       });
     }
-    return [...byCoin.values()];
+    return [...byCoin.values()].sort((a, b) => byTimeDesc(a.openedAt, b.openedAt));
   });
   readonly workspaceTrades = computed(() => {
     const ids = this.workspaceBotIds();
@@ -107,26 +111,32 @@ export class TradingService {
         ? snap.recentTrades.filter((row) => !this.trades().some((existing) => existing.id === row.id))
         : [];
     const merged = extra.length ? [...this.trades(), ...extra] : this.trades();
-    return merged.filter((row) => {
-      if (row.mode) {
-        return (row.mode === 'Live') === live;
-      }
-      return ids.has(row.botId);
-    });
+    return merged
+      .filter((row) => {
+        if (row.mode) {
+          return (row.mode === 'Live') === live;
+        }
+        return ids.has(row.botId);
+      })
+      .sort((a, b) => byTimeDesc(a.closedAt ?? a.openedAt, b.closedAt ?? b.openedAt));
   });
   readonly workspaceOrders = computed(() => {
     const ids = this.workspaceBotIds();
     const live = this.ui.isLive();
-    return this.orders().filter((row) => {
-      if (row.mode) {
-        return (row.mode === 'Live') === live;
-      }
-      return ids.has(row.botId) || (live && row.source === 'Binance');
-    });
+    return this.orders()
+      .filter((row) => {
+        if (row.mode) {
+          return (row.mode === 'Live') === live;
+        }
+        return ids.has(row.botId) || (live && row.source === 'Binance');
+      })
+      .sort((a, b) => byTimeDesc(a.createdAt, b.createdAt));
   });
   readonly workspaceSignals = computed(() => {
     const ids = this.workspaceBotIds();
-    return this.signals().filter((row) => ids.has(row.botId));
+    return this.signals()
+      .filter((row) => ids.has(row.botId))
+      .sort((a, b) => byTimeDesc(a.timestamp, b.timestamp));
   });
 
   belongsToWorkspace(bot: BotDto): boolean {
@@ -226,9 +236,16 @@ export class TradingService {
     }
   }
 
-  startOverviewPoll(periodMs = 12_000): void {
+  startOverviewPoll(isHubConnected?: () => boolean, periodMs = 12_000): void {
     this.stopOverviewPoll();
+    this.hubConnected = isHubConnected ?? null;
     this.overviewPoll = setInterval(() => {
+      if (this.hubConnected?.()) {
+        const last = this.lastRestAt()?.getTime() ?? 0;
+        if (Date.now() - last < 55_000) {
+          return;
+        }
+      }
       void this.refresh(true);
     }, periodMs);
   }
@@ -436,6 +453,16 @@ export class TradingService {
 
   listOrders(): Promise<OrderDto[]> {
     return firstValueFrom(this.http.get<OrderDto[]>(`${environment.apiBaseUrl}/trading/orders`));
+  }
+
+  async loadLedgerBook(): Promise<void> {
+    try {
+      const [orders, trades] = await Promise.all([this.listOrders(), this.listTrades()]);
+      this.ledgerOrders.set(orders ?? []);
+      this.ledgerTrades.set(trades ?? []);
+    } catch {
+      /* keep the last full ledger, or overview until the next visit */
+    }
   }
 
   listPositions(): Promise<PositionDto[]> {

@@ -10,7 +10,13 @@ namespace TradingPlatform.Binance;
 
 public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
 {
+    private readonly record struct KlineCacheKey(string Symbol, string Interval, int Limit);
+
     private static readonly SemaphoreSlim UniverseLock = new(1, 1);
+    private static readonly object KlineGate = new();
+    private static readonly Dictionary<KlineCacheKey, (IReadOnlyList<MarketCandle> Rows, DateTimeOffset Until)> KlineCache = new();
+    private static readonly object PriceGate = new();
+    private static readonly Dictionary<string, (decimal Price, DateTimeOffset Until)> PriceCache = new(StringComparer.OrdinalIgnoreCase);
     private static IReadOnlyList<RankedUsdtSpotSymbol>? CachedUniverse;
     private static DateTimeOffset CacheUntil;
 
@@ -30,7 +36,16 @@ public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
         CancellationToken cancellationToken = default)
     {
         var interval = timeframe.ToBinanceInterval();
-        var url = $"fapi/v1/klines?symbol={symbol.ToUpperInvariant()}&interval={interval}&limit={limit}";
+        var key = new KlineCacheKey(symbol.ToUpperInvariant(), interval, limit);
+        lock (KlineGate)
+        {
+            if (KlineCache.TryGetValue(key, out var hit) && DateTimeOffset.UtcNow < hit.Until)
+            {
+                return hit.Rows;
+            }
+        }
+
+        var url = $"fapi/v1/klines?symbol={key.Symbol}&interval={interval}&limit={limit}";
         var payload = await GetJsonOrNullAsync(url, cancellationToken);
         if (payload is null)
         {
@@ -38,6 +53,20 @@ public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
         }
 
         var candles = ParseClosedKlines(payload.Value);
+        if (candles.Count > 0)
+        {
+            var until = candles[^1].CloseTime + timeframe.ToDuration();
+            if (until <= DateTimeOffset.UtcNow)
+            {
+                until = DateTimeOffset.UtcNow.AddSeconds(15);
+            }
+
+            lock (KlineGate)
+            {
+                KlineCache[key] = (candles, until);
+            }
+        }
+
         _logger.LogDebug("Loaded {Count} closed USD-M {Interval} candles for {Symbol}", candles.Count, interval, symbol);
         return candles;
     }
@@ -100,7 +129,16 @@ public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
 
     public async Task<decimal> GetLastPriceAsync(string symbol, CancellationToken cancellationToken = default)
     {
-        var url = $"fapi/v1/ticker/price?symbol={symbol.ToUpperInvariant()}";
+        var id = symbol.ToUpperInvariant();
+        lock (PriceGate)
+        {
+            if (PriceCache.TryGetValue(id, out var hit) && DateTimeOffset.UtcNow < hit.Until)
+            {
+                return hit.Price;
+            }
+        }
+
+        var url = $"fapi/v1/ticker/price?symbol={id}";
         var payload = await GetJsonOrNullAsync(url, cancellationToken);
         if (payload is null)
         {
@@ -108,7 +146,13 @@ public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
             throw new HttpRequestException("Binance USD-M last price is unavailable.");
         }
 
-        return Dec(payload.Value.GetProperty("price"));
+        var price = Dec(payload.Value.GetProperty("price"));
+        lock (PriceGate)
+        {
+            PriceCache[id] = (price, DateTimeOffset.UtcNow.AddSeconds(8));
+        }
+
+        return price;
     }
 
     public async Task<IReadOnlyList<RankedUsdtSpotSymbol>> GetPaperUniverseAsync(CancellationToken cancellationToken = default)

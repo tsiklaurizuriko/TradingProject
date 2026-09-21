@@ -708,6 +708,8 @@ public sealed class BotLifecycleService : IBotLifecycleService
 
 public sealed class TradingQueryService : ITradingQueryService
 {
+    private const int OverviewLedgerLimit = 120;
+
     private readonly ITradingStore _store;
     private readonly IMarketDataCache _cache;
     private readonly IPublicMarketDataClient _market;
@@ -743,7 +745,7 @@ public sealed class TradingQueryService : ITradingQueryService
     public async Task<PortfolioDto> GetOverviewAsync(CancellationToken cancellationToken = default)
     {
         var bots = (await GetBotsAsync(cancellationToken)).ToList();
-        var tradeRows = await _store.GetRecentTradesAsync(2000, cancellationToken);
+        var tradeRows = await _store.GetRecentTradesAsync(OverviewLedgerLimit, cancellationToken);
         var trades = tradeRows.Select(MapTrade).ToList();
         var signals = (await _store.GetRecentSignalsAsync(20, cancellationToken))
             .Select(s => new SignalDto(s.Id, s.BotId, s.Symbol, s.SignalType.ToString(), s.Price, s.Reason, s.Timestamp))
@@ -791,7 +793,7 @@ public sealed class TradingQueryService : ITradingQueryService
             DateTimeOffset.UtcNow);
         positions = await StampMissingIsolatedProtectionAsync(positions, bots, cancellationToken);
         var orders = MapOrders(
-            await _store.GetRecentOrdersAsync(2000, cancellationToken),
+            await _store.GetRecentOrdersAsync(OverviewLedgerLimit, cancellationToken),
             tradeRows).ToList();
         foreach (var liveOrder in live.OpenOrders)
         {
@@ -857,7 +859,7 @@ public sealed class TradingQueryService : ITradingQueryService
     private async Task RefreshLiveCacheIfStaleAsync(CancellationToken cancellationToken)
     {
         var current = _live.Current;
-        if (current.UpdatedAt is { } at && DateTimeOffset.UtcNow - at < TimeSpan.FromSeconds(8))
+        if (current.UpdatedAt is { } at && DateTimeOffset.UtcNow - at < TimeSpan.FromSeconds(20))
         {
             return;
         }
