@@ -1,117 +1,46 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { TradingService } from '../../core/trading/trading.service';
-import { PositionDto, feeCash, formatTime, groupPositionsByStrategy, isProtectionOrder, money, modeBadge, notionalUsdt, orderKindLabel, orderStatusLabel, pct, pnlClass, price, qty, signedMoney } from '../../core/trading/trading.models';
+import { PositionDto, feeCash, formatTime, groupPositionsByStrategy, holdDuration, isolatedRoi, isLongSide, money, modeBadge, notionalUsdt, pct, pnlClass, price, qty, sideLabel, signedMoney } from '../../core/trading/trading.models';
 import { ToastService } from '../../core/ui/toast.service';
 import { UiStateService } from '../../core/ui/ui-state.service';
 import { ListQuery, timeValue } from '../../shared/lists/list-query';
 import { SortBtnComponent } from '../../shared/lists/list-tools';
 import { IconComponent } from '../../shared/icon/icon';
 import { ConfirmModalComponent, EmptyStateComponent } from '../../shared/ui/ui-kit';
+import { LedgerBookComponent, LedgerBookTab } from '../../shared/tables/ledger-book';
 
 @Component({
   selector: 'app-orders-page',
-  imports: [EmptyStateComponent, SortBtnComponent],
+  imports: [LedgerBookComponent],
   template: `
-    <section class="panel">
-      <div class="section-head" style="margin:0 0 14px">
-        <div class="tabs" role="tablist">
-          <button type="button" [class.is-on]="tab() === 'fills'" (click)="tab.set('fills')">Fills ({{ fillCount() }})</button>
-          <button type="button" [class.is-on]="tab() === 'protection'" (click)="tab.set('protection')">Stops / TP ({{ protectionCount() }})</button>
-          <button type="button" [class.is-on]="tab() === 'all'" (click)="tab.set('all')">All ({{ trading.workspaceOrders().length }})</button>
-        </div>
-      </div>
-      @if (visible().length === 0) {
-        <app-empty-state
-          [title]="tab() === 'protection' ? 'No working stops' : 'No orders yet'"
-          [message]="tab() === 'protection'
-            ? 'Isolated stop and take-profit waiting on Binance appear here.'
-            : 'Orders for the current header mode appear here.'"
-        />
-      } @else {
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th><app-sort-btn column="created" [query]="list">Created</app-sort-btn></th>
-              <th><app-sort-btn column="symbol" [query]="list">Coin</app-sort-btn></th>
-              <th><app-sort-btn column="kind" [query]="list">Kind</app-sort-btn></th>
-              <th><app-sort-btn column="side" [query]="list">Side</app-sort-btn></th>
-              <th><app-sort-btn column="status" [query]="list">Status</app-sort-btn></th>
-              <th class="num"><app-sort-btn column="qty" [query]="list" align="end">Qty</app-sort-btn></th>
-              <th class="num"><app-sort-btn column="price" [query]="list" align="end">Price</app-sort-btn></th>
-              <th class="num"><app-sort-btn column="pnl" [query]="list" align="end">PnL</app-sort-btn></th>
-              <th class="num"><app-sort-btn column="fee" [query]="list" align="end">Fee</app-sort-btn></th>
-              <th><app-sort-btn column="mode" [query]="list">Mode</app-sort-btn></th>
-              <th><app-sort-btn column="id" [query]="list">Id</app-sort-btn></th>
-            </tr>
-          </thead>
-          <tbody>
-            @for (row of rows(); track row.id) {
-              <tr>
-                <td>{{ formatTime(row.createdAt) }}</td>
-                <td>{{ row.symbol }}</td>
-                <td><span class="badge" [class.badge-paused]="isProtectionOrder(row)" [class.badge-ok]="!isProtectionOrder(row)">{{ orderKindLabel(row) }}</span></td>
-                <td><span class="badge" [class.badge-long]="row.side === 'Buy'" [class.badge-short]="row.side !== 'Buy'">{{ row.side }}</span></td>
-                <td>{{ orderStatusLabel(row) }}</td>
-                <td class="num">{{ qty(row.quantity) }}</td>
-                <td class="num">{{ price(row.price) }}</td>
-                <td class="num" [class]="pnlClass(row.pnL)">{{ signedMoney(row.pnL) }}</td>
-                <td class="num" [class]="pnlClass(feeCash(row.fee))">{{ signedMoney(feeCash(row.fee), 4) }}</td>
-                <td><span class="badge" [class]="modeBadge(row.mode || trading.workspace())">{{ row.mode || trading.workspace() }}</span></td>
-                <td class="tiny">{{ row.exchangeOrderId }}</td>
-              </tr>
-            }
-          </tbody>
-        </table>
-      }
-    </section>
+    <app-ledger-book
+      [orders]="trading.workspaceOrders()"
+      initialTab="open"
+      [allowedTabs]="orderTabs"
+      [showViewAll]="false"
+    />
   `,
 })
 export class OrdersPage {
   readonly trading = inject(TradingService);
-  readonly formatTime = formatTime;
-  readonly qty = qty;
-  readonly price = price;
-  readonly signedMoney = signedMoney;
-  readonly pnlClass = pnlClass;
-  readonly feeCash = feeCash;
-  readonly modeBadge = modeBadge;
-  readonly isProtectionOrder = isProtectionOrder;
-  readonly orderKindLabel = orderKindLabel;
-  readonly orderStatusLabel = orderStatusLabel;
-  readonly list = new ListQuery();
-  readonly tab = signal<'fills' | 'protection' | 'all'>('all');
-  readonly fillCount = computed(() => this.trading.workspaceOrders().filter((row) => !isProtectionOrder(row)).length);
-  readonly protectionCount = computed(() => this.trading.workspaceOrders().filter((row) => isProtectionOrder(row)).length);
-  readonly visible = computed(() => {
-    const rows = this.trading.workspaceOrders();
-    const tab = this.tab();
-    if (tab === 'fills') {
-      return rows.filter((row) => !isProtectionOrder(row));
-    }
-    if (tab === 'protection') {
-      return rows.filter((row) => isProtectionOrder(row));
-    }
-    return rows;
-  });
-  readonly rows = computed(() =>
-    this.list.apply(
-      this.visible(),
-      (row) => [row.symbol, row.side, row.status, row.exchangeOrderId, orderKindLabel(row)],
-      {
-        created: (row) => timeValue(row.createdAt),
-        symbol: (row) => row.symbol,
-        kind: (row) => orderKindLabel(row),
-        side: (row) => row.side,
-        status: (row) => orderStatusLabel(row),
-        qty: (row) => row.quantity,
-        price: (row) => row.price,
-        pnl: (row) => row.pnL,
-        fee: (row) => row.fee,
-        mode: (row) => row.mode || this.trading.workspace(),
-        id: (row) => row.exchangeOrderId,
-      },
-    ),
-  );
+  readonly orderTabs: LedgerBookTab[] = ['open', 'history'];
+}
+
+@Component({
+  selector: 'app-fills-page',
+  imports: [LedgerBookComponent],
+  template: `
+    <app-ledger-book
+      [orders]="trading.workspaceOrders()"
+      initialTab="fills"
+      [allowedTabs]="fillTabs"
+      [showViewAll]="false"
+    />
+  `,
+})
+export class FillsPage {
+  readonly trading = inject(TradingService);
+  readonly fillTabs: LedgerBookTab[] = ['fills'];
 }
 
 @Component({
@@ -154,6 +83,7 @@ export class OrdersPage {
                     <th class="num"><app-sort-btn column="liq" [query]="list" align="end">Liq</app-sort-btn></th>
                     <th>Margin mode</th>
                     <th class="num"><app-sort-btn column="pnl" [query]="list" align="end">PnL</app-sort-btn></th>
+                    <th class="num"><app-sort-btn column="roi" [query]="list" align="end">ROI</app-sort-btn></th>
                     <th><app-sort-btn column="mode" [query]="list">Mode</app-sort-btn></th>
                     <th></th>
                   </tr>
@@ -162,7 +92,7 @@ export class OrdersPage {
                   @for (row of group.rows; track row.id) {
                     <tr>
                       <td>{{ row.symbol }}</td>
-                      <td><span class="badge" [class.badge-long]="row.side === 'Buy' || row.side === 'Long'" [class.badge-short]="row.side !== 'Buy' && row.side !== 'Long'">{{ row.side === 'Buy' ? 'LONG' : row.side }}</span></td>
+                      <td><span class="badge" [class.badge-long]="row.side === 'Buy' || row.side === 'Long'" [class.badge-short]="row.side !== 'Buy' && row.side !== 'Long'">{{ row.side === 'Buy' || row.side === 'Long' ? 'Isolated Long' : 'Isolated Short' }}</span></td>
                       <td class="num">{{ price(row.averageEntryPrice) }}</td>
                       <td class="num">{{ price(row.currentPrice) }}</td>
                       <td class="num">{{ qty(row.quantity) }}</td>
@@ -175,6 +105,7 @@ export class OrdersPage {
                       <td class="num">{{ row.liquidationPrice ? price(row.liquidationPrice) : '—' }}</td>
                       <td>Isolated</td>
                       <td class="num" [class]="pnlClass(row.unrealizedPnL)">{{ signedMoney(row.unrealizedPnL) }}</td>
+                      <td class="num" [class]="pnlClass(row.unrealizedPnL)">{{ isolatedRoi(row.unrealizedPnL, row.marginUsdt) || '—' }}</td>
                       <td><span class="badge" [class]="modeBadge(trading.workspace())">{{ trading.workspace() }}</span></td>
                       <td>
                         <button
@@ -219,6 +150,7 @@ export class PositionsPage {
   readonly signedMoney = signedMoney;
   readonly pnlClass = pnlClass;
   readonly modeBadge = modeBadge;
+  readonly isolatedRoi = isolatedRoi;
   readonly list = new ListQuery();
   readonly pending = signal<PositionDto | null>(null);
   readonly busyId = signal<string | null>(null);
@@ -237,6 +169,7 @@ export class PositionsPage {
       tp: (row: PositionDto) => row.takeProfitPercent ?? 0,
       liq: (row: PositionDto) => row.liquidationPrice ?? 0,
       pnl: (row: PositionDto) => row.unrealizedPnL,
+      roi: (row: PositionDto) => row.marginUsdt ? row.unrealizedPnL / row.marginUsdt : 0,
       mode: () => this.trading.workspace(),
     };
     return groupPositionsByStrategy(this.trading.workspacePositions(), this.trading.workspaceBots()).map((group) => ({
@@ -281,20 +214,23 @@ export class PositionsPage {
   selector: 'app-trades-page',
   imports: [EmptyStateComponent, SortBtnComponent],
   template: `
-    <header class="page-header"><p>{{ trading.workspace() }} closed trades only.</p></header>
+    <header class="page-header"><p>{{ trading.workspace() }} closed Isolated positions — one row per round-trip, like Binance Position History.</p></header>
     <section class="panel">
       @if (trading.workspaceTrades().length === 0) {
-        <app-empty-state title="No trades yet" message="Closed fills for this workspace appear here." />
+        <app-empty-state title="No trades yet" message="Closed Isolated positions for this workspace appear here." />
       } @else {
         <table class="data-table">
           <thead>
             <tr>
-              <th><app-sort-btn column="time" [query]="list">Time</app-sort-btn></th>
+              <th><app-sort-btn column="opened" [query]="list">Opened</app-sort-btn></th>
+              <th><app-sort-btn column="closed" [query]="list">Closed</app-sort-btn></th>
+              <th><app-sort-btn column="hold" [query]="list">Duration</app-sort-btn></th>
               <th><app-sort-btn column="symbol" [query]="list">Coin</app-sort-btn></th>
               <th><app-sort-btn column="side" [query]="list">Side</app-sort-btn></th>
+              <th class="num"><app-sort-btn column="qty" [query]="list" align="end">Closed Vol</app-sort-btn></th>
               <th class="num"><app-sort-btn column="entry" [query]="list" align="end">Entry</app-sort-btn></th>
-              <th class="num"><app-sort-btn column="exit" [query]="list" align="end">Exit</app-sort-btn></th>
-              <th class="num"><app-sort-btn column="pnl" [query]="list" align="end">PnL</app-sort-btn></th>
+              <th class="num"><app-sort-btn column="exit" [query]="list" align="end">Avg Close</app-sort-btn></th>
+              <th class="num"><app-sort-btn column="pnl" [query]="list" align="end">Realized PnL</app-sort-btn></th>
               <th class="num"><app-sort-btn column="pnlPct" [query]="list" align="end">PnL %</app-sort-btn></th>
               <th class="num"><app-sort-btn column="fee" [query]="list" align="end">Fee</app-sort-btn></th>
               <th><app-sort-btn column="mode" [query]="list">Mode</app-sort-btn></th>
@@ -304,9 +240,12 @@ export class PositionsPage {
           <tbody>
             @for (row of rows(); track row.id) {
               <tr>
-                <td>{{ formatTime(row.closedAt ?? row.openedAt) }}</td>
+                <td>{{ formatTime(row.openedAt) }}</td>
+                <td>{{ formatTime(row.closedAt) }}</td>
+                <td>{{ holdDuration(row.openedAt, row.closedAt) }}</td>
                 <td>{{ row.symbol }}</td>
-                <td><span class="badge badge-long">LONG</span></td>
+                <td><span class="badge" [class.badge-long]="isLongSide(row.side)" [class.badge-short]="!isLongSide(row.side)">{{ sideLabel(row.side) }}</span></td>
+                <td class="num">{{ qty(row.quantity) }}</td>
                 <td class="num">{{ price(row.entryPrice) }}</td>
                 <td class="num">{{ price(row.exitPrice) }}</td>
                 <td class="num" [class]="pnlClass(row.pnL)">{{ signedMoney(row.pnL) }}</td>
@@ -325,6 +264,10 @@ export class PositionsPage {
 export class TradesPage {
   readonly trading = inject(TradingService);
   readonly formatTime = formatTime;
+  readonly holdDuration = holdDuration;
+  readonly isLongSide = isLongSide;
+  readonly sideLabel = sideLabel;
+  readonly qty = qty;
   readonly price = price;
   readonly signedMoney = signedMoney;
   readonly pnlClass = pnlClass;
@@ -335,11 +278,14 @@ export class TradesPage {
   readonly rows = computed(() =>
     this.list.apply(
       this.trading.workspaceTrades(),
-      (row) => [row.symbol, row.closedAt ? 'Closed' : 'Open'],
+      (row) => [row.symbol, sideLabel(row.side), row.closedAt ? 'Closed' : 'Open'],
       {
-        time: (row) => timeValue(row.closedAt ?? row.openedAt),
+        opened: (row) => timeValue(row.openedAt),
+        closed: (row) => timeValue(row.closedAt),
+        hold: (row) => timeValue(row.closedAt) - timeValue(row.openedAt),
         symbol: (row) => row.symbol,
-        side: () => 'LONG',
+        side: (row) => sideLabel(row.side),
+        qty: (row) => row.quantity,
         entry: (row) => row.entryPrice,
         exit: (row) => row.exitPrice,
         pnl: (row) => row.pnL,

@@ -74,7 +74,8 @@ public sealed record TradeDto(
     decimal Fees,
     DateTimeOffset OpenedAt,
     DateTimeOffset? ClosedAt,
-    string Mode = "Paper");
+    string Mode = "Paper",
+    string Side = "Long");
 
 public sealed record SignalDto(
     Guid Id,
@@ -322,7 +323,8 @@ public sealed record PerformanceTradeRow(
     DateTimeOffset OpenedAt,
     DateTimeOffset? ClosedAt,
     string StrategyName,
-    string Mode);
+    string Mode,
+    string Side = "Long");
 
 public sealed record PerformanceDayDto(string Date, decimal PnL, decimal Cumulative);
 

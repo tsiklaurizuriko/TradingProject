@@ -64,6 +64,8 @@ export class Shell {
         { path: '/portfolio', label: 'Portfolio', icon: 'pie' },
         { path: '/positions', label: 'Positions', icon: 'positions' },
         { path: '/orders', label: 'Orders', icon: 'orders' },
+        { path: '/fills', label: 'Trade History', icon: 'trades' },
+        { path: '/trades', label: 'Position History', icon: 'chart' },
       ],
     },
     {

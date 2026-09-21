@@ -418,10 +418,10 @@ export function isProtectionOrder(row: OrderDto): boolean {
 
 export function orderKindLabel(row: OrderDto): string {
   if (!isProtectionOrder(row)) {
-    return 'Fill';
+    return 'Market';
   }
   const kind = (row.kind || row.type || '').toLowerCase();
-  return kind.includes('take') ? 'Take profit' : 'Stop';
+  return kind.includes('take') ? 'Take Profit Market' : 'Stop Market';
 }
 
 export function orderStatusLabel(row: OrderDto): string {
@@ -429,8 +429,8 @@ export function orderStatusLabel(row: OrderDto): string {
   if (isProtectionOrder(row) && (status === 'SUBMITTED' || status === 'NEW' || status === 'WORKING')) {
     return 'Waiting';
   }
-  if (status === 'FILLED') {
-    return 'Filled';
+  if (status === 'FILLED' || status.includes('PARTIAL')) {
+    return status.includes('PARTIAL') ? 'Partial' : 'Filled';
   }
   if (status === 'CANCELLED' || status === 'CANCELED') {
     return 'Cancelled';
@@ -439,6 +439,36 @@ export function orderStatusLabel(row: OrderDto): string {
     return 'Failed';
   }
   return row.status;
+}
+
+export function isWorkingOrder(row: OrderDto): boolean {
+  const status = (row.status || '').toUpperCase();
+  const label = orderStatusLabel(row).toUpperCase();
+  if (label === 'WAITING') {
+    return true;
+  }
+  return status === 'SUBMITTED' || status === 'NEW' || status === 'WORKING' || status === 'OPEN' || status === 'PENDING';
+}
+
+export function isFillOrder(row: OrderDto): boolean {
+  if (isProtectionOrder(row) || isWorkingOrder(row)) {
+    return false;
+  }
+  const client = (row.clientOrderId || '').toUpperCase();
+  if (client.startsWith('BNT')) {
+    return true;
+  }
+  const status = (row.status || '').toUpperCase();
+  return status.includes('FILL');
+}
+
+export function isHistoryOrder(row: OrderDto): boolean {
+  return !isWorkingOrder(row) && !(row.clientOrderId || '').toUpperCase().startsWith('BNT');
+}
+
+export function tradeHistoryFills(rows: OrderDto[]): OrderDto[] {
+  const tagged = rows.filter((row) => (row.clientOrderId || '').toUpperCase().startsWith('BNT'));
+  return tagged.length ? tagged : rows.filter(isFillOrder);
 }
 
 export interface TradeDto {
@@ -454,6 +484,7 @@ export interface TradeDto {
   openedAt: string;
   closedAt: string | null;
   mode?: string;
+  side?: string;
 }
 
 export interface PerformanceDayDto {
@@ -685,6 +716,46 @@ export function formatTime(value: string | null | undefined): string {
     minute: '2-digit',
     hour12: false,
   });
+}
+
+export function isLongSide(side: string | null | undefined): boolean {
+  const value = (side || '').toUpperCase();
+  return value !== 'SELL' && value !== 'SHORT';
+}
+
+export function sideLabel(side: string | null | undefined): 'LONG' | 'SHORT' {
+  return isLongSide(side) ? 'LONG' : 'SHORT';
+}
+
+export function holdDuration(openedAt: string | null | undefined, closedAt: string | null | undefined): string {
+  if (!openedAt || !closedAt) {
+    return '—';
+  }
+  const ms = Date.parse(closedAt) - Date.parse(openedAt);
+  if (!Number.isFinite(ms) || ms < 0) {
+    return '—';
+  }
+  const minutes = Math.round(ms / 60000);
+  if (minutes < 1) {
+    return '<1m';
+  }
+  const days = Math.floor(minutes / (60 * 24));
+  const hours = Math.floor((minutes % (60 * 24)) / 60);
+  const mins = minutes % 60;
+  if (days > 0) {
+    return `${days}d ${hours}h ${mins}m`;
+  }
+  if (hours > 0) {
+    return `${hours}h ${mins}m`;
+  }
+  return `${mins}m`;
+}
+
+export function isolatedRoi(pnl: number | null | undefined, margin: number | null | undefined): string | null {
+  if (pnl == null || !margin) {
+    return null;
+  }
+  return pct((pnl / margin) * 100);
 }
 
 export function botStatus(status: string): { label: string; cls: string } {

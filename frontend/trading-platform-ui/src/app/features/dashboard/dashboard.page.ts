@@ -9,7 +9,8 @@ import { QuickActionsComponent } from '../../shared/actions/quick-actions';
 import { TradingChartComponent } from '../../shared/chart/trading-chart';
 import { AllocationChartComponent, GoalProgressComponent, PnlChartComponent, RiskOverviewComponent } from '../../shared/charts/overview-charts';
 import { MarketWatchlistComponent } from '../../shared/market/market-watchlist';
-import { BotTableComponent, PositionTableComponent, TradeTableComponent } from '../../shared/tables/tables';
+import { BotTableComponent } from '../../shared/tables/tables';
+import { LedgerBookComponent } from '../../shared/tables/ledger-book';
 import { MetricCardComponent, ConfirmModalComponent } from '../../shared/ui/ui-kit';
 
 @Component({
@@ -20,8 +21,7 @@ import { MetricCardComponent, ConfirmModalComponent } from '../../shared/ui/ui-k
     TradingChartComponent,
     MarketWatchlistComponent,
     BotTableComponent,
-    PositionTableComponent,
-    TradeTableComponent,
+    LedgerBookComponent,
     PnlChartComponent,
     AllocationChartComponent,
     QuickActionsComponent,

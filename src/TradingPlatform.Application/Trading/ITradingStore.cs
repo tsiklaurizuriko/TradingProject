@@ -66,6 +66,20 @@ public interface ITradingStore
     Task AddExecutionAsync(Execution execution, CancellationToken cancellationToken = default);
     Task AddSignalAsync(Signal signal, CancellationToken cancellationToken = default);
     Task AddTradeAsync(Trade trade, CancellationToken cancellationToken = default);
+    Task<bool> HasTradeCorrelationAsync(string correlationId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<Trade>> FindClosedTradesAroundAsync(
+        Guid botId,
+        string symbol,
+        DateTimeOffset from,
+        DateTimeOffset to,
+        CancellationToken cancellationToken = default);
+    void RemoveTrade(Trade trade);
+    Task<Trade?> FindClosedTradeNearAsync(
+        Guid botId,
+        string symbol,
+        DateTimeOffset around,
+        TimeSpan window,
+        CancellationToken cancellationToken = default);
     Task<Trade?> GetOpenTradeAsync(Guid botId, CancellationToken cancellationToken = default);
     Task<decimal> SumClosedPnLSinceAsync(Guid botId, DateTimeOffset sinceUtc, CancellationToken cancellationToken = default);
     Task<(int ConsecutiveLosses, DateTimeOffset? LastLossAt)> GetLossStreakAsync(Guid botId, CancellationToken cancellationToken = default);

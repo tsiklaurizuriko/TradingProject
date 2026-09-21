@@ -13,12 +13,14 @@ import {
   SignalDto,
   TradeDto,
   botStatus,
-  formatTime,
   groupPositionsByStrategy,
+  isLongSide,
   money,
   pct,
   pnlClass,
   price,
+  qty,
+  sideLabel,
   signedMoney,
 } from '../../core/trading/trading.models';
 
@@ -118,7 +120,8 @@ export class BotTableComponent {
   selector: 'app-position-table',
   imports: [RouterLink, IconComponent, SortBtnComponent, ConfirmModalComponent],
   template: `
-    <section class="panel panel-fill compact" [class.is-collapsed]="ui.isCollapsed('positions')">
+    <section class="panel panel-fill compact" [class.is-collapsed]="!embedded() && ui.isCollapsed('positions')" [class.is-embedded]="embedded()">
+      @if (!embedded()) {
       <div class="section-head">
         <button type="button" class="section-fold" (click)="ui.toggleCollapsed('positions')" [attr.aria-expanded]="!ui.isCollapsed('positions')">
           <app-icon name="chevron" [class.is-closed]="ui.isCollapsed('positions')" />
@@ -131,7 +134,8 @@ export class BotTableComponent {
           <a class="tiny" routerLink="/positions">View all</a>
         </div>
       </div>
-      @if (!ui.isCollapsed('positions')) {
+      }
+      @if (embedded() || !ui.isCollapsed('positions')) {
         @if (positions().length === 0) {
           <div class="empty-state">
             <div class="empty-diamond" aria-hidden="true"></div>
@@ -169,7 +173,7 @@ export class BotTableComponent {
                   @for (row of group.rows; track row.id) {
                     <tr>
                       <td><strong>{{ row.symbol }}</strong></td>
-                      <td><span class="badge" [class.badge-long]="row.side === 'Buy' || row.side === 'Long'" [class.badge-short]="row.side !== 'Buy' && row.side !== 'Long'">{{ row.side === 'Buy' ? 'LONG' : row.side }}</span></td>
+                      <td><span class="badge" [class.badge-long]="row.side === 'Buy' || row.side === 'Long'" [class.badge-short]="row.side !== 'Buy' && row.side !== 'Long'">{{ row.side === 'Buy' || row.side === 'Long' ? 'Isolated Long' : 'Isolated Short' }}</span></td>
                       <td class="num">{{ price(row.averageEntryPrice) }}</td>
                       <td class="num">{{ price(row.currentPrice) }}</td>
                       <td class="num">{{ money(size(row)) }}</td>
@@ -210,6 +214,7 @@ export class BotTableComponent {
 })
 export class PositionTableComponent {
   readonly positions = input<PositionDto[]>([]);
+  readonly embedded = input(false);
   readonly price = price;
   readonly pct = pct;
   readonly pnlClass = pnlClass;
@@ -291,27 +296,29 @@ export class PositionTableComponent {
   selector: 'app-trade-table',
   imports: [EmptyStateComponent, RouterLink, IconComponent, SortBtnComponent],
   template: `
-    <section class="panel panel-fill compact" [class.is-collapsed]="ui.isCollapsed('trades')">
+    <section class="panel panel-fill compact" [class.is-collapsed]="!embedded() && ui.isCollapsed('trades')" [class.is-embedded]="embedded()">
+      @if (!embedded()) {
       <div class="section-head">
         <button type="button" class="section-fold" (click)="ui.toggleCollapsed('trades')" [attr.aria-expanded]="!ui.isCollapsed('trades')">
           <app-icon name="chevron" [class.is-closed]="ui.isCollapsed('trades')" />
-          <h2>Recent Trades</h2>
+          <h2>Position History</h2>
         </button>
         <a class="tiny" routerLink="/trades">View all</a>
       </div>
-      @if (!ui.isCollapsed('trades')) {
+      }
+      @if (embedded() || !ui.isCollapsed('trades')) {
         @if (trades().length === 0) {
-          <app-empty-state title="No recent trades" message="Closed fills for this workspace appear here." />
+          <app-empty-state title="No closed positions" message="Closed Isolated round-trips for this workspace appear here." />
         } @else {
           <div class="table-scroll">
             <table class="data-table">
               <thead>
                 <tr>
-                  <th><app-sort-btn column="time" [query]="list">Time</app-sort-btn></th>
                   <th><app-sort-btn column="symbol" [query]="list">Coin</app-sort-btn></th>
                   <th><app-sort-btn column="side" [query]="list">Side</app-sort-btn></th>
+                  <th class="num"><app-sort-btn column="qty" [query]="list" align="end">Vol</app-sort-btn></th>
                   <th class="num"><app-sort-btn column="entry" [query]="list" align="end">Entry</app-sort-btn></th>
-                  <th class="num"><app-sort-btn column="exit" [query]="list" align="end">Exit</app-sort-btn></th>
+                  <th class="num"><app-sort-btn column="exit" [query]="list" align="end">Avg Close</app-sort-btn></th>
                   <th class="num"><app-sort-btn column="pnl" [query]="list" align="end">PnL</app-sort-btn></th>
                   <th class="num"><app-sort-btn column="pnlPct" [query]="list" align="end">PnL %</app-sort-btn></th>
                 </tr>
@@ -319,9 +326,9 @@ export class PositionTableComponent {
               <tbody>
                 @for (row of visible(); track row.id) {
                   <tr>
-                    <td>{{ formatTime(row.closedAt ?? row.openedAt) }}</td>
-                    <td>{{ row.symbol }}</td>
-                    <td><span class="badge badge-long">LONG</span></td>
+                    <td><strong>{{ row.symbol }}</strong></td>
+                    <td><span class="badge" [class.badge-long]="isLongSide(row.side)" [class.badge-short]="!isLongSide(row.side)">{{ sideLabel(row.side) }}</span></td>
+                    <td class="num">{{ qty(row.quantity) }}</td>
                     <td class="num">{{ price(row.entryPrice) }}</td>
                     <td class="num">{{ price(row.exitPrice) }}</td>
                     <td class="num" [class]="pnlClass(row.pnL)">{{ signedMoney(row.pnL) }}</td>
@@ -338,7 +345,10 @@ export class PositionTableComponent {
 })
 export class TradeTableComponent {
   readonly trades = input<TradeDto[]>([]);
-  readonly formatTime = formatTime;
+  readonly embedded = input(false);
+  readonly isLongSide = isLongSide;
+  readonly sideLabel = sideLabel;
+  readonly qty = qty;
   readonly price = price;
   readonly pnlClass = pnlClass;
   readonly signedMoney = signedMoney;
@@ -352,7 +362,8 @@ export class TradeTableComponent {
       {
         time: (row) => timeValue(row.closedAt ?? row.openedAt),
         symbol: (row) => row.symbol,
-        side: () => 'LONG',
+        side: (row) => sideLabel(row.side),
+        qty: (row) => row.quantity,
         entry: (row) => row.entryPrice,
         exit: (row) => row.exitPrice,
         pnl: (row) => row.pnL,

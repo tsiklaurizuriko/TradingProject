@@ -11,6 +11,7 @@ public static class BinanceConditionalAlgoOrder
     public const string PlacePath = "fapi/v1/algoOrder";
     public const string CancelPath = "fapi/v1/algoOrder";
     public const string OpenPath = "fapi/v1/openAlgoOrders";
+    public const string HistoryPath = "fapi/v1/allAlgoOrders";
 
     public static Dictionary<string, string> PlaceFields(
         string symbol,

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Logging;
@@ -742,7 +743,8 @@ public sealed class TradingQueryService : ITradingQueryService
     public async Task<PortfolioDto> GetOverviewAsync(CancellationToken cancellationToken = default)
     {
         var bots = (await GetBotsAsync(cancellationToken)).ToList();
-        var trades = await GetTradesAsync(cancellationToken);
+        var tradeRows = await _store.GetRecentTradesAsync(2000, cancellationToken);
+        var trades = tradeRows.Select(MapTrade).ToList();
         var signals = (await _store.GetRecentSignalsAsync(20, cancellationToken))
             .Select(s => new SignalDto(s.Id, s.BotId, s.Symbol, s.SignalType.ToString(), s.Price, s.Reason, s.Timestamp))
             .ToList();
@@ -788,7 +790,9 @@ public sealed class TradingQueryService : ITradingQueryService
             IsolatedOccupancy.HasFreshFuturesBook(live),
             DateTimeOffset.UtcNow);
         positions = await StampMissingIsolatedProtectionAsync(positions, bots, cancellationToken);
-        var orders = (await GetOrdersAsync(cancellationToken)).ToList();
+        var orders = MapOrders(
+            await _store.GetRecentOrdersAsync(2000, cancellationToken),
+            tradeRows).ToList();
         foreach (var liveOrder in live.OpenOrders)
         {
             if (orders.Any(existing => OrderLedger.Same(
@@ -999,31 +1003,40 @@ public sealed class TradingQueryService : ITradingQueryService
     public async Task<IReadOnlyList<OrderDto>> GetOrdersAsync(CancellationToken cancellationToken = default)
     {
         var orders = await _store.GetRecentOrdersAsync(2000, cancellationToken);
-        var trades = await _store.GetRecentTradesAsync(200, cancellationToken);
+        var trades = await _store.GetRecentTradesAsync(2000, cancellationToken);
+        return MapOrders(orders, trades);
+    }
+
+    private static List<OrderDto> MapOrders(IReadOnlyList<Order> orders, IReadOnlyList<Trade> trades)
+    {
         var pnlByExit = trades
             .Where(t => t.ExitOrderId is not null && t.ClosedAt is not null)
             .GroupBy(t => t.ExitOrderId!.Value)
             .ToDictionary(g => g.Key, g => g.First().PnL);
 
         return orders
-            .Select(o => new OrderDto(
-                o.Id,
-                o.ClientOrderId,
-                o.ExchangeOrderId,
-                o.BotId,
-                o.Symbol,
-                o.Side.ToString(),
-                o.Type.ToString(),
-                o.AverageFillPrice is > 0m ? o.AverageFillPrice : o.Price > 0m ? o.Price : null,
-                o.Quantity,
-                o.FilledQuantity,
-                o.Status.ToString(),
-                o.ExchangeTimestamp ?? o.CreatedAt,
-                "Bot",
-                pnlByExit.TryGetValue(o.Id, out var pnl) ? pnl : null,
-                o.Executions.Count == 0 ? null : o.Executions.Sum(e => e.Fee),
-                o.Mode.ToString(),
-                OrderLedger.Kind(o.Type.ToString())))
+            .Select(o =>
+            {
+                var fill = FillLedger(o);
+                return new OrderDto(
+                    o.Id,
+                    o.ClientOrderId,
+                    o.ExchangeOrderId,
+                    o.BotId,
+                    o.Symbol,
+                    o.Side.ToString(),
+                    o.Type.ToString(),
+                    o.AverageFillPrice is > 0m ? o.AverageFillPrice : o.Price > 0m ? o.Price : null,
+                    o.Quantity,
+                    o.FilledQuantity,
+                    o.Status.ToString(),
+                    o.ExchangeTimestamp ?? o.CreatedAt,
+                    "Bot",
+                    fill.PnL ?? (pnlByExit.TryGetValue(o.Id, out var pnl) ? pnl : null),
+                    fill.Fee ?? (o.Executions.Count == 0 ? null : o.Executions.Sum(e => e.Fee)),
+                    o.Mode.ToString(),
+                    OrderLedger.Kind(o.Type.ToString()));
+            })
             .ToList();
     }
 
@@ -1055,7 +1068,7 @@ public sealed class TradingQueryService : ITradingQueryService
         .ToList();
 
     public async Task<IReadOnlyList<TradeDto>> GetTradesAsync(CancellationToken cancellationToken = default) =>
-        (await _store.GetRecentTradesAsync(200, cancellationToken))
+        (await _store.GetRecentTradesAsync(2000, cancellationToken))
         .Select(MapTrade)
         .ToList();
 
@@ -1084,6 +1097,23 @@ public sealed class TradingQueryService : ITradingQueryService
         return BuildPerformance(modeLabel, rows, bots, unrealized, openPositions, tradingMode == TradingMode.Paper ? _options.PaperDefaultBalance : 0m);
     }
 
+    private static (decimal? PnL, decimal? Fee) FillLedger(Order order)
+    {
+        const string prefix = "binance-fill:";
+        var value = order.CorrelationId;
+        if (string.IsNullOrWhiteSpace(value) || !value.StartsWith(prefix, StringComparison.Ordinal))
+        {
+            return (null, null);
+        }
+
+        var parts = value[prefix.Length..].Split(':', 2);
+        decimal? pnl = decimal.TryParse(parts[0], CultureInfo.InvariantCulture, out var parsedPnL) ? parsedPnL : null;
+        decimal? fee = parts.Length > 1 && decimal.TryParse(parts[1], CultureInfo.InvariantCulture, out var parsedFee)
+            ? parsedFee
+            : null;
+        return (pnl, fee);
+    }
+
     private static TradeDto MapTrade(Trade t) =>
         new(
             t.Id,
@@ -1097,7 +1127,8 @@ public sealed class TradingQueryService : ITradingQueryService
             t.Fees,
             t.OpenedAt,
             t.ClosedAt,
-            t.Bot?.Mode.ToString() ?? "Paper");
+            t.Bot?.Mode.ToString() ?? "Paper",
+            t.Side == OrderSide.Sell ? "Short" : "Long");
 
     private static TradeDto MapTrade(PerformanceTradeRow t) =>
         new(
@@ -1112,7 +1143,8 @@ public sealed class TradingQueryService : ITradingQueryService
             t.Fees,
             t.OpenedAt,
             t.ClosedAt,
-            t.Mode);
+            t.Mode,
+            string.IsNullOrWhiteSpace(t.Side) ? "Long" : t.Side);
 
     private static PerformanceDto BuildPerformance(
         string mode,

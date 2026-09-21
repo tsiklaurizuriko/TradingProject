@@ -48,6 +48,37 @@ public sealed class BinanceSignedRestClient
             apiSecret,
             cancellationToken);
 
+    public Task<JsonElement> GetFuturesAllAlgoOrdersAsync(
+        string apiKey,
+        string apiSecret,
+        string symbol,
+        CancellationToken cancellationToken,
+        int limit = 1000)
+    {
+        var fields = new Dictionary<string, string>
+        {
+            ["algoType"] = "CONDITIONAL",
+            ["symbol"] = symbol.ToUpperInvariant(),
+            ["limit"] = Math.Clamp(limit, 1, 1000).ToString(CultureInfo.InvariantCulture)
+        };
+        return SendAsync(_futures, HttpMethod.Get, BinanceConditionalAlgoOrder.HistoryPath, fields, apiKey, apiSecret, cancellationToken);
+    }
+
+    public Task<JsonElement> GetFuturesAllOrdersAsync(
+        string apiKey,
+        string apiSecret,
+        string symbol,
+        CancellationToken cancellationToken,
+        int limit = 1000)
+    {
+        var fields = new Dictionary<string, string>
+        {
+            ["symbol"] = symbol.ToUpperInvariant(),
+            ["limit"] = Math.Clamp(limit, 1, 1000).ToString(CultureInfo.InvariantCulture)
+        };
+        return SendAsync(_futures, HttpMethod.Get, "fapi/v1/allOrders", fields, apiKey, apiSecret, cancellationToken);
+    }
+
     public Task<JsonElement> GetFuturesPositionsAsync(string apiKey, string apiSecret, CancellationToken cancellationToken) =>
         SendAsync(_futures, HttpMethod.Get, "fapi/v2/positionRisk", new Dictionary<string, string>(), apiKey, apiSecret, cancellationToken);
 
@@ -191,7 +222,7 @@ public sealed class BinanceSignedRestClient
         string symbol,
         string? orderId,
         CancellationToken cancellationToken,
-        int limit = 50)
+        int limit = 1000)
     {
         var fields = new Dictionary<string, string>
         {
@@ -204,6 +235,21 @@ public sealed class BinanceSignedRestClient
         }
 
         return SendAsync(_futures, HttpMethod.Get, "fapi/v1/userTrades", fields, apiKey, apiSecret, cancellationToken);
+    }
+
+    public Task<JsonElement> GetFuturesIncomeAsync(
+        string apiKey,
+        string apiSecret,
+        string incomeType,
+        CancellationToken cancellationToken,
+        int limit = 1000)
+    {
+        var fields = new Dictionary<string, string>
+        {
+            ["incomeType"] = incomeType,
+            ["limit"] = Math.Clamp(limit, 1, 1000).ToString(CultureInfo.InvariantCulture)
+        };
+        return SendAsync(_futures, HttpMethod.Get, "fapi/v1/income", fields, apiKey, apiSecret, cancellationToken);
     }
 
     public Task<JsonElement> CancelFuturesOrderAsync(

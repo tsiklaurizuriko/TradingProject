@@ -155,6 +155,24 @@ public sealed class LiveIsolatedReconciler
         var pnlPercent = position.AverageEntryPrice == 0m
             ? 0m
             : direction * (exit - position.AverageEntryPrice) / position.AverageEntryPrice * 100m;
+        var already = await _store.FindClosedTradeNearAsync(
+            bot.Id,
+            position.Symbol,
+            _clock.UtcNow,
+            TimeSpan.FromMinutes(15),
+            cancellationToken);
+        if (already is not null)
+        {
+            await CancelProtectiveRowAsync(LiveProtectivePrices.StopClientOrderId(bot.Id), cancellationToken);
+            await CancelProtectiveRowAsync(LiveProtectivePrices.TakeClientOrderId(bot.Id), cancellationToken);
+            bot.LastError = $"Isolated {position.Symbol} closed on Binance. Snapshot reconciled.";
+            _logger.LogInformation(
+                "LIVE Isolated {Symbol} is flat on Binance. Snapshot closed; trade already stored for bot {BotId}.",
+                position.Symbol,
+                bot.Id);
+            return;
+        }
+
         var openTrade = await _store.GetOpenTradeAsync(bot.Id, cancellationToken);
         if (openTrade is not null &&
             !string.Equals(openTrade.Symbol, position.Symbol, StringComparison.OrdinalIgnoreCase))

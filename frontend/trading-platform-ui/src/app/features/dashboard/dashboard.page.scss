@@ -40,13 +40,10 @@
 
 .dash-bots { grid-column: 1 / -1; height: 420px; }
 .dash-bots:has(.is-collapsed) { height: auto; }
-.dash-positions { grid-column: 1 / -1; height: 360px; }
-.dash-positions:has(.is-collapsed) { height: auto; }
-.dash-trades { grid-column: span 8; height: 260px; }
-.dash-trades:has(.is-collapsed) { height: auto; }
-.dash-quick { grid-column: span 4; height: 260px; }
-.dash-account { grid-column: span 4; min-height: 240px; height: 240px; min-width: 0; }
-.dash-pnl { grid-column: span 5; height: 240px; }
+.dash-book { grid-column: 1 / -1; min-height: 380px; height: 420px; }
+.dash-quick { grid-column: span 3; height: 240px; }
+.dash-account { grid-column: span 3; min-height: 240px; height: 240px; min-width: 0; }
+.dash-pnl { grid-column: span 3; height: 240px; }
 .dash-risk {
   grid-column: span 3;
   min-height: 240px;
@@ -120,28 +117,24 @@
 @media (max-width: 1399px) and (min-width: 1200px) {
   .dash-chart { grid-column: span 8; }
   .dash-watch { grid-column: span 4; }
-  .dash-trades { grid-column: span 7; }
-  .dash-quick { grid-column: span 5; }
 }
 
 @media (max-width: 1199px) and (min-width: 900px) {
   .dash-kpi { grid-column: span 4; }
   .dash-chart { grid-column: span 8; }
   .dash-watch { grid-column: span 4; }
-  .dash-trades { grid-column: span 8; }
-  .dash-quick { grid-column: span 4; }
 }
 
 @media (max-width: 899px) and (min-width: 600px) {
   .dash-kpi { grid-column: span 6; }
-  .dash-chart, .dash-watch, .dash-controls, .dash-bots, .dash-positions, .dash-trades, .dash-quick, .dash-account, .dash-pnl, .dash-risk {
+  .dash-chart, .dash-watch, .dash-controls, .dash-bots, .dash-book, .dash-quick, .dash-account, .dash-pnl, .dash-risk {
     grid-column: span 12;
   }
   .dash-chart, .dash-watch { height: 360px; }
 }
 
 @media (max-width: 599px) {
-  .dash-kpi, .dash-chart, .dash-watch, .dash-controls, .dash-bots, .dash-positions, .dash-trades, .dash-quick, .dash-account, .dash-pnl, .dash-risk {
+  .dash-kpi, .dash-chart, .dash-watch, .dash-controls, .dash-bots, .dash-book, .dash-quick, .dash-account, .dash-pnl, .dash-risk {
     grid-column: span 12;
   }
   .dash-kpi { height: auto; }

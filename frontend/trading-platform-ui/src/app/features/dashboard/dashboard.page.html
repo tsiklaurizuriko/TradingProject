@@ -137,11 +137,12 @@
   <div class="dash-bots">
     <app-bot-table [title]="isLive() ? 'Live Bots' : 'Paper Bots'" [bots]="modeBots()" [positions]="modePositions()" [signals]="trading.workspaceSignals()" (start)="startBot($event)" (stop)="stopBot($event)" />
   </div>
-  <div class="dash-positions">
-    <app-position-table [positions]="modePositions()" />
-  </div>
-  <div class="dash-trades">
-    <app-trade-table [trades]="modeTrades()" />
+  <div class="dash-book">
+    <app-ledger-book
+      [positions]="modePositions()"
+      [orders]="trading.workspaceOrders()"
+      [trades]="modeTrades()"
+    />
   </div>
   <div class="dash-quick">
     <app-quick-actions />

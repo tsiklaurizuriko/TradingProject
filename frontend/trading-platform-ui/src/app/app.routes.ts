@@ -9,7 +9,7 @@ import { TradingPage } from './features/trading/trading.page';
 import { ScannerPage, WatchlistPage } from './features/markets/markets.pages';
 import { BacktestingPage, StrategiesPage } from './features/research/research.pages';
 import { PerformancePage, PortfolioPage } from './features/account/account.pages';
-import { OrdersPage, PositionsPage, TradesPage } from './features/ledger/ledger.pages';
+import { OrdersPage, PositionsPage, TradesPage, FillsPage } from './features/ledger/ledger.pages';
 import { AdminPage, ExchangesPage, NotificationsPage, RiskPage, SettingsPage } from './features/system/system.pages';
 
 const page = (title: string, subtitle: string) => ({ title, subtitle });
@@ -33,8 +33,9 @@ export const routes: Routes = [
       { path: 'performance', component: PerformancePage, data: page('Performance', '') },
       { path: 'portfolio', component: PortfolioPage, data: page('Portfolio', '') },
       { path: 'positions', component: PositionsPage, data: page('Positions', '') },
-      { path: 'orders', component: OrdersPage, data: page('Orders', '') },
-      { path: 'trades', component: TradesPage, data: page('Trades', 'Closed trades with fees and PnL.') },
+      { path: 'orders', component: OrdersPage, data: page('Orders', 'Open orders and order history, like Binance.') },
+      { path: 'fills', component: FillsPage, data: page('Trade History', 'One row per fill.') },
+      { path: 'trades', component: TradesPage, data: page('Position History', 'Closed Isolated round-trips.') },
       { path: 'risk', component: RiskPage, data: page('Risk Management', '') },
       { path: 'exchanges', component: ExchangesPage, canActivate: [liveOnlyGuard], data: page('Live Connection', 'Binance USD-M API key. Nothing trades until you start one coin on Bots.') },
       { path: 'notifications', component: NotificationsPage, data: page('Notifications', '') },

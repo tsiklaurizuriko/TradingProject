@@ -33,6 +33,7 @@ public sealed class BinanceConditionalAlgoOrderTests
         fields.Should().NotContainKey("newClientOrderId");
         BinanceConditionalAlgoOrder.PlacePath.Should().Be("fapi/v1/algoOrder");
         BinanceConditionalAlgoOrder.OpenPath.Should().Be("fapi/v1/openAlgoOrders");
+        BinanceConditionalAlgoOrder.HistoryPath.Should().Be("fapi/v1/allAlgoOrders");
     }
 
     [Fact]

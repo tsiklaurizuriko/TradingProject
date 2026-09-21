@@ -396,6 +396,49 @@ public sealed class TradingStore : ITradingStore
         await _db.Trades.AddAsync(trade, cancellationToken);
     }
 
+    public Task<bool> HasTradeCorrelationAsync(string correlationId, CancellationToken cancellationToken = default) =>
+        _db.Trades.AnyAsync(t => t.CorrelationId == correlationId, cancellationToken);
+
+    public async Task<IReadOnlyList<Trade>> FindClosedTradesAroundAsync(
+        Guid botId,
+        string symbol,
+        DateTimeOffset from,
+        DateTimeOffset to,
+        CancellationToken cancellationToken = default)
+    {
+        var name = symbol.ToUpperInvariant();
+        var start = from - TimeSpan.FromMinutes(15);
+        var end = to + TimeSpan.FromMinutes(15);
+        return await _db.Trades
+            .Where(t => t.BotId == botId
+                && t.Symbol == name
+                && t.ClosedAt != null
+                && t.ClosedAt >= start
+                && t.ClosedAt <= end)
+            .ToListAsync(cancellationToken);
+    }
+
+    public void RemoveTrade(Trade trade) => _db.Trades.Remove(trade);
+
+    public Task<Trade?> FindClosedTradeNearAsync(
+        Guid botId,
+        string symbol,
+        DateTimeOffset around,
+        TimeSpan window,
+        CancellationToken cancellationToken = default)
+    {
+        var name = symbol.ToUpperInvariant();
+        var from = around - window;
+        var to = around + window;
+        return _db.Trades.FirstOrDefaultAsync(
+            t => t.BotId == botId
+                && t.Symbol == name
+                && t.ClosedAt != null
+                && t.ClosedAt >= from
+                && t.ClosedAt <= to,
+            cancellationToken);
+    }
+
     public Task<Trade?> GetOpenTradeAsync(Guid botId, CancellationToken cancellationToken = default) =>
         _db.Trades.FirstOrDefaultAsync(t => t.BotId == botId && t.ClosedAt == null, cancellationToken);
 
@@ -495,13 +538,14 @@ public sealed class TradingStore : ITradingStore
 
     public async Task<IReadOnlyList<Order>> GetRecentOrdersAsync(int take, CancellationToken cancellationToken = default) =>
         await _db.Orders
-            .Include(o => o.Executions)
+            .AsNoTracking()
             .OrderByDescending(o => o.CreatedAt)
             .Take(take)
             .ToListAsync(cancellationToken);
 
     public async Task<IReadOnlyList<Trade>> GetRecentTradesAsync(int take, CancellationToken cancellationToken = default) =>
         await _db.Trades
+            .AsNoTracking()
             .IgnoreQueryFilters()
             .Include(t => t.Bot)
             .OrderByDescending(t => t.ClosedAt ?? t.OpenedAt)
@@ -530,7 +574,8 @@ public sealed class TradingStore : ITradingStore
                 t.OpenedAt,
                 t.ClosedAt,
                 t.Strategy.Name,
-                t.Bot.Mode.ToString()))
+                t.Bot.Mode.ToString(),
+                t.Side == OrderSide.Sell ? "Short" : "Long"))
             .ToListAsync(cancellationToken);
 
     public async Task<IReadOnlyList<Signal>> GetRecentSignalsAsync(int take, CancellationToken cancellationToken = default) =>

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TradingPlatform.Application.Abstractions.Exchange;
 using TradingPlatform.Application.Trading;
@@ -7,16 +8,22 @@ using TradingPlatform.Domain.Bots;
 using TradingPlatform.Domain.Errors;
 using TradingPlatform.Domain.Identity;
 using TradingPlatform.Domain.Orders;
+using TradingPlatform.Domain.Trades;
 using TradingPlatform.Domain.Trading;
 
 namespace TradingPlatform.Binance;
 
 public sealed class ExchangeAccountService : IExchangeAccountService
 {
+    private static readonly SemaphoreSlim HistoryGate = new(1, 1);
+    private static readonly TimeSpan HistoryEvery = TimeSpan.FromMinutes(4);
+    private static DateTimeOffset LastHistoryUtc = DateTimeOffset.MinValue;
+
     private readonly IExchangeCredentialStore _store;
     private readonly ITradingStore _trading;
     private readonly BinanceSignedRestClient _signed;
     private readonly ILiveAccountCache _cache;
+    private readonly IServiceScopeFactory _scopes;
     private readonly ILogger<ExchangeAccountService> _logger;
 
     public ExchangeAccountService(
@@ -24,12 +31,14 @@ public sealed class ExchangeAccountService : IExchangeAccountService
         ITradingStore trading,
         BinanceSignedRestClient signed,
         ILiveAccountCache cache,
+        IServiceScopeFactory scopes,
         ILogger<ExchangeAccountService> logger)
     {
         _store = store;
         _trading = trading;
         _signed = signed;
         _cache = cache;
+        _scopes = scopes;
         _logger = logger;
     }
 
@@ -94,17 +103,14 @@ public sealed class ExchangeAccountService : IExchangeAccountService
             });
             try
             {
-                await PersistFuturesLedgerAsync(
-                    keys.Value.ApiKey,
-                    keys.Value.ApiSecret,
-                    openOrders,
-                    openPositions,
-                    cancellationToken);
+                await PersistOpenLedgerAsync(openOrders, openPositions, cancellationToken);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Live Isolated order ledger persist failed");
+                _logger.LogWarning(ex, "Live Isolated open-order persist failed");
             }
+
+            QueueHistoryPersist(keys.Value.ApiKey, keys.Value.ApiSecret, openPositions);
             return new ExchangeConnectionDto(
                 true,
                 canTrade,
@@ -315,43 +321,66 @@ public sealed class ExchangeAccountService : IExchangeAccountService
         }
     }
 
-    private async Task PersistFuturesLedgerAsync(
+    private void QueueHistoryPersist(
         string apiKey,
         string apiSecret,
+        IReadOnlyList<LiveOpenPosition> openPositions)
+    {
+        if (DateTimeOffset.UtcNow - LastHistoryUtc < HistoryEvery)
+        {
+            return;
+        }
+
+        if (!HistoryGate.Wait(0))
+        {
+            return;
+        }
+
+        var snapshot = openPositions.ToList();
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await using var scope = _scopes.CreateAsyncScope();
+                var inner = (ExchangeAccountService)scope.ServiceProvider.GetRequiredService<IExchangeAccountService>();
+                await inner.PersistHistoryLedgerAsync(apiKey, apiSecret, snapshot, CancellationToken.None);
+                LastHistoryUtc = DateTimeOffset.UtcNow;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Live Isolated history persist skipped");
+            }
+            finally
+            {
+                HistoryGate.Release();
+            }
+        });
+    }
+
+    private async Task<Dictionary<string, Bot>> LoadLiveBotsBySymbolAsync(CancellationToken cancellationToken)
+    {
+        var user = await _trading.GetFirstAdminAsync(cancellationToken);
+        return (await _trading.ListWorkspaceBotsAsync(user.Id, TradingMode.Live, cancellationToken))
+            .Where(bot => bot.StrategyVersion is not null)
+            .GroupBy(bot => bot.Symbol, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group => group.OrderBy(bot => bot.Status == BotStatus.Running ? 0 : 1).ThenByDescending(bot => bot.StartedAt).First(),
+                StringComparer.OrdinalIgnoreCase);
+    }
+
+    private async Task PersistOpenLedgerAsync(
         IReadOnlyList<LiveOpenOrder> openOrders,
         IReadOnlyList<LiveOpenPosition> openPositions,
         CancellationToken cancellationToken)
     {
-        var user = await _trading.GetFirstAdminAsync(cancellationToken);
-        var bots = new Dictionary<string, Bot>(StringComparer.OrdinalIgnoreCase);
+        var bots = await LoadLiveBotsBySymbolAsync(cancellationToken);
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        async Task<Bot?> BotFor(string symbol)
-        {
-            var key = symbol.Trim().ToUpperInvariant();
-            if (key.Length == 0)
-            {
-                return null;
-            }
-
-            if (bots.TryGetValue(key, out var cached))
-            {
-                return cached;
-            }
-
-            var bot = await _trading.FindBotBySymbolAsync(user.Id, key, TradingMode.Live, null, null, cancellationToken);
-            if (bot is not null)
-            {
-                bots[key] = bot;
-            }
-
-            return bot;
-        }
-
         foreach (var row in openOrders.Where(item =>
                      string.Equals(item.Venue, "Futures", StringComparison.OrdinalIgnoreCase)))
         {
-            var bot = await BotFor(row.Symbol);
-            if (bot is null)
+            if (!bots.TryGetValue(row.Symbol, out var bot) &&
+                !bots.TryGetValue(row.Symbol.Trim().ToUpperInvariant(), out bot))
             {
                 continue;
             }
@@ -376,12 +405,63 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                 cancellationToken);
         }
 
-        foreach (var position in openPositions.Where(item => item.Quantity > 0m))
+        await _trading.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task PersistHistoryLedgerAsync(
+        string apiKey,
+        string apiSecret,
+        IReadOnlyList<LiveOpenPosition> openPositions,
+        CancellationToken cancellationToken)
+    {
+        var bots = await LoadLiveBotsBySymbolAsync(cancellationToken);
+        Bot? BotFor(string symbol)
         {
-            var bot = await BotFor(position.Symbol);
+            var key = symbol.Trim().ToUpperInvariant();
+            return key.Length == 0 ? null : bots.GetValueOrDefault(key);
+        }
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var fillsBySymbol = new Dictionary<string, List<UserTradeFill>>(StringComparer.OrdinalIgnoreCase);
+        var symbols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var openCoins = new HashSet<string>(
+            openPositions.Where(item => item.Quantity > 0m).Select(item => item.Symbol),
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var coin in openCoins)
+        {
+            symbols.Add(coin);
+        }
+
+        IReadOnlyList<IncomeRow> income = [];
+        try
+        {
+            var incomeJson = await _signed.GetFuturesIncomeAsync(
+                apiKey,
+                apiSecret,
+                "REALIZED_PNL",
+                cancellationToken);
+            income = ParseIncome(incomeJson);
+            foreach (var row in income)
+            {
+                symbols.Add(row.Symbol);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogInformation("Futures realized PnL income skipped: {Message}", ex.Message);
+        }
+
+        foreach (var symbol in symbols)
+        {
+            var bot = BotFor(symbol);
             if (bot is null)
             {
                 continue;
+            }
+
+            if (openCoins.Contains(symbol))
+            {
+                await PersistOrderHistoryAsync(bot, symbol, apiKey, apiSecret, seen, cancellationToken);
             }
 
             try
@@ -389,36 +469,156 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                 var json = await _signed.GetFuturesUserTradesAsync(
                     apiKey,
                     apiSecret,
-                    position.Symbol,
+                    symbol,
                     null,
                     cancellationToken);
-                foreach (var trade in ParseUserTrades(json))
+                var fills = ParseUserTrades(json).ToList();
+                fillsBySymbol[symbol] = fills;
+                foreach (var trade in fills)
                 {
                     await UpsertLiveOrderAsync(
                         bot,
-                        position.Symbol,
+                        symbol,
                         trade.Side,
                         OrderType.Market,
                         OrderStatus.Filled,
                         trade.Price,
                         trade.Quantity,
                         trade.Quantity,
-                        null,
+                        BinanceClosedFill.TradeKey(trade.TradeId),
                         trade.OrderId,
                         trade.Time,
                         seen,
                         cancellationToken,
                         trade.Fee,
-                        trade.TradeId);
+                        trade.TradeId,
+                        trade.RealizedPnl);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogInformation("userTrades skipped for {Symbol}: {Message}", position.Symbol, ex.Message);
+                _logger.LogInformation("userTrades skipped for {Symbol}: {Message}", symbol, ex.Message);
             }
         }
 
+        foreach (var (symbol, fills) in fillsBySymbol)
+        {
+            var bot = BotFor(symbol);
+            if (bot is null)
+            {
+                continue;
+            }
+
+            foreach (var trip in BinanceClosedFill.RoundTrips(
+                         symbol,
+                         fills.Select(item => new BinanceClosedFill.Fill(
+                             item.Side,
+                             item.Price,
+                             item.Quantity,
+                             item.Fee,
+                             item.Time,
+                             item.TradeId,
+                             item.RealizedPnl)).ToList()))
+            {
+                await UpsertClosedTradeAsync(bot, trip, cancellationToken);
+            }
+        }
+
+        foreach (var row in income)
+        {
+            if (fillsBySymbol.TryGetValue(row.Symbol, out var known) && known.Count > 0)
+            {
+                continue;
+            }
+
+            var bot = BotFor(row.Symbol);
+            if (bot is null)
+            {
+                continue;
+            }
+
+            var fill = MatchFill(fillsBySymbol, row);
+            await UpsertClosedTradeAsync(
+                bot,
+                new BinanceClosedFill.ClosedIsolated(
+                    row.Symbol,
+                    fill?.Side == OrderSide.Buy ? OrderSide.Sell : OrderSide.Buy,
+                    fill?.Quantity ?? 0m,
+                    fill is { Quantity: > 0m, Price: > 0m }
+                        ? BinanceClosedFill.EntryPrice(fill.Side, fill.Price, fill.Quantity, fill.RealizedPnl)
+                        : 0m,
+                    fill?.Price ?? 0m,
+                    fill is not null && BinanceClosedFill.IsClosing(fill.RealizedPnl) ? fill.RealizedPnl : row.Pnl,
+                    fill?.Fee ?? 0m,
+                    fill?.Time ?? row.Time,
+                    fill?.Time ?? row.Time,
+                    string.IsNullOrWhiteSpace(row.TradeId) ? row.TranId.ToString() : row.TradeId),
+                cancellationToken);
+        }
+
         await _trading.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task PersistOrderHistoryAsync(
+        Bot bot,
+        string symbol,
+        string apiKey,
+        string apiSecret,
+        HashSet<string> seen,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var json = await _signed.GetFuturesAllOrdersAsync(apiKey, apiSecret, symbol, cancellationToken);
+            foreach (var row in ParseOrders(json, "Futures"))
+            {
+                await UpsertLiveOrderAsync(
+                    bot,
+                    symbol,
+                    OrderLedger.ParseSide(row.Side),
+                    OrderLedger.ParseType(row.Type),
+                    OrderLedger.ParseStatus(row.Status),
+                    row.Price is > 0m ? row.Price : null,
+                    row.Quantity,
+                    row.FilledQuantity,
+                    row.ClientOrderId,
+                    row.ExchangeOrderId,
+                    row.CreatedAt,
+                    seen,
+                    cancellationToken);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogInformation("allOrders skipped for {Symbol}: {Message}", symbol, ex.Message);
+        }
+
+        try
+        {
+            var json = await _signed.GetFuturesAllAlgoOrdersAsync(apiKey, apiSecret, symbol, cancellationToken);
+            foreach (var row in ParseAlgoOrders(json))
+            {
+                var qty = row.Quantity > 0m ? row.Quantity : 0m;
+                await UpsertLiveOrderAsync(
+                    bot,
+                    symbol,
+                    OrderLedger.ParseSide(row.Side),
+                    OrderLedger.ParseType(row.Type),
+                    OrderLedger.ParseStatus(row.Status),
+                    row.Price is > 0m ? row.Price : null,
+                    qty,
+                    OrderLedger.ParseStatus(row.Status) == OrderStatus.Filled ? qty : 0m,
+                    row.ClientOrderId,
+                    row.ExchangeOrderId,
+                    row.CreatedAt,
+                    seen,
+                    cancellationToken);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogInformation("allAlgoOrders skipped for {Symbol}: {Message}", symbol, ex.Message);
+        }
     }
 
     private async Task UpsertLiveOrderAsync(
@@ -436,18 +636,21 @@ public sealed class ExchangeAccountService : IExchangeAccountService
         HashSet<string> seen,
         CancellationToken cancellationToken,
         decimal? fee = null,
-        string? tradeId = null)
+        string? tradeId = null,
+        decimal? realizedPnl = null)
     {
-        var clientKey = OrderLedger.ClientKey(clientOrderId, exchangeOrderId);
+        var fillRow = !string.IsNullOrWhiteSpace(tradeId);
+        var clientKey = OrderLedger.ClientKey(clientOrderId, fillRow ? null : exchangeOrderId);
         if (clientKey.Length == 0)
         {
             return;
         }
 
         if (!seen.Add("c:" + clientKey)
-            || (!string.IsNullOrWhiteSpace(exchangeOrderId) && !seen.Add("x:" + exchangeOrderId))
-            || await _trading.HasKnownOrderAsync(clientKey, exchangeOrderId, cancellationToken)
-            || (!string.IsNullOrWhiteSpace(clientOrderId)
+            || (!fillRow && !string.IsNullOrWhiteSpace(exchangeOrderId) && !seen.Add("x:" + exchangeOrderId))
+            || await _trading.HasKnownOrderAsync(clientKey, fillRow ? null : exchangeOrderId, cancellationToken)
+            || (!fillRow
+                && !string.IsNullOrWhiteSpace(clientOrderId)
                 && !string.Equals(clientOrderId, clientKey, StringComparison.Ordinal)
                 && await _trading.HasKnownOrderAsync(clientOrderId, exchangeOrderId, cancellationToken)))
         {
@@ -473,7 +676,12 @@ public sealed class ExchangeAccountService : IExchangeAccountService
             IdempotencyKey = clientKey,
             ExchangeOrderId = exchangeOrderId,
             Mode = TradingMode.Live,
-            CorrelationId = "binance-ledger",
+            CorrelationId = realizedPnl is not null
+                ? "binance-fill:"
+                    + realizedPnl.Value.ToString(CultureInfo.InvariantCulture)
+                    + ":"
+                    + (fee ?? 0m).ToString(CultureInfo.InvariantCulture)
+                : "binance-ledger",
             SubmittedAt = createdAt,
             ExchangeTimestamp = createdAt,
             CreatedAt = createdAt
@@ -497,7 +705,154 @@ public sealed class ExchangeAccountService : IExchangeAccountService
         }
     }
 
-    private static IEnumerable<(string OrderId, OrderSide Side, decimal Price, decimal Quantity, decimal Fee, DateTimeOffset Time, string TradeId)> ParseUserTrades(JsonElement json)
+    private async Task UpsertClosedTradeAsync(
+        Bot bot,
+        BinanceClosedFill.ClosedIsolated trip,
+        CancellationToken cancellationToken)
+    {
+        if (trip.RealizedPnl == 0m && trip.Quantity <= 0m)
+        {
+            return;
+        }
+
+        var correlationId = string.IsNullOrWhiteSpace(trip.CloseTradeId)
+            ? BinanceClosedFill.TradeKey(trip.Symbol + trip.ClosedAt.ToUnixTimeMilliseconds())
+            : BinanceClosedFill.TradeKey(trip.CloseTradeId);
+        var around = await _trading.FindClosedTradesAroundAsync(
+            bot.Id,
+            trip.Symbol,
+            trip.OpenedAt,
+            trip.ClosedAt,
+            cancellationToken);
+        var existing = around.FirstOrDefault(item =>
+                           string.Equals(item.CorrelationId, correlationId, StringComparison.OrdinalIgnoreCase))
+                       ?? around.OrderByDescending(item => item.ClosedAt).FirstOrDefault();
+        foreach (var extra in around.Where(item => existing is not null && item.Id != existing.Id))
+        {
+            _trading.RemoveTrade(extra);
+        }
+
+        if (existing is not null)
+        {
+            existing.Side = trip.EntrySide;
+            existing.Quantity = trip.Quantity > 0m ? trip.Quantity : existing.Quantity;
+            existing.ExitPrice = trip.ExitPrice > 0m ? trip.ExitPrice : existing.ExitPrice;
+            existing.EntryPrice = trip.EntryPrice > 0m ? trip.EntryPrice : existing.EntryPrice;
+            existing.PnL = trip.RealizedPnl;
+            existing.PnLPercent = BinanceClosedFill.PnLPercent(
+                existing.EntryPrice,
+                existing.Quantity,
+                trip.RealizedPnl);
+            existing.Fees = trip.Fees;
+            existing.OpenedAt = trip.OpenedAt;
+            existing.ClosedAt = trip.ClosedAt;
+            existing.CorrelationId = correlationId;
+            return;
+        }
+
+        if (bot.StrategyVersion is null)
+        {
+            return;
+        }
+
+        await _trading.AddTradeAsync(new Trade
+        {
+            BotId = bot.Id,
+            StrategyId = bot.StrategyVersion.StrategyId,
+            StrategyVersionId = bot.StrategyVersionId,
+            Symbol = trip.Symbol.ToUpperInvariant(),
+            Side = trip.EntrySide,
+            Quantity = trip.Quantity,
+            EntryPrice = trip.EntryPrice,
+            ExitPrice = trip.ExitPrice,
+            PnL = trip.RealizedPnl,
+            PnLPercent = BinanceClosedFill.PnLPercent(trip.EntryPrice, trip.Quantity, trip.RealizedPnl),
+            Fees = trip.Fees,
+            OpenedAt = trip.OpenedAt,
+            ClosedAt = trip.ClosedAt,
+            CorrelationId = correlationId
+        }, cancellationToken);
+    }
+
+    private static UserTradeFill? MatchFill(
+        IReadOnlyDictionary<string, List<UserTradeFill>> fillsBySymbol,
+        IncomeRow income)
+    {
+        if (!fillsBySymbol.TryGetValue(income.Symbol, out var fills) || fills.Count == 0)
+        {
+            return null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(income.TradeId))
+        {
+            var exact = fills.FirstOrDefault(item => item.TradeId == income.TradeId);
+            if (exact is not null)
+            {
+                return exact;
+            }
+        }
+
+        return fills
+            .Where(item => BinanceClosedFill.IsClosing(item.RealizedPnl) && Math.Abs((item.Time - income.Time).TotalSeconds) <= 5)
+            .OrderBy(item => Math.Abs(item.RealizedPnl - income.Pnl))
+            .FirstOrDefault();
+    }
+
+    private sealed record IncomeRow(string Symbol, decimal Pnl, DateTimeOffset Time, long TranId, string TradeId);
+
+    private sealed record UserTradeFill(
+        string OrderId,
+        OrderSide Side,
+        decimal Price,
+        decimal Quantity,
+        decimal Fee,
+        DateTimeOffset Time,
+        string TradeId,
+        decimal RealizedPnl);
+
+    private static IReadOnlyList<IncomeRow> ParseIncome(JsonElement json)
+    {
+        if (json.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        var rows = new List<IncomeRow>();
+        foreach (var row in json.EnumerateArray())
+        {
+            var symbol = row.TryGetProperty("symbol", out var symbolEl) ? symbolEl.GetString() ?? "" : "";
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                continue;
+            }
+
+            var created = DateTimeOffset.UtcNow;
+            if (row.TryGetProperty("time", out var timeEl) && timeEl.TryGetInt64(out var ms))
+            {
+                created = DateTimeOffset.FromUnixTimeMilliseconds(ms);
+            }
+
+            var tranId = 0L;
+            if (row.TryGetProperty("tranId", out var tranEl))
+            {
+                if (tranEl.ValueKind == JsonValueKind.Number)
+                {
+                    tranEl.TryGetInt64(out tranId);
+                }
+                else
+                {
+                    long.TryParse(tranEl.GetString(), out tranId);
+                }
+            }
+
+            var tradeId = row.TryGetProperty("tradeId", out var tradeEl) ? tradeEl.ToString() : "";
+            rows.Add(new IncomeRow(symbol.ToUpperInvariant(), ParseDecimal(row, "income"), created, tranId, tradeId));
+        }
+
+        return rows;
+    }
+
+    private static IEnumerable<UserTradeFill> ParseUserTrades(JsonElement json)
     {
         if (json.ValueKind != JsonValueKind.Array)
         {
@@ -514,19 +869,21 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                 created = DateTimeOffset.FromUnixTimeMilliseconds(ms);
             }
 
-            yield return (
+            yield return new UserTradeFill(
                 orderId,
                 OrderLedger.ParseSide(row.TryGetProperty("side", out var sideEl) ? sideEl.GetString() : null),
                 ParseDecimal(row, "price"),
                 ParseDecimal(row, "qty"),
                 Math.Abs(ParseDecimal(row, "commission")),
                 created,
-                tradeId);
+                tradeId,
+                ParseDecimal(row, "realizedPnl"));
         }
     }
 
     private static IReadOnlyList<LiveOpenOrder> ParseAlgoOrders(JsonElement json)
     {
+        json = AsOrderArray(json);
         if (json.ValueKind != JsonValueKind.Array)
         {
             return [];
@@ -571,6 +928,7 @@ public sealed class ExchangeAccountService : IExchangeAccountService
 
     private static IReadOnlyList<LiveOpenOrder> ParseOrders(JsonElement json, string venue)
     {
+        json = AsOrderArray(json);
         if (json.ValueKind != JsonValueKind.Array)
         {
             return [];
@@ -598,7 +956,7 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                 status,
                 ParseDecimal(row, "origQty"),
                 ParseDecimal(row, "executedQty"),
-                ParseDecimal(row, "price"),
+                OrderDisplayPrice(row),
                 orderId,
                 clientId,
                 created,
@@ -690,6 +1048,41 @@ public sealed class ExchangeAccountService : IExchangeAccountService
 
     private static bool IsUsdt(string? asset) =>
         string.Equals(asset, "USDT", StringComparison.OrdinalIgnoreCase);
+
+    private static JsonElement AsOrderArray(JsonElement json)
+    {
+        if (json.ValueKind == JsonValueKind.Array)
+        {
+            return json;
+        }
+
+        if (json.ValueKind == JsonValueKind.Object
+            && json.TryGetProperty("orders", out var orders)
+            && orders.ValueKind == JsonValueKind.Array)
+        {
+            return orders;
+        }
+
+        return default;
+    }
+
+    private static decimal OrderDisplayPrice(JsonElement row)
+    {
+        var avg = ParseDecimal(row, "avgPrice");
+        if (avg > 0m)
+        {
+            return avg;
+        }
+
+        var price = ParseDecimal(row, "price");
+        if (price > 0m)
+        {
+            return price;
+        }
+
+        var stop = ParseDecimal(row, "stopPrice");
+        return stop > 0m ? stop : ParseDecimal(row, "triggerPrice");
+    }
 
     private static decimal ParseDecimal(JsonElement row, string name) =>
         row.TryGetProperty(name, out var value) ? ParseDecimal(value) : 0m;
