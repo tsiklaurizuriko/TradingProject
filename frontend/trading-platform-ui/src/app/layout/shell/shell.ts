@@ -135,7 +135,7 @@ export class Shell {
   }
 
   private async bootstrap(): Promise<void> {
-    await Promise.all([this.trading.refresh(), this.trading.refreshMarkets(), this.trading.refreshHealth(), this.trading.refreshRisk(), this.trading.refreshCatalog()]);
+    await Promise.all([this.trading.refresh(), this.trading.refreshMarkets(), this.trading.refreshHealth(), this.trading.refreshRisk(), this.trading.refreshCatalog(), this.trading.refreshPerformance()]);
     if (this.ui.isLive() && !this.trading.overview()?.liveHasKeys) {
       this.ui.setMode('paper', true);
     }
@@ -170,7 +170,7 @@ export class Shell {
           return;
         }
         const result = this.ui.setMode('live', true);
-        await Promise.all([this.trading.refresh(), this.trading.refreshCatalog(), this.trading.refreshRisk()]);
+        await Promise.all([this.trading.refresh(), this.trading.refreshCatalog(), this.trading.refreshRisk(), this.trading.refreshPerformance()]);
         const usdt = this.trading.overview()?.liveAvailable ?? status.usdtFree;
         this.toast.show(
           result.accepted ? 'LIVE Binance USD-M' : 'Mode blocked',
@@ -188,7 +188,7 @@ export class Shell {
 
     const result = this.ui.setMode(mode, true);
     if (result.accepted) {
-      await Promise.all([this.trading.refresh(), this.trading.refreshCatalog(), this.trading.refreshRisk()]);
+      await Promise.all([this.trading.refresh(), this.trading.refreshCatalog(), this.trading.refreshRisk(), this.trading.refreshPerformance()]);
     }
     this.toast.show(result.accepted ? 'Trading mode' : 'Mode blocked', result.message, result.accepted ? 'info' : 'error');
   }

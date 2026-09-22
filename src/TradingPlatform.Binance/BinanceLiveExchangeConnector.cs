@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using TradingPlatform.Application.Abstractions.Exchange;
+using TradingPlatform.Application.Abstractions.MarketData;
 using TradingPlatform.Domain.Errors;
 using TradingPlatform.Domain.Risk;
 using TradingPlatform.Domain.Trading;
@@ -11,15 +12,18 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
 {
     private readonly BinanceSignedRestClient _signed;
     private readonly IExchangeCredentialStore _credentials;
+    private readonly IPublicMarketDataClient _market;
     private readonly Guid _accountId;
 
     public BinanceLiveExchangeConnector(
         BinanceSignedRestClient signed,
         IExchangeCredentialStore credentials,
+        IPublicMarketDataClient market,
         Guid accountId)
     {
         _signed = signed;
         _credentials = credentials;
+        _market = market;
         _accountId = accountId;
     }
 
@@ -42,16 +46,29 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
     }
 
     public Task<SymbolFilters> GetSymbolInformationAsync(string symbol, CancellationToken cancellationToken = default) =>
-        Task.FromResult(new SymbolFilters(
-            symbol.ToUpperInvariant(),
-            symbol.ToUpperInvariant().Replace("USDT", "", StringComparison.Ordinal),
-            "USDT",
-            0.01m,
-            0.00001m,
-            0.00001m,
-            5m,
-            2,
-            5));
+        MapFiltersAsync(symbol, cancellationToken);
+
+    private async Task<SymbolFilters> MapFiltersAsync(string symbol, CancellationToken cancellationToken)
+    {
+        var name = symbol.ToUpperInvariant();
+        var ranked = (await _market.GetPaperUniverseAsync(cancellationToken))
+            .FirstOrDefault(row => string.Equals(row.Symbol, name, StringComparison.OrdinalIgnoreCase));
+        if (ranked is null)
+        {
+            throw new DomainException(ErrorCodes.InvalidSymbol, $"{name} is not a Binance USD-M USDT perpetual.");
+        }
+
+        return new SymbolFilters(
+            ranked.Symbol,
+            ranked.BaseAsset,
+            ranked.QuoteAsset,
+            ranked.TickSize,
+            ranked.StepSize,
+            ranked.MinQuantity,
+            ranked.MinNotional,
+            ranked.PricePrecision,
+            ranked.QuantityPrecision);
+    }
 
     public Task<IReadOnlyList<ExchangeOrder>> GetOpenOrdersAsync(string? symbol, CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<ExchangeOrder>>([]);
@@ -510,11 +527,16 @@ public sealed class BinanceLiveExchangeConnectorFactory : ILiveExchangeConnector
 {
     private readonly BinanceSignedRestClient _signed;
     private readonly IExchangeCredentialStore _credentials;
+    private readonly IPublicMarketDataClient _market;
 
-    public BinanceLiveExchangeConnectorFactory(BinanceSignedRestClient signed, IExchangeCredentialStore credentials)
+    public BinanceLiveExchangeConnectorFactory(
+        BinanceSignedRestClient signed,
+        IExchangeCredentialStore credentials,
+        IPublicMarketDataClient market)
     {
         _signed = signed;
         _credentials = credentials;
+        _market = market;
     }
 
     public IExchangeConnector Create(Guid? exchangeAccountId)
@@ -524,6 +546,6 @@ public sealed class BinanceLiveExchangeConnectorFactory : ILiveExchangeConnector
             throw new DomainException(ErrorCodes.LiveTradingDisabled, "A live Binance account is required.");
         }
 
-        return new BinanceLiveExchangeConnector(_signed, _credentials, exchangeAccountId.Value);
+        return new BinanceLiveExchangeConnector(_signed, _credentials, _market, exchangeAccountId.Value);
     }
 }

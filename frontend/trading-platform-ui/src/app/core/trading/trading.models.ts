@@ -355,13 +355,26 @@ export function resolvePositionStrategy(
   row: PositionDto,
   bots: BotDto[],
 ): { key: string; name: string } {
+  const byId = row.botId
+    ? bots.find((item) => item.id === row.botId)
+    : undefined;
+  if (byId) {
+    const name = (byId.strategyName || '').trim() || 'Unassigned strategy';
+    return { key: byId.strategyId || name, name };
+  }
+
   const coin = row.symbol.trim().toUpperCase();
-  const bot =
-    bots.find((item) => item.id === row.botId) ??
-    bots.find((item) => item.symbol.trim().toUpperCase() === coin);
-  const name = (bot?.strategyName || '').trim() || 'Unassigned strategy';
-  const key = bot?.strategyId || name;
-  return { key, name };
+  const matches = bots.filter((item) => item.symbol.trim().toUpperCase() === coin);
+  const running = matches.filter((item) => item.status === 'Running');
+  const pool = running.length > 0 ? running : matches;
+  const strategyKeys = new Set(pool.map((item) => item.strategyId || item.strategyName || item.id));
+  if (strategyKeys.size === 1) {
+    const bot = pool[0];
+    const name = (bot.strategyName || '').trim() || 'Unassigned strategy';
+    return { key: bot.strategyId || name, name };
+  }
+
+  return { key: 'unassigned', name: 'Unassigned strategy' };
 }
 
 export function groupPositionsByStrategy(
@@ -607,6 +620,7 @@ export interface PerformanceDto {
   strategies: PerformanceSliceDto[];
   coins: PerformanceSliceDto[];
   recentTrades: TradeDto[];
+  monthlyPnL?: number;
 }
 
 export interface SignalDto {
@@ -644,6 +658,7 @@ export interface PortfolioDto {
   liveFundingUsdt?: number;
   liveFuturesUsdt?: number;
   liveMessage?: string | null;
+  positionBooks?: PositionDto[];
 }
 
 export type Tone = 'ok' | 'warn' | 'bad' | 'neutral';

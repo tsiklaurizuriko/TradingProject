@@ -41,5 +41,7 @@ public sealed class BinanceConditionalAlgoOrderTests
     {
         BinanceHmac.FormatDecimal(0.04748m).Should().Be("0.04748");
         BinanceHmac.FormatDecimal(101.50m).Should().Be("101.5");
+        BinanceHmac.FormatDecimal(0.00006m, 3).Should().Be("0");
+        BinanceHmac.FormatDecimal(4.79m, 1).Should().Be("4.7");
     }
 }

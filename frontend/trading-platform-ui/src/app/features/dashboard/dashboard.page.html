@@ -151,7 +151,7 @@
     <app-allocation-chart [availableAbs]="available()" [usedAbs]="usedMargin()" [pnlAbs]="unrealized()" />
   </div>
   <div class="dash-pnl">
-    <app-pnl-chart [trades]="modeTrades()" />
+    <app-pnl-chart [trades]="modeTrades()" [days]="chartDays()" [extraToday]="chartDays() ? 0 : unrealized()" />
   </div>
   <div class="dash-risk">
     <app-risk-overview
@@ -159,6 +159,7 @@
       [available]="available()"
       [todaysPnL]="todaysPnL()"
       [positions]="modePositions()"
+      [books]="trading.workspacePositionBooks()"
       [bots]="modeBots()"
       [consecutiveLosses]="consecutiveLosses()"
       [locked]="riskLocked()"

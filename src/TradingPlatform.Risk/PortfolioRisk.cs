@@ -68,18 +68,38 @@ public static class PortfolioRisk
         return notional / Math.Max(1m, leverage);
     }
 
-    public static decimal FloorToStep(decimal quantity, decimal stepSize)
+    public static decimal FloorToStep(decimal quantity, decimal stepSize, int? quantityPrecision = null)
     {
         if (quantity <= 0m)
         {
             return 0m;
         }
 
+        decimal floored;
         if (stepSize <= 0m)
         {
-            return decimal.Round(quantity, 8, MidpointRounding.ToZero);
+            floored = decimal.Round(quantity, 8, MidpointRounding.ToZero);
+        }
+        else
+        {
+            floored = Math.Floor(quantity / stepSize) * stepSize;
         }
 
-        return Math.Floor(quantity / stepSize) * stepSize;
+        if (quantityPrecision is >= 0)
+        {
+            floored = decimal.Round(floored, quantityPrecision.Value, MidpointRounding.ToZero);
+        }
+
+        return floored;
+    }
+
+    public static int? EffectiveQuantityPrecision(int quantityPrecision, decimal stepSize)
+    {
+        if (quantityPrecision > 0)
+        {
+            return quantityPrecision;
+        }
+
+        return quantityPrecision == 0 && stepSize >= 1m ? 0 : null;
     }
 }

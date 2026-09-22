@@ -12,8 +12,13 @@ public static class BinanceHmac
         return Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload))).ToLowerInvariant();
     }
 
-    public static string FormatDecimal(decimal value)
+    public static string FormatDecimal(decimal value, int? maxDecimals = null)
     {
+        if (maxDecimals is >= 0)
+        {
+            value = decimal.Round(value, maxDecimals.Value, MidpointRounding.ToZero);
+        }
+
         var text = value.ToString("0.########", CultureInfo.InvariantCulture);
         if (text.Contains('.', StringComparison.Ordinal))
         {

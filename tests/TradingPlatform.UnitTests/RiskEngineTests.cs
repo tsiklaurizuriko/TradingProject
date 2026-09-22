@@ -320,6 +320,17 @@ public sealed class PortfolioRiskTests
     {
         PortfolioRisk.FloorToStep(0.00133333m, 0.001m).Should().Be(0.001m);
     }
+
+    [Fact]
+    public void Floor_to_step_also_truncates_to_quantity_precision()
+    {
+        PortfolioRisk.FloorToStep(4.79m, 0.01m, 1).Should().Be(4.7m);
+        PortfolioRisk.FloorToStep(0.00006m, 0.00001m, 3).Should().Be(0m);
+        PortfolioRisk.FloorToStep(0.0024m, 0.001m, 3).Should().Be(0.002m);
+        PortfolioRisk.EffectiveQuantityPrecision(0, 0.00001m).Should().BeNull();
+        PortfolioRisk.EffectiveQuantityPrecision(0, 1m).Should().Be(0);
+        PortfolioRisk.EffectiveQuantityPrecision(3, 0.001m).Should().Be(3);
+    }
 }
 
 public sealed class RiskLiveGuardTests

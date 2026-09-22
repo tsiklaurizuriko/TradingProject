@@ -50,6 +50,7 @@ export class TradingService {
   private overviewInFlight = false;
   private overviewPoll: ReturnType<typeof setInterval> | null = null;
   private hubConnected: (() => boolean) | null = null;
+  private lastPerfAt = 0;
 
   readonly tickers = computed(() => this.overview()?.tickers ?? []);
   readonly bots = computed(() => this.overview()?.bots ?? []);
@@ -101,6 +102,12 @@ export class TradingService {
       });
     }
     return [...byCoin.values()].sort((a, b) => byTimeDesc(a.openedAt, b.openedAt));
+  });
+  readonly workspacePositionBooks = computed(() => {
+    const ids = this.workspaceBotIds();
+    const books = this.overview()?.positionBooks;
+    const source = books && books.length > 0 ? books : this.positions();
+    return source.filter((row) => (row.quantity ?? 0) > 0 && ids.has(row.botId));
   });
   readonly workspaceTrades = computed(() => {
     const ids = this.workspaceBotIds();
@@ -224,6 +231,10 @@ export class TradingService {
       this.overview.set({ ...overview, tickers: overview.tickers ?? [] });
       this.restLatencyMs.set(Math.round(performance.now() - started));
       this.lastRestAt.set(new Date());
+      if (!quiet || !this.performance() || Date.now() - this.lastPerfAt > 60_000) {
+        this.lastPerfAt = Date.now();
+        void this.refreshPerformance();
+      }
     } catch {
       if (!quiet) {
         this.error.set('Binance connection lost. Market data is temporarily unavailable.');

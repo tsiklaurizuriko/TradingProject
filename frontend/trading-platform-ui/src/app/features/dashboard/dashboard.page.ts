@@ -139,6 +139,13 @@ export class DashboardPage {
   readonly modeBots = computed(() => this.trading.workspaceBots());
   readonly modePositions = computed(() => this.trading.workspacePositions());
   readonly modeTrades = computed(() => this.trading.workspaceTrades());
+  readonly chartDays = computed(() => {
+    const snap = this.trading.performance();
+    if (!snap?.days?.length || snap.mode !== this.ui.workspace()) {
+      return null;
+    }
+    return snap.days;
+  });
   readonly consecutiveLosses = computed(() => {
     const closed = [...this.modeTrades()]
       .filter((row) => row.closedAt)
@@ -161,6 +168,10 @@ export class DashboardPage {
   );
 
   readonly monthlyPnL = computed(() => {
+    const snap = this.trading.performance();
+    if (snap && snap.mode === this.ui.workspace() && snap.monthlyPnL != null) {
+      return snap.monthlyPnL;
+    }
     const now = new Date();
     const prefix = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
     const closedThisMonth = this.modeTrades()

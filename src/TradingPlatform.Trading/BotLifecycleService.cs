@@ -139,6 +139,7 @@ public sealed class BotLifecycleService : IBotLifecycleService
             throw new DomainException(ErrorCodes.StrategyInvalid, "Strategy was not found.");
         }
 
+        EnsureHistoricallyFittedLiveOff(mode, strategyVersion.Strategy);
         EnsureStrategyEnabled(strategyVersion.Strategy);
         if (!SymbolScope.Allows(strategyVersion.Strategy.AppliesToAllSymbols, strategyVersion.Strategy.AllowedSymbolsCsv, name))
         {
@@ -254,6 +255,7 @@ public sealed class BotLifecycleService : IBotLifecycleService
 
         var strategyVersion = await _store.GetLatestStrategyVersionAsync(strategyId, cancellationToken)
             ?? throw new DomainException(ErrorCodes.StrategyInvalid, "Strategy was not found.");
+        EnsureHistoricallyFittedLiveOff(mode, strategyVersion.Strategy);
         EnsureStrategyEnabled(strategyVersion.Strategy);
         var risk = await ResolveRiskAsync(riskProfileId, cancellationToken);
         RiskLiveGuard.EnsureAllowed(mode, risk);
@@ -308,20 +310,17 @@ public sealed class BotLifecycleService : IBotLifecycleService
                 continue;
             }
 
-            if (await _store.GetSymbolAsync(name, cancellationToken) is null)
-            {
-                await _store.UpsertSymbolAsync(
-                    ranked.Symbol,
-                    ranked.BaseAsset,
-                    ranked.QuoteAsset,
-                    ranked.TickSize,
-                    ranked.StepSize,
-                    ranked.MinQuantity,
-                    ranked.MinNotional,
-                    ranked.PricePrecision,
-                    ranked.QuantityPrecision,
-                    cancellationToken);
-            }
+            await _store.UpsertSymbolAsync(
+                ranked.Symbol,
+                ranked.BaseAsset,
+                ranked.QuoteAsset,
+                ranked.TickSize,
+                ranked.StepSize,
+                ranked.MinQuantity,
+                ranked.MinNotional,
+                ranked.PricePrecision,
+                ranked.QuantityPrecision,
+                cancellationToken);
 
             var display = UsdtSpotUniverse.DisplayNameOf(name);
             var bot = new Bot
@@ -372,7 +371,8 @@ public sealed class BotLifecycleService : IBotLifecycleService
                 throw new DomainException(ErrorCodes.LiveTradingDisabled, "Save a Binance API key on Exchanges before starting a live bot.");
             }
 
-            RiskLiveGuard.EnsureAllowed(bot.Mode, await _store.GetConservativeRiskAsync(cancellationToken));
+            EnsureHistoricallyFittedLiveOff(bot);
+            RiskLiveGuard.EnsureAllowed(bot.Mode, bot.RiskProfile ?? await _store.GetConservativeRiskAsync(cancellationToken));
         }
         else if (bot.Mode != TradingMode.Paper)
         {
@@ -438,6 +438,7 @@ public sealed class BotLifecycleService : IBotLifecycleService
         {
             try
             {
+                EnsureHistoricallyFittedLiveOff(bot);
                 await AttachLatestStrategyAsync(bot, cancellationToken);
                 await MarkRunningAsync(bot, cancellationToken);
                 started++;
@@ -695,6 +696,33 @@ public sealed class BotLifecycleService : IBotLifecycleService
         return await _store.GetConservativeRiskAsync(cancellationToken);
     }
 
+    private static void EnsureHistoricallyFittedLiveOff(Bot bot) =>
+        EnsureHistoricallyFittedLiveOff(bot.Mode, bot.StrategyVersion.Strategy);
+
+    private static void EnsureHistoricallyFittedLiveOff(TradingMode mode, Strategy strategy)
+    {
+        if (mode != TradingMode.Live)
+        {
+            return;
+        }
+
+        var key = strategy.TemplateKey;
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            var latest = strategy.Versions.OrderByDescending(row => row.VersionNumber).FirstOrDefault();
+            key = latest is null ? string.Empty : StrategyTemplates.Read(latest.DefinitionJson).TemplateKey;
+        }
+
+        if (!StrategyTemplateKeys.IsHistoricallyFitted(key))
+        {
+            return;
+        }
+
+        throw new DomainException(
+            ErrorCodes.LiveTradingDisabled,
+            $"{strategy.Name} is a historically fitted BTC 15m candidate. LIVE is off. Switch the header to Paper to observe.");
+    }
+
     private static void EnsureStrategyEnabled(Strategy strategy)
     {
         if (!strategy.IsEnabled)
@@ -785,8 +813,9 @@ public sealed class TradingQueryService : ITradingQueryService
         await RefreshLiveCacheIfStaleAsync(cancellationToken);
         await _reconcile.ReconcileAsync(cancellationToken);
         var live = _live.Current;
+        var books = await GetPositionsAsync(cancellationToken);
         var positions = IsolatedOccupancy.MergeBotAndExchange(
-            await GetPositionsAsync(cancellationToken),
+            books,
             live.OpenPositions,
             MapExchangePosition,
             IsolatedOccupancy.HasFreshFuturesBook(live),
@@ -853,7 +882,8 @@ public sealed class TradingQueryService : ITradingQueryService
             live.SpotUsdt,
             live.FundingUsdt,
             live.FuturesUsdt,
-            live.Message);
+            live.Message,
+            books);
     }
 
     private async Task RefreshLiveCacheIfStaleAsync(CancellationToken cancellationToken)
@@ -1184,6 +1214,8 @@ public sealed class TradingQueryService : ITradingQueryService
         var days = PerformanceDays(closed, unrealized, todayKey);
         var net = realized + unrealized;
         var ret = startingEquity > 0m ? RoundPerf(net / startingEquity * 100m) : 0m;
+        var monthStart = new DateTimeOffset(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, TimeSpan.Zero);
+        var monthClosed = closed.Where(t => t.ClosedAt >= monthStart).Sum(t => t.PnL);
         var botCounts = bots
             .GroupBy(b => string.IsNullOrWhiteSpace(b.StrategyName) ? "Strategy" : b.StrategyName)
             .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
@@ -1215,7 +1247,8 @@ public sealed class TradingQueryService : ITradingQueryService
             days,
             Slices(closed, t => string.IsNullOrWhiteSpace(t.StrategyName) ? "Strategy" : t.StrategyName, botCounts),
             Slices(closed, t => t.Symbol, null),
-            rows.Take(40).Select(MapTrade).ToList());
+            rows.Take(40).Select(MapTrade).ToList(),
+            RoundPerf(monthClosed + unrealized));
     }
 
     private static IReadOnlyList<PerformanceDayDto> PerformanceDays(

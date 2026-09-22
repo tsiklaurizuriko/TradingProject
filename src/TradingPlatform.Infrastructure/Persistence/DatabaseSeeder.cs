@@ -149,12 +149,12 @@ public sealed class DatabaseSeeder
                 Name = "BTCUSDT",
                 BaseAsset = "BTC",
                 QuoteAsset = "USDT",
-                TickSize = 0.01m,
-                StepSize = 0.00001m,
-                MinQuantity = 0.00001m,
+                TickSize = 0.1m,
+                StepSize = 0.001m,
+                MinQuantity = 0.001m,
                 MinNotional = 5m,
                 PricePrecision = 2,
-                QuantityPrecision = 5
+                QuantityPrecision = 3
             });
         }
 
@@ -508,7 +508,7 @@ public sealed class DatabaseSeeder
             MaxLeverage = 3m,
             MaxDailyLossPercent = 3m,
             MaxPortfolioRiskPercent = 4m,
-            MaxSimultaneousPositions = 2,
+            MaxSimultaneousPositions = 5,
             MaxConsecutiveLosses = 5,
             CooldownMinutes = 30,
             MinimumLiquidationSafetyBufferPercent = 1m,
@@ -558,7 +558,6 @@ public sealed class DatabaseSeeder
         strategy.AllowedSide = StrategySides.Both;
         strategy.AppliesToAllSymbols = false;
         strategy.AllowedSymbolsCsv = "BTCUSDT";
-        strategy.IsEnabled = false;
         strategy.ValidationStatus = StrategyValidationStatuses.HistoricallyFittedCandidate;
         if (string.IsNullOrWhiteSpace(strategy.Description) || strategy.Description != row.Description)
         {

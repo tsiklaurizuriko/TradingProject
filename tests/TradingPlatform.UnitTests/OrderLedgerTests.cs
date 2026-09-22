@@ -23,6 +23,8 @@ public sealed class OrderLedgerTests
         OrderLedger.ParseType("STOP_MARKET").Should().Be(OrderType.StopMarket);
         OrderLedger.ParseStatus("WORKING").Should().Be(OrderStatus.Submitted);
         OrderLedger.ParseStatus("FILLED").Should().Be(OrderStatus.Filled);
+        OrderLedger.ParseStatus("TRIGGERED").Should().Be(OrderStatus.Filled);
+        OrderLedger.ParseStatus("FINISHED").Should().Be(OrderStatus.Filled);
         OrderLedger.ClientKey(null, "970621956").Should().Be("BX970621956");
         OrderLedger.Same("slabc", null, "slabc", "99").Should().BeTrue();
         OrderLedger.Same("entry", "11", "other", "11").Should().BeTrue();

@@ -28,6 +28,7 @@ public sealed record RiskSizingHints
     public decimal StepSize { get; init; }
     public decimal MinQuantity { get; init; }
     public decimal MinNotional { get; init; }
+    public int? QuantityPrecision { get; init; }
     public decimal ExchangeMaxLeverage { get; init; }
     public decimal TakerFeePercent { get; init; }
     public decimal SlippagePercent { get; init; }
@@ -142,9 +143,11 @@ public sealed class RiskEngine : IRiskEngine
         var slipPercent = sizing is { SlippagePercent: > 0m } ? sizing.SlippagePercent : DefaultSlippagePercent;
         var riskAmount = available * (profile.RiskPerTradePercent / 100m);
         var quantity = PortfolioRisk.QuantityFromRiskUsdt(riskAmount, price, profile.StopLossPercent);
-        if (sizing is { StepSize: > 0m } || sizing is { MinQuantity: > 0m } || sizing is { MinNotional: > 0m })
+        if (sizing is { StepSize: > 0m } || sizing is { MinQuantity: > 0m } || sizing is { MinNotional: > 0m } || sizing is { QuantityPrecision: >= 0 })
         {
-            quantity = PortfolioRisk.FloorToStep(quantity, sizing?.StepSize ?? 0m);
+            var precision = sizing?.QuantityPrecision
+                ?? PortfolioRisk.EffectiveQuantityPrecision(0, sizing?.StepSize ?? 0m);
+            quantity = PortfolioRisk.FloorToStep(quantity, sizing?.StepSize ?? 0m, precision);
             var minQty = sizing?.MinQuantity ?? 0m;
             var minNotional = sizing?.MinNotional ?? 0m;
             if ((minQty > 0m && quantity < minQty) || (minNotional > 0m && quantity * price < minNotional))

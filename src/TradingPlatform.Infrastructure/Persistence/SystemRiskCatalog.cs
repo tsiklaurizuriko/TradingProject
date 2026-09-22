@@ -7,9 +7,9 @@ internal static class SystemRiskCatalog
 {
     public static IReadOnlyList<RiskProfile> All() =>
     [
-        Book("LOW", 0.5m, 2m, 4m, 3m, 3m, allowLive: true, active: true),
-        Book("MEDIUM", 1m, 2.5m, 5m, 5m, 5m, allowLive: true, active: false),
-        Book("HIGH", 2m, 3m, 6m, 8m, 7m, allowLive: false, active: false)
+        Book("LOW", 0.5m, 2m, 4m, 3m, 3m, allowLive: true, active: true, maxPositions: 5),
+        Book("MEDIUM", 1m, 2.5m, 5m, 5m, 5m, allowLive: true, active: false, maxPositions: 2),
+        Book("HIGH", 2m, 3m, 6m, 8m, 7m, allowLive: false, active: false, maxPositions: 2)
     ];
 
     public static async Task EnsureAsync(TradingDbContext db, CancellationToken cancellationToken)
@@ -42,7 +42,8 @@ internal static class SystemRiskCatalog
         decimal leverage,
         decimal dailyLoss,
         bool allowLive,
-        bool active) =>
+        bool active,
+        int maxPositions = 2) =>
         new()
         {
             Name = name,
@@ -55,7 +56,7 @@ internal static class SystemRiskCatalog
             MaxLeverage = leverage,
             MaxDailyLossPercent = dailyLoss,
             MaxPortfolioRiskPercent = 4m,
-            MaxSimultaneousPositions = 2,
+            MaxSimultaneousPositions = maxPositions,
             MaxConsecutiveLosses = 5,
             CooldownMinutes = 30,
             MinimumLiquidationSafetyBufferPercent = 1m

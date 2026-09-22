@@ -146,8 +146,17 @@ public static class UsdtPerpetualContractRules
                 }
                 else if (type is "LOT_SIZE" or "MARKET_LOT_SIZE")
                 {
-                    stepSize = Dec(filter, "stepSize");
-                    minQty = Dec(filter, "minQty");
+                    var filterStep = Dec(filter, "stepSize");
+                    var filterMin = Dec(filter, "minQty");
+                    if (filterStep > stepSize)
+                    {
+                        stepSize = filterStep;
+                    }
+
+                    if (filterMin > minQty)
+                    {
+                        minQty = filterMin;
+                    }
                 }
                 else if (type is "MIN_NOTIONAL" or "NOTIONAL")
                 {
@@ -173,11 +182,16 @@ public static class UsdtPerpetualContractRules
         if (symbol.TryGetProperty("quantityPrecision", out var qp) && qp.TryGetInt32(out var qtyPrec) && qtyPrec >= 0)
         {
             quantityPrecision = qtyPrec;
-            var fromPrecision = (decimal)Math.Pow(10, -qtyPrec);
-            if (fromPrecision > 0m)
+            var fromPrecision = PrecisionStep(qtyPrec);
+            if (fromPrecision > stepSize)
             {
                 stepSize = fromPrecision;
             }
+        }
+
+        if (minQty < stepSize)
+        {
+            minQty = stepSize;
         }
 
         if (tickSize <= 0m || stepSize <= 0m || minQty <= 0m)
@@ -261,5 +275,21 @@ public static class UsdtPerpetualContractRules
         }
 
         return Math.Max(0, text.TrimEnd('0').Length - i - 1);
+    }
+
+    private static decimal PrecisionStep(int decimals)
+    {
+        if (decimals <= 0)
+        {
+            return 1m;
+        }
+
+        var step = 1m;
+        for (var i = 0; i < decimals; i++)
+        {
+            step /= 10m;
+        }
+
+        return step;
     }
 }

@@ -33,15 +33,17 @@ public static class IsolatedOccupancy
         bool liveAuthoritative,
         DateTimeOffset now)
     {
-        if (live is { Count: >= 0 } && IsOnExchange(symbol, live))
+        if (live is not null && IsOnExchange(symbol, live))
         {
             return true;
         }
 
+        // Isolated is one Binance position per coin. A DB snapshot from any strategy occupies
+        // the coin. Do not ignore rows older than OverlayGrace when the overlay omitted them —
+        // that let a second strategy add to the same Isolated position.
         return book.Any(row =>
             string.Equals(CoinKey(row.Symbol), CoinKey(symbol), StringComparison.OrdinalIgnoreCase)
-            && row.Quantity > 0m
-            && (!liveAuthoritative || now - row.OpenedAt < OverlayGrace));
+            && row.Quantity > 0m);
     }
 
     public static string NormalizeSide(string side) =>
@@ -56,8 +58,18 @@ public static class IsolatedOccupancy
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Count();
 
-    public static IReadOnlyList<Position> ForStrategy(IReadOnlyList<Position> book, Guid strategyId) =>
-        book.Where(row => row.Bot?.StrategyVersion?.StrategyId == strategyId).ToList();
+    public static IReadOnlyList<Position> ForStrategy(
+        IReadOnlyList<Position> book,
+        Guid strategyId,
+        IReadOnlySet<Guid>? strategyBotIds = null,
+        IReadOnlySet<Guid>? strategyVersionIds = null) =>
+        book.Where(row =>
+                row.Bot?.StrategyVersion?.StrategyId == strategyId
+                || (strategyBotIds is { Count: > 0 } && strategyBotIds.Contains(row.BotId))
+                || (strategyVersionIds is { Count: > 0 }
+                    && row.Bot is not null
+                    && strategyVersionIds.Contains(row.Bot.StrategyVersionId)))
+            .ToList();
 
     public static decimal PlannedRiskPercent(IReadOnlyList<Position> book, decimal available) =>
         available > 0m
@@ -67,22 +79,20 @@ public static class IsolatedOccupancy
     /// <summary>
     /// Max simultaneous Isolated slots are per running strategy. Live coins owned by other strategies are ignored.
     /// One Isolated position per coin still applies globally via <see cref="IsCoinOpen"/>.
+    /// Occupancy is the strategy's DB book. Overlay lag must not drop those slots to zero.
     /// </summary>
     public static int UniqueCoinsForStrategy(
         IReadOnlyList<Position> book,
         Guid strategyId,
         IReadOnlyList<LiveOpenPosition>? live = null,
         bool liveAuthoritative = false,
-        DateTimeOffset? now = null)
+        DateTimeOffset? now = null,
+        IReadOnlySet<Guid>? strategyBotIds = null,
+        IReadOnlySet<Guid>? strategyVersionIds = null)
     {
-        var strategyBook = ForStrategy(book, strategyId);
-        var owned = new HashSet<string>(
-            strategyBook.Where(row => row.Quantity > 0m).Select(row => CoinKey(row.Symbol)),
-            StringComparer.OrdinalIgnoreCase);
-        var scopedLive = live?
-            .Where(row => row.Quantity > 0m && owned.Contains(CoinKey(row.Symbol)))
-            .ToList();
-        return UniqueCoins(strategyBook, scopedLive, liveAuthoritative, now);
+        var strategyBook = ForStrategy(book, strategyId, strategyBotIds, strategyVersionIds);
+        return UniqueCoins(
+            strategyBook.Where(row => row.Quantity > 0m).Select(row => row.Symbol));
     }
 
     public static int UniqueCoins(

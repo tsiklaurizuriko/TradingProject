@@ -92,12 +92,13 @@ public sealed class BotEngine : IBotEngine
             var bots = await _store.GetRunningBotsAsync(cancellationToken);
             var cycleKlines = new Dictionary<string, IReadOnlyList<MarketCandle>>(StringComparer.OrdinalIgnoreCase);
             var cyclePrices = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+            var cycleFilters = await LoadCycleFiltersAsync(cancellationToken);
             foreach (var bot in bots)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 try
                 {
-                    await EvaluateBotAsync(bot, cycleKlines, cyclePrices, cancellationToken);
+                    await EvaluateBotAsync(bot, bots, cycleKlines, cyclePrices, cycleFilters, cancellationToken);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
@@ -174,9 +175,11 @@ public sealed class BotEngine : IBotEngine
 
         _cache.SetTicker(position.Symbol, lastPrice, now);
 
-        var market = await _store.GetSymbolAsync(position.Symbol, cancellationToken);
-        var step = market?.StepSize ?? 0.00001m;
-        var quantity = PaperFillModel.FloorToStep(position.Quantity, step);
+        var market = await ResolveSymbolFiltersAsync(position.Symbol, null, cancellationToken);
+        var quantity = PortfolioRisk.FloorToStep(
+            position.Quantity,
+            market?.StepSize ?? 0m,
+            PortfolioRisk.EffectiveQuantityPrecision(market?.QuantityPrecision ?? 0, market?.StepSize ?? 0m));
         if (quantity <= 0m)
         {
             throw new DomainException(ErrorCodes.InvalidQuantity, "Position size is below the coin step size.");
@@ -389,10 +392,91 @@ public sealed class BotEngine : IBotEngine
         return lastPrice;
     }
 
+    private async Task<Dictionary<string, RankedUsdtSpotSymbol>> LoadCycleFiltersAsync(CancellationToken cancellationToken)
+    {
+        var filters = new Dictionary<string, RankedUsdtSpotSymbol>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            foreach (var row in await _market.GetPaperUniverseAsync(cancellationToken))
+            {
+                filters[row.Symbol] = row;
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "USD-M exchange filters were not refreshed this cycle.");
+        }
+
+        return filters;
+    }
+
+    private async Task<Symbol?> ResolveSymbolFiltersAsync(
+        string name,
+        IReadOnlyDictionary<string, RankedUsdtSpotSymbol>? cycleFilters,
+        CancellationToken cancellationToken)
+    {
+        var stored = await _store.GetSymbolAsync(name, cancellationToken);
+        RankedUsdtSpotSymbol? ranked = null;
+        if (cycleFilters is not null)
+        {
+            cycleFilters.TryGetValue(name, out ranked);
+        }
+        else
+        {
+            try
+            {
+                ranked = (await _market.GetPaperUniverseAsync(cancellationToken))
+                    .FirstOrDefault(row => string.Equals(row.Symbol, name, StringComparison.OrdinalIgnoreCase));
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Could not refresh exchange filters for {Symbol}", name);
+            }
+        }
+
+        if (ranked is null)
+        {
+            return stored;
+        }
+
+        if (stored is not null
+            && stored.TickSize == ranked.TickSize
+            && stored.StepSize == ranked.StepSize
+            && stored.MinQuantity == ranked.MinQuantity
+            && stored.MinNotional == ranked.MinNotional
+            && stored.PricePrecision == ranked.PricePrecision
+            && stored.QuantityPrecision == ranked.QuantityPrecision)
+        {
+            return stored;
+        }
+
+        return await _store.UpsertSymbolAsync(
+            ranked.Symbol,
+            ranked.BaseAsset,
+            ranked.QuoteAsset,
+            ranked.TickSize,
+            ranked.StepSize,
+            ranked.MinQuantity,
+            ranked.MinNotional,
+            ranked.PricePrecision,
+            ranked.QuantityPrecision,
+            cancellationToken);
+    }
+
     private async Task EvaluateBotAsync(
         Bot bot,
+        IReadOnlyList<Bot> running,
         Dictionary<string, IReadOnlyList<MarketCandle>> cycleKlines,
         Dictionary<string, decimal> cyclePrices,
+        IReadOnlyDictionary<string, RankedUsdtSpotSymbol> cycleFilters,
         CancellationToken cancellationToken)
     {
         if (bot.Status is not BotStatus.Running)
@@ -412,7 +496,7 @@ public sealed class BotEngine : IBotEngine
         _cache.SetTicker(bot.Symbol, lastPrice, now);
         await _publisher.PublishTickerAsync(bot.Symbol, lastPrice, now, cancellationToken);
 
-        var symbol = await _store.GetSymbolAsync(bot.Symbol);
+        var symbol = await ResolveSymbolFiltersAsync(bot.Symbol, cycleFilters, cancellationToken);
         if (symbol is not null && candles.Count > 0)
         {
             try
@@ -434,6 +518,23 @@ public sealed class BotEngine : IBotEngine
         {
             position.CurrentPrice = lastPrice;
             position.UnrealizedPnL = (lastPrice - position.AverageEntryPrice) * position.Quantity;
+        }
+
+        var overlayProtect = await EnsureLiveOverlayProtectionAsync(
+            bot,
+            running,
+            position,
+            lastPrice,
+            symbol,
+            cancellationToken);
+        if (overlayProtect.Handled)
+        {
+            return;
+        }
+
+        if (overlayProtect.Position is not null)
+        {
+            position = overlayProtect.Position;
         }
 
         if (bot.Mode != TradingMode.Live &&
@@ -506,6 +607,13 @@ public sealed class BotEngine : IBotEngine
             return;
         }
 
+        if (bot.Mode == TradingMode.Live && position is not null)
+        {
+            bot.LastError =
+                $"Live Isolated SL/TP own the exit. Strategy {signalType}: {reason}";
+            return;
+        }
+
         await _store.AddSignalAsync(new Signal
         {
             BotId = bot.Id,
@@ -572,7 +680,26 @@ public sealed class BotEngine : IBotEngine
             ?? await _store.GetConservativeRiskAsync(cancellationToken);
         var accountDaily = await _store.SumClosedPnLSinceForModeAsync(bot.Mode, dayStart, cancellationToken) + unrealized;
         var strategyId = bot.StrategyVersion.StrategyId;
-        var strategyBook = IsolatedOccupancy.ForStrategy(book, strategyId);
+        var strategyBotIds = running
+            .Where(peer => peer.StrategyVersion.StrategyId == strategyId)
+            .Select(peer => peer.Id)
+            .ToHashSet();
+        var strategyVersionIds = running
+            .Where(peer => peer.StrategyVersion.StrategyId == strategyId)
+            .Select(peer => peer.StrategyVersionId)
+            .ToHashSet();
+        foreach (var row in book)
+        {
+            if (row.Bot?.StrategyVersion?.StrategyId != strategyId)
+            {
+                continue;
+            }
+
+            strategyBotIds.Add(row.BotId);
+            strategyVersionIds.Add(row.Bot.StrategyVersionId);
+        }
+
+        var strategyBook = IsolatedOccupancy.ForStrategy(book, strategyId, strategyBotIds, strategyVersionIds);
         var openRisk = IsolatedOccupancy.PlannedRiskPercent(strategyBook, availableUsdt);
         var streak = await _store.GetLossStreakForModeAsync(bot.Mode, cancellationToken);
         var exchangeCap = 0m;
@@ -603,8 +730,10 @@ public sealed class BotEngine : IBotEngine
                 book,
                 strategyId,
                 bot.Mode == TradingMode.Live ? _live.Current.OpenPositions : null,
-                bot.Mode == TradingMode.Live && IsolatedOccupancy.HasFreshFuturesBook(_live.Current),
-                now),
+                liveAuthoritative: false,
+                now,
+                strategyBotIds,
+                strategyVersionIds),
             OpenRiskPercent = openRisk,
             ConsecutiveLosses = streak.ConsecutiveLosses,
             LastLossAt = streak.LastLossAt,
@@ -614,6 +743,9 @@ public sealed class BotEngine : IBotEngine
                 StepSize = symbol?.StepSize ?? 0m,
                 MinQuantity = symbol?.MinQuantity ?? 0m,
                 MinNotional = symbol?.MinNotional ?? 0m,
+                QuantityPrecision = PortfolioRisk.EffectiveQuantityPrecision(
+                    symbol?.QuantityPrecision ?? 0,
+                    symbol?.StepSize ?? 0m),
                 ExchangeMaxLeverage = exchangeCap,
                 TakerFeePercent = bot.Mode == TradingMode.Live ? 0m : RiskEngine.DefaultTakerFeePercent,
                 SlippagePercent = bot.Mode == TradingMode.Live ? 0m : RiskEngine.DefaultSlippagePercent
@@ -631,11 +763,6 @@ public sealed class BotEngine : IBotEngine
                 return;
             }
 
-            if (bot.Mode == TradingMode.Live)
-            {
-                await CancelLiveProtectiveOrdersAsync(bot, cancellationToken);
-            }
-
             var closeSide = position.Side == PositionSide.Short ? OrderSide.Buy : OrderSide.Sell;
             await PlaceAndFillAsync(
                 bot,
@@ -650,7 +777,7 @@ public sealed class BotEngine : IBotEngine
                 0m,
                 cancellationToken,
                 flatten: true);
-            bot.LastError = bot.Mode == TradingMode.Live ? "Live exit submitted to Binance." : "Paper exit filled.";
+            bot.LastError = "Paper exit filled.";
             return;
         }
 
@@ -715,6 +842,16 @@ public sealed class BotEngine : IBotEngine
     {
         var connector = _connectors.Create(bot.Mode, bot.ExchangeAccountId);
         var orderSymbol = flatten && position is not null ? position.Symbol : bot.Symbol;
+        var market = await ResolveSymbolFiltersAsync(orderSymbol, null, cancellationToken);
+        quantity = PortfolioRisk.FloorToStep(
+            quantity,
+            market?.StepSize ?? 0m,
+            PortfolioRisk.EffectiveQuantityPrecision(market?.QuantityPrecision ?? 0, market?.StepSize ?? 0m));
+        if (quantity <= 0m)
+        {
+            throw new DomainException(ErrorCodes.InvalidQuantity, "Order size is below the coin step size.");
+        }
+
         var order = new Order
         {
             BotId = bot.Id,
@@ -866,7 +1003,6 @@ public sealed class BotEngine : IBotEngine
                 openedMargin = plan?.IsolatedMargin ?? PortfolioRisk.IsolatedMargin(notional, leverage);
             }
 
-            var market = await _store.GetSymbolAsync(bot.Symbol, cancellationToken);
             decimal slPrice;
             decimal tpPrice;
             try
@@ -1111,6 +1247,171 @@ public sealed class BotEngine : IBotEngine
             ClosedAt = _clock.UtcNow,
             CorrelationId = correlationId
         }, cancellationToken);
+    }
+
+    private readonly record struct OverlayProtectResult(Position? Position, bool Handled);
+
+    private static bool IsPrimaryLiveOwner(Bot bot, IReadOnlyList<Bot> running) =>
+        bot.Mode == TradingMode.Live
+        && running
+            .Where(row =>
+                row.Mode == TradingMode.Live
+                && string.Equals(row.Symbol, bot.Symbol, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(row => row.StartedAt)
+            .ThenBy(row => row.Id)
+            .FirstOrDefault()
+            ?.Id == bot.Id;
+
+    private static bool HasWorkingProtection(IReadOnlyList<LiveOpenOrder> orders, string symbol, string needle) =>
+        orders.Any(row =>
+            string.Equals(row.Symbol, symbol, StringComparison.OrdinalIgnoreCase)
+            && (row.Type ?? string.Empty).Contains(needle, StringComparison.OrdinalIgnoreCase));
+
+    private async Task<OverlayProtectResult> EnsureLiveOverlayProtectionAsync(
+        Bot bot,
+        IReadOnlyList<Bot> running,
+        Position? position,
+        decimal lastPrice,
+        Symbol? market,
+        CancellationToken cancellationToken)
+    {
+        if (bot.Mode != TradingMode.Live || !IsPrimaryLiveOwner(bot, running))
+        {
+            return new OverlayProtectResult(position, false);
+        }
+
+        var live = _live.Current;
+        if (!IsolatedOccupancy.HasFreshFuturesBook(live) || live.OpenOrders.Count == 0)
+        {
+            return new OverlayProtectResult(position, false);
+        }
+
+        var overlay = live.OpenPositions.FirstOrDefault(row =>
+            row.Quantity > 0m
+            && string.Equals(row.Symbol, bot.Symbol, StringComparison.OrdinalIgnoreCase));
+        if (overlay is null)
+        {
+            return new OverlayProtectResult(position, false);
+        }
+
+        var hasStop = HasWorkingProtection(live.OpenOrders, bot.Symbol, "STOP");
+        var hasTake = HasWorkingProtection(live.OpenOrders, bot.Symbol, "TAKE");
+        if (position is not null && hasStop && hasTake)
+        {
+            return new OverlayProtectResult(position, false);
+        }
+
+        var overlaySide = overlay.Side is "Short" or "Sell" ? PositionSide.Short : PositionSide.Long;
+        if (position is null)
+        {
+            position = new Position
+            {
+                BotId = bot.Id,
+                Symbol = overlay.Symbol,
+                Side = overlaySide,
+                Quantity = overlay.Quantity,
+                AverageEntryPrice = overlay.EntryPrice,
+                CurrentPrice = overlay.MarkPrice > 0m ? overlay.MarkPrice : lastPrice,
+                UnrealizedPnL = overlay.UnrealizedPnL,
+                Fees = 0m,
+                OpenedAt = _clock.UtcNow
+            };
+            position.Events.Add(new PositionEvent
+            {
+                EventType = "OPEN",
+                Quantity = overlay.Quantity,
+                Price = overlay.EntryPrice,
+                CorrelationId = _correlation.GetOrCreate()
+            });
+            await _store.AddPositionAsync(position, cancellationToken);
+        }
+
+        if (hasStop && hasTake)
+        {
+            bot.LastError = $"Live Isolated overlay adopted for {bot.Symbol}. SL/TP already working on Binance.";
+            return new OverlayProtectResult(position, false);
+        }
+
+        var profile = bot.RiskProfile ?? await _store.GetConservativeRiskAsync(cancellationToken);
+        decimal slPrice;
+        decimal tpPrice;
+        try
+        {
+            (slPrice, tpPrice) = LiveProtectivePrices.FromEntry(
+                position.AverageEntryPrice > 0m ? position.AverageEntryPrice : overlay.EntryPrice,
+                profile.StopLossPercent,
+                profile.TakeProfitPercent,
+                market?.TickSize ?? 0m,
+                overlaySide);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Could not recompute Isolated SL/TP for overlay {Symbol}", bot.Symbol);
+            return new OverlayProtectResult(position, false);
+        }
+
+        position.StopLossPercent = profile.StopLossPercent;
+        position.TakeProfitPercent = profile.TakeProfitPercent;
+        position.StopLossPrice = slPrice;
+        position.TakeProfitPrice = tpPrice;
+        var connector = _connectors.Create(bot.Mode, bot.ExchangeAccountId);
+        var correlationId = _correlation.GetOrCreate();
+        var stops = await AttachLiveProtectiveStopsAsync(
+            bot,
+            connector,
+            slPrice,
+            tpPrice,
+            overlaySide,
+            cancellationToken);
+        await PersistProtectiveOrdersAsync(
+            bot,
+            overlaySide == PositionSide.Short ? OrderSide.Buy : OrderSide.Sell,
+            slPrice,
+            tpPrice,
+            position.Quantity,
+            correlationId,
+            stops,
+            cancellationToken);
+        await _store.SaveChangesAsync(cancellationToken);
+        if (stops.StopPlaced)
+        {
+            bot.LastError =
+                $"Live Isolated {bot.Symbol} had no working SL/TP. Placed SL {slPrice} / TP {tpPrice}.";
+            return new OverlayProtectResult(position, false);
+        }
+
+        bot.LastError =
+            $"Live Isolated {bot.Symbol} had no working STOP. Flattening. {stops.StopError}";
+        var usdt = await _store.GetOrCreateBalanceAsync(
+            bot.ExchangeAccountId,
+            null,
+            "USDT",
+            TradingMode.Live,
+            0m,
+            cancellationToken);
+        var baseAsset = await _store.GetOrCreateBalanceAsync(
+            bot.ExchangeAccountId,
+            null,
+            market?.BaseAsset ?? bot.Symbol.Replace("USDT", "", StringComparison.OrdinalIgnoreCase),
+            TradingMode.Live,
+            0m,
+            cancellationToken);
+        var stamp = _clock.UtcNow.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var flattenId = $"LF{bot.Id:N}"[..12] + (stamp.Length <= 10 ? stamp : stamp[^10..]);
+        await PlaceAndFillAsync(
+            bot,
+            overlaySide == PositionSide.Short ? OrderSide.Buy : OrderSide.Sell,
+            position.Quantity,
+            flattenId,
+            correlationId,
+            usdt,
+            baseAsset,
+            position,
+            lastPrice,
+            profile.StopLossPercent,
+            cancellationToken,
+            flatten: true);
+        return new OverlayProtectResult(null, true);
     }
 
     private async Task<ProtectiveStopsResult> AttachLiveProtectiveStopsAsync(

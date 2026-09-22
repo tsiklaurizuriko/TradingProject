@@ -140,7 +140,7 @@ public sealed class PaperPipelineTests
             IsActive = true
         };
         var account = new ExchangeAccount { User = user, UserId = user.Id, Name = "Paper Simulator", ApiKeyFingerprint = "paper" };
-        var symbol = new Symbol { Name = "BTCUSDT", BaseAsset = "BTC", QuoteAsset = "USDT", StepSize = 0.00001m, MinQuantity = 0.00001m, MinNotional = 5m };
+        var symbol = new Symbol { Name = "BTCUSDT", BaseAsset = "BTC", QuoteAsset = "USDT", StepSize = 0.00001m, MinQuantity = 0.00001m, MinNotional = 5m, QuantityPrecision = 5 };
         var bot = new Bot
         {
             User = user,
@@ -247,7 +247,7 @@ public sealed class PaperPipelineTests
             IsActive = true
         };
         var account = new ExchangeAccount { User = user, UserId = user.Id, Name = "Paper Simulator", ApiKeyFingerprint = "paper" };
-        var symbol = new Symbol { Name = "BTCUSDT", BaseAsset = "BTC", QuoteAsset = "USDT", StepSize = 0.00001m, MinQuantity = 0.00001m, MinNotional = 5m };
+        var symbol = new Symbol { Name = "BTCUSDT", BaseAsset = "BTC", QuoteAsset = "USDT", StepSize = 0.00001m, MinQuantity = 0.00001m, MinNotional = 5m, QuantityPrecision = 5 };
         var bot = new Bot
         {
             User = user,
@@ -320,6 +320,135 @@ public sealed class PaperPipelineTests
         order.Side.Should().Be(OrderSide.Sell);
     }
 
+    [Fact]
+    public async Task Live_open_position_is_not_flattened_by_a_strategy_exit()
+    {
+        var options = new DbContextOptionsBuilder<TradingDbContext>()
+            .UseInMemoryDatabase($"live-exit-{Guid.NewGuid():N}")
+            .Options;
+        await using var db = new TradingDbContext(options);
+
+        var user = new User { Email = "admin@localhost", NormalizedEmail = "ADMIN@LOCALHOST", DisplayName = "Admin", PasswordHash = "x" };
+        var strategy = new Strategy { User = user, UserId = user.Id, Name = "EMA RSI Strategy" };
+        var version = new StrategyVersion
+        {
+            Strategy = strategy,
+            VersionNumber = 1,
+            DefinitionJson = """
+                {
+                  "name": "AlwaysExit",
+                  "version": 1,
+                  "symbol": "BTCUSDT",
+                  "timeframe": "5m",
+                  "entry": {
+                    "operator": "AND",
+                    "conditions": [
+                      { "indicator": "SMA", "period": 2, "comparison": "GREATER_THAN", "value": 0 }
+                    ]
+                  },
+                  "exit": {
+                    "operator": "OR",
+                    "conditions": [
+                      { "indicator": "SMA", "period": 2, "comparison": "GREATER_THAN", "value": 0 }
+                    ]
+                  }
+                }
+                """,
+            Symbol = "BTCUSDT",
+            Timeframe = Timeframe.FiveMinutes
+        };
+        strategy.Versions.Add(version);
+        var risk = new RiskProfile
+        {
+            Name = "LOW",
+            RiskPerTradePercent = 0.5m,
+            StopLossPercent = 2m,
+            TakeProfitPercent = 4m,
+            MaxLeverage = 3m,
+            AllowLive = true,
+            IsActive = true
+        };
+        var account = new ExchangeAccount { User = user, UserId = user.Id, Name = "Live", ApiKeyFingerprint = "live" };
+        var symbol = new Symbol { Name = "BTCUSDT", BaseAsset = "BTC", QuoteAsset = "USDT", StepSize = 0.001m, MinQuantity = 0.001m, MinNotional = 5m, QuantityPrecision = 3 };
+        var bot = new Bot
+        {
+            User = user,
+            UserId = user.Id,
+            ExchangeAccount = account,
+            StrategyVersion = version,
+            RiskProfile = risk,
+            Name = "BTCUSDT Live",
+            Status = BotStatus.Running,
+            Mode = TradingMode.Live,
+            Symbol = "BTCUSDT",
+            Timeframe = Timeframe.FiveMinutes,
+            StartedAt = DateTimeOffset.UtcNow
+        };
+        db.Users.Add(user);
+        db.Strategies.Add(strategy);
+        db.RiskProfiles.Add(risk);
+        db.ExchangeAccounts.Add(account);
+        db.Symbols.Add(symbol);
+        db.Bots.Add(bot);
+        db.Positions.Add(new TradingPlatform.Domain.Positions.Position
+        {
+            Bot = bot,
+            Symbol = "BTCUSDT",
+            Side = TradingPlatform.Domain.Positions.PositionSide.Long,
+            Quantity = 0.01m,
+            AverageEntryPrice = 50_000m,
+            CurrentPrice = 50_100m,
+            StopLossPercent = 2m,
+            TakeProfitPercent = 4m,
+            StopLossPrice = 49_000m,
+            TakeProfitPrice = 52_000m,
+            OpenedAt = DateTimeOffset.UtcNow.AddMinutes(-10)
+        });
+        await db.SaveChangesAsync();
+
+        var candles = CrossingCandles();
+        var last = candles[^1].Close;
+        var cache = new MarketDataCache();
+        var store = new TradingStore(db);
+        var live = new LiveAccountCache();
+        live.Set(new LiveAccountSnapshot
+        {
+            HasKeys = true,
+            CanTrade = true,
+            FuturesBookFresh = true,
+            FuturesUsdt = 1_000m,
+            UsdtFree = 1_000m,
+            OpenPositions = [new LiveOpenPosition("BTCUSDT", "Long", 0.01m, 50_000m, last, 1m, "Futures")],
+            UpdatedAt = DateTimeOffset.UtcNow
+        });
+        var clock = new SystemClock();
+        var correlation = new CorrelationIdAccessor();
+        var liveOrders = new RecordingLiveConnector();
+        var engine = new BotEngine(
+            store,
+            new FakeMarket(candles, last),
+            cache,
+            new StrategyEngine(),
+            new StrategyDefinitionValidator(),
+            new RiskEngine(),
+            new ExchangeConnectorFactory(
+                new PaperExchangeConnector(cache, clock, Options.Create(new TradingOptions())),
+                [liveOrders]),
+            live,
+            new NullTradingRealtimePublisher(),
+            clock,
+            correlation,
+            Options.Create(new TradingOptions()),
+            new LiveIsolatedReconciler(store, live, cache, clock, correlation, NullLogger<LiveIsolatedReconciler>.Instance),
+            NullLogger<BotEngine>.Instance);
+
+        await engine.EvaluateRunningBotsAsync();
+
+        liveOrders.Placed.Should().BeEmpty();
+        (await db.Positions.CountAsync(p => p.ClosedAt == null)).Should().Be(1);
+        bot.LastError.Should().Contain("Live Isolated SL/TP own the exit");
+    }
+
     private static List<MarketCandle> CrossingCandles()
     {
         var candles = new List<MarketCandle>();
@@ -388,5 +517,71 @@ public sealed class PaperPipelineTests
         public Task<IReadOnlyList<FuturesPremiumIndex>> GetPremiumIndexAsync(
             CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<FuturesPremiumIndex>>([]);
+    }
+
+    private sealed class RecordingLiveConnector : IExchangeConnector, ILiveExchangeConnectorFactory
+    {
+        public List<PlaceOrderRequest> Placed { get; } = [];
+        public string Name => "RecordingLive";
+        public TradingMode Mode => TradingMode.Live;
+        public IExchangeConnector Create(Guid? exchangeAccountId) => this;
+
+        public Task<ExchangeAccountSnapshot> GetAccountAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ExchangeAccountSnapshot("Futures", [], true));
+
+        public Task<IReadOnlyList<ExchangeBalance>> GetBalancesAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<ExchangeBalance>>([new("USDT", 1_000m, 0m)]);
+
+        public Task<SymbolFilters> GetSymbolInformationAsync(string symbol, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new SymbolFilters(symbol, "BTC", "USDT", 0.1m, 0.001m, 0.001m, 5m, 1, 3));
+
+        public Task<IReadOnlyList<ExchangeOrder>> GetOpenOrdersAsync(string? symbol, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<ExchangeOrder>>([]);
+
+        public Task<ExchangeOrder?> GetOrderAsync(string? clientOrderId, string? exchangeOrderId, string symbol, CancellationToken cancellationToken = default) =>
+            Task.FromResult<ExchangeOrder?>(null);
+
+        public Task PrepareSymbolRiskAsync(string symbol, MarginMode marginMode, int leverage, CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
+
+        public Task<int> GetMaxIsolatedLeverageAsync(string symbol, CancellationToken cancellationToken = default) =>
+            Task.FromResult(20);
+
+        public Task<ExchangeOrder> PlaceOrderAsync(PlaceOrderRequest request, CancellationToken cancellationToken = default)
+        {
+            Placed.Add(request);
+            return Task.FromResult(new ExchangeOrder(
+                request.ClientOrderId,
+                "LIVE-1",
+                request.Symbol,
+                request.Side,
+                request.Type,
+                OrderStatus.Filled,
+                request.Quantity,
+                request.Quantity,
+                request.Price,
+                50_000m,
+                DateTimeOffset.UtcNow));
+        }
+
+        public Task<ProtectiveStopsResult> PlaceClosePositionStopsAsync(
+            string symbol,
+            OrderSide closeSide,
+            decimal stopLossPrice,
+            decimal takeProfitPrice,
+            string stopClientOrderId,
+            string takeProfitClientOrderId,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ProtectiveStopsResult(true, true));
+
+        public Task CancelOrderAsync(string symbol, string? clientOrderId, string? exchangeOrderId, CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
+
+        public Task CancelAllOrdersAsync(string symbol, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task SubscribeMarketDataAsync(string symbol, Timeframe timeframe, CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
+
+        public Task SubscribeUserDataAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }

@@ -631,12 +631,55 @@ public sealed class ExchangeAccountService : IExchangeAccountService
         }
 
         if (!seen.Add("c:" + clientKey)
-            || (!fillRow && !string.IsNullOrWhiteSpace(exchangeOrderId) && !seen.Add("x:" + exchangeOrderId))
-            || await _trading.HasKnownOrderAsync(clientKey, fillRow ? null : exchangeOrderId, cancellationToken)
-            || (!fillRow
-                && !string.IsNullOrWhiteSpace(clientOrderId)
-                && !string.Equals(clientOrderId, clientKey, StringComparison.Ordinal)
-                && await _trading.HasKnownOrderAsync(clientOrderId, exchangeOrderId, cancellationToken)))
+            || (!fillRow && !string.IsNullOrWhiteSpace(exchangeOrderId) && !seen.Add("x:" + exchangeOrderId)))
+        {
+            return;
+        }
+
+        var existing = await _trading.GetOrderByClientOrderIdAsync(clientKey, cancellationToken);
+        if (existing is not null)
+        {
+            if (fillRow)
+            {
+                return;
+            }
+
+            existing.Status = status;
+            existing.FilledQuantity = filled;
+            existing.RemainingQuantity = Math.Max(0m, (existing.Quantity > 0m ? existing.Quantity : quantity) - filled);
+            if (price is > 0m)
+            {
+                existing.Price = price;
+                if (status == OrderStatus.Filled)
+                {
+                    existing.AverageFillPrice = price;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(exchangeOrderId))
+            {
+                existing.ExchangeOrderId = exchangeOrderId;
+            }
+
+            if (status is OrderStatus.Filled or OrderStatus.Cancelled or OrderStatus.Rejected or OrderStatus.Failed or OrderStatus.Expired)
+            {
+                existing.RejectReason = null;
+            }
+
+            return;
+        }
+
+        if (!fillRow
+            && !string.IsNullOrWhiteSpace(exchangeOrderId)
+            && await _trading.HasKnownOrderAsync(null, exchangeOrderId, cancellationToken))
+        {
+            return;
+        }
+
+        if (!fillRow
+            && !string.IsNullOrWhiteSpace(clientOrderId)
+            && !string.Equals(clientOrderId, clientKey, StringComparison.Ordinal)
+            && await _trading.HasKnownOrderAsync(clientOrderId, exchangeOrderId, cancellationToken))
         {
             return;
         }
@@ -716,6 +759,7 @@ public sealed class ExchangeAccountService : IExchangeAccountService
             _trading.RemoveTrade(extra);
         }
 
+        var exitOrder = await _trading.GetOrderByClientOrderIdAsync(correlationId, cancellationToken);
         if (existing is not null)
         {
             existing.Side = trip.EntrySide;
@@ -731,6 +775,11 @@ public sealed class ExchangeAccountService : IExchangeAccountService
             existing.OpenedAt = trip.OpenedAt;
             existing.ClosedAt = trip.ClosedAt;
             existing.CorrelationId = correlationId;
+            if (exitOrder is not null)
+            {
+                existing.ExitOrderId ??= exitOrder.Id;
+            }
+
             return;
         }
 
@@ -744,6 +793,7 @@ public sealed class ExchangeAccountService : IExchangeAccountService
             BotId = bot.Id,
             StrategyId = bot.StrategyVersion.StrategyId,
             StrategyVersionId = bot.StrategyVersionId,
+            ExitOrderId = exitOrder?.Id,
             Symbol = trip.Symbol.ToUpperInvariant(),
             Side = trip.EntrySide,
             Quantity = trip.Quantity,

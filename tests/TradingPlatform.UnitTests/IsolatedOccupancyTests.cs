@@ -89,6 +89,68 @@ public sealed class IsolatedOccupancyTests
     }
 
     [Fact]
+    public void UniqueCoinsForStrategy_keeps_old_db_slots_when_live_overlay_is_empty()
+    {
+        var rsi = Guid.NewGuid();
+        var opened = DateTimeOffset.UtcNow.AddMinutes(-10);
+        var book = new[]
+        {
+            Open("BTCUSDT", rsi, opened),
+            Open("ETHUSDT", rsi, opened),
+            Open("SOLUSDT", rsi, opened),
+            Open("XRPUSDT", rsi, opened),
+            Open("ADAUSDT", rsi, opened)
+        };
+
+        IsolatedOccupancy.UniqueCoinsForStrategy(book, rsi, [], liveAuthoritative: true, DateTimeOffset.UtcNow)
+            .Should().Be(5);
+    }
+
+    [Fact]
+    public void UniqueCoinsForStrategy_matches_bot_id_when_strategy_version_is_not_loaded()
+    {
+        var rsi = Guid.NewGuid();
+        var versionId = Guid.NewGuid();
+        var botId = Guid.NewGuid();
+        var book = new[]
+        {
+            new Position
+            {
+                BotId = botId,
+                Symbol = "BTCUSDT",
+                Quantity = 1m,
+                AverageEntryPrice = 100m,
+                OpenedAt = DateTimeOffset.UtcNow.AddMinutes(-10),
+                Bot = new Bot { Id = botId, Symbol = "BTCUSDT", StrategyVersionId = versionId }
+            }
+        };
+
+        IsolatedOccupancy.UniqueCoinsForStrategy(
+                book,
+                rsi,
+                strategyBotIds: new HashSet<Guid> { botId },
+                strategyVersionIds: new HashSet<Guid> { versionId })
+            .Should().Be(1);
+        IsolatedOccupancy.UniqueCoinsForStrategy(book, rsi).Should().Be(0);
+    }
+
+    [Fact]
+    public void IsCoinOpen_uses_db_snapshot_when_overlay_omits_the_coin()
+    {
+        var opened = DateTimeOffset.UtcNow.AddHours(-8);
+        var book = new[] { Open("CELOUSDT", Guid.NewGuid(), opened) };
+        var overlay = new LiveOpenPosition[]
+        {
+            new("OPUSDT", "Long", 1m, 1m, 1m, 0m, "Futures")
+        };
+
+        IsolatedOccupancy.IsCoinOpen("CELOUSDT", book, overlay, liveAuthoritative: true, DateTimeOffset.UtcNow)
+            .Should().BeTrue();
+        IsolatedOccupancy.IsCoinOpen("CELOUSDT", book, [], liveAuthoritative: true, DateTimeOffset.UtcNow)
+            .Should().BeTrue();
+    }
+
+    [Fact]
     public void Merge_drops_stale_bot_snapshot_when_binance_no_longer_holds_the_coin()
     {
         var ghost = new PositionDto(
@@ -191,14 +253,14 @@ public sealed class IsolatedOccupancyTests
             DateTimeOffset.UtcNow,
             "Binance");
 
-    private static Position Open(string symbol, Guid strategyId) =>
+    private static Position Open(string symbol, Guid strategyId, DateTimeOffset? openedAt = null) =>
         new()
         {
             Symbol = symbol,
             Quantity = 1m,
             AverageEntryPrice = 100m,
             InitialRiskUsdt = 0.5m,
-            OpenedAt = DateTimeOffset.UtcNow,
+            OpenedAt = openedAt ?? DateTimeOffset.UtcNow,
             Bot = new Bot
             {
                 Symbol = symbol,

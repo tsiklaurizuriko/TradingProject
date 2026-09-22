@@ -308,7 +308,8 @@ public sealed record PortfolioDto(
     decimal LiveSpotUsdt = 0,
     decimal LiveFundingUsdt = 0,
     decimal LiveFuturesUsdt = 0,
-    string? LiveMessage = null);
+    string? LiveMessage = null,
+    IReadOnlyList<PositionDto>? PositionBooks = null);
 
 public sealed record PerformanceTradeRow(
     Guid Id,
@@ -364,7 +365,8 @@ public sealed record PerformanceDto(
     IReadOnlyList<PerformanceDayDto> Days,
     IReadOnlyList<PerformanceSliceDto> Strategies,
     IReadOnlyList<PerformanceSliceDto> Coins,
-    IReadOnlyList<TradeDto> RecentTrades);
+    IReadOnlyList<TradeDto> RecentTrades,
+    decimal MonthlyPnL = 0m);
 
 public interface ITradingQueryService
 {

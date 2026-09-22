@@ -222,7 +222,13 @@ export class GoalProgressComponent {
       } @else {
         <div class="risk-strategy-list">
           @for (row of occupancy(); track row.key) {
-            <div class="risk-strategy" [class.is-full]="row.openCoins >= row.maxPositions">
+            <div
+              class="risk-strategy"
+              [class.is-full]="row.openCoins >= row.maxPositions"
+              [title]="row.openCoins > row.maxPositions
+                ? 'Existing Isolated stays until it closes. New coins are blocked.'
+                : ''"
+            >
               <span class="risk-strategy-name" [title]="row.name">{{ row.name }}</span>
               <strong>{{ row.openCoins }}/{{ row.maxPositions }}</strong>
               <span class="tiny num">{{ money(row.plannedRiskUsdt) }} · {{ pctLabel(row.plannedRiskPercent) }}</span>
@@ -238,14 +244,21 @@ export class RiskOverviewComponent {
   readonly available = input(0);
   readonly todaysPnL = input(0);
   readonly positions = input<PositionDto[]>([]);
+  readonly books = input<PositionDto[]>([]);
   readonly bots = input<BotDto[]>([]);
   readonly consecutiveLosses = input(0);
   readonly locked = input(false);
   readonly money = money;
   readonly signedMoney = signedMoney;
-  readonly occupancy = computed(() =>
-    strategyOccupancy(this.bots(), this.positions(), this.risk(), this.available()),
-  );
+  readonly occupancy = computed(() => {
+    const books = this.books();
+    return strategyOccupancy(
+      this.bots(),
+      books.length > 0 ? books : this.positions(),
+      this.risk(),
+      this.available(),
+    );
+  });
   readonly uniqueCoins = computed(() => uniqueOpenCoins(this.positions()));
   readonly totalOpenRisk = computed(() =>
     this.positions().reduce((sum, row) => sum + (row.initialRiskUsdt ?? 0), 0),
