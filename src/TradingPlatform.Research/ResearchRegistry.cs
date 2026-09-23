@@ -9,9 +9,11 @@ public static class ResearchRegistry
     public static IReadOnlyList<ResearchCandidate> All { get; } = Build();
     public static IReadOnlyList<ResearchCandidate> Wave2 { get; } = BuildWave2();
     public static IReadOnlyList<ResearchCandidate> Btc15mFitted { get; } = BuildBtc15mFitted();
+    public static IReadOnlyList<ResearchCandidate> Scalping { get; } = BuildScalping();
+    public static IReadOnlyList<ResearchCandidate> PriceAction { get; } = BuildPriceAction();
 
     public static ResearchCandidate? Find(string candidateId) =>
-        All.Concat(Wave2).Concat(Btc15mFitted).FirstOrDefault(c =>
+        All.Concat(Wave2).Concat(Btc15mFitted).Concat(Scalping).Concat(PriceAction).FirstOrDefault(c =>
             string.Equals(c.CandidateId, candidateId, StringComparison.OrdinalIgnoreCase)
             || string.Equals(c.NativeKey, candidateId, StringComparison.OrdinalIgnoreCase)
             || string.Equals(c.ParentStrategyId, candidateId, StringComparison.OrdinalIgnoreCase));
@@ -21,7 +23,7 @@ public static class ResearchRegistry
         IEnumerable<ResearchCandidate> rows = All;
         if (!string.IsNullOrWhiteSpace(candidateId) || !string.IsNullOrWhiteSpace(strategy))
         {
-            rows = All.Concat(Wave2).Concat(Btc15mFitted);
+            rows = All.Concat(Wave2).Concat(Btc15mFitted).Concat(Scalping).Concat(PriceAction);
         }
 
         if (!string.IsNullOrWhiteSpace(candidateId))
@@ -430,8 +432,64 @@ public static class ResearchRegistry
 
     public static string NextHigherTimeframe(string timeframe) => timeframe switch
     {
+        "1m" => "15m",
+        "3m" => "15m",
         "5m" => "15m",
         "15m" => "1h",
         _ => ""
     };
+
+    private static IReadOnlyList<ResearchCandidate> BuildScalping()
+    {
+        var tf = StrategyTemplateKeys.ScalpingTimeframes;
+        var sides = StrategyTemplateKeys.SupportedDirections;
+        return StrategyTemplateKeys.Scalping.Select(key =>
+            new ResearchCandidate(
+                $"SCALP-{key.ToUpperInvariant()}",
+                key,
+                1,
+                StrategyTemplates.Blurb(key),
+                ResearchKinds.ParentFilter,
+                key,
+                "",
+                ["closed-OHLCV"],
+                StrategyTemplates.Blurb(key),
+                "Isolated LOW book SL/TP. Replay may honor MaxHoldBars; LIVE Isolated path is unchanged.",
+                key == StrategyTemplateKeys.ScalpMtf
+                    ? new ResearchFilters(HigherTimeframe: "15m")
+                    : new ResearchFilters(),
+                new ResearchNativeParams(),
+                tf,
+                sides,
+                [],
+                CreatedAt,
+                "v1: BTCUSDT + ETHUSDT + volume-ranked top-20 USD-M; 1m/3m 90d, 5m/15m 365d",
+                ResearchStatuses.Researching)).ToArray();
+    }
+
+    private static IReadOnlyList<ResearchCandidate> BuildPriceAction()
+    {
+        var tf = StrategyTemplateKeys.ScalpingTimeframes;
+        var sides = StrategyTemplateKeys.SupportedDirections;
+        return StrategyTemplateKeys.PriceAction.Select(key =>
+            new ResearchCandidate(
+                $"PA-{key.ToUpperInvariant()}",
+                key,
+                1,
+                StrategyTemplates.Blurb(key),
+                ResearchKinds.ParentFilter,
+                key,
+                "",
+                ["closed-OHLCV", "causal-pattern-events"],
+                StrategyTemplates.Blurb(key),
+                "Isolated LOW book SL/TP. Pattern confirmation is an event, not a textbook LONG/SHORT. LIVE off.",
+                new ResearchFilters(),
+                new ResearchNativeParams(),
+                tf,
+                sides,
+                [],
+                CreatedAt,
+                "v1: OHLCV + volume + causal indicators. Futures series optional when present. Cup & Handle NOT_IMPLEMENTED.",
+                ResearchStatuses.Researching)).ToArray();
+    }
 }

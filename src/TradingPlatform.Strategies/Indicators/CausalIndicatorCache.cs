@@ -1,4 +1,5 @@
 using TradingPlatform.Domain.Market;
+using TradingPlatform.Strategies.PriceAction;
 
 namespace TradingPlatform.Strategies.Indicators;
 
@@ -13,6 +14,7 @@ public sealed class CausalIndicatorCache
     private readonly Dictionary<string, IReadOnlyList<decimal?>> _series = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (decimal?[] A, decimal?[] B, decimal?[] C)> _triples = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (decimal?[] A, decimal?[] B)> _pairs = new(StringComparer.Ordinal);
+    private readonly Dictionary<int, PriceActionBook> _priceAction = new();
 
     public CausalIndicatorCache(IReadOnlyList<MarketCandle> candles) =>
         _candles = candles ?? throw new ArgumentNullException(nameof(candles));
@@ -149,6 +151,18 @@ public sealed class CausalIndicatorCache
 
     public IReadOnlyList<decimal?> TakerImbalance() =>
         Get("takerimb", () => AlphaIndicatorSeries.TakerImbalance(_candles));
+
+    public PriceActionBook PriceAction(int swingN = PriceActionBook.DefaultSwing)
+    {
+        if (_priceAction.TryGetValue(swingN, out var cached))
+        {
+            return cached;
+        }
+
+        var computed = PriceActionBook.Build(_candles, swingN);
+        _priceAction[swingN] = computed;
+        return computed;
+    }
 
     private IReadOnlyList<decimal?> Get(string key, Func<IReadOnlyList<decimal?>> factory)
     {

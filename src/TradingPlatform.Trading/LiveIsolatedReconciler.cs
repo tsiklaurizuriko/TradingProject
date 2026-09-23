@@ -60,18 +60,18 @@ public sealed class LiveIsolatedReconciler
             }
 
             var bot = position.Bot ?? await _store.GetBotAsync(position.BotId, cancellationToken);
-            if (bot is null)
+            if (bot is null || bot.StrategyVersion is null)
             {
-                continue;
+                bot = bot is null ? null : await _store.GetBotAsync(bot.Id, cancellationToken) ?? bot;
             }
 
-            if (bot.StrategyVersion is null)
+            if (bot?.StrategyVersion is null)
             {
-                bot = await _store.GetBotAsync(bot.Id, cancellationToken) ?? bot;
-            }
-
-            if (bot.StrategyVersion is null)
-            {
+                await CloseSnapshotWithoutStrategyAsync(bot, position, now, cancellationToken);
+                closed++;
+                _logger.LogInformation(
+                    "LIVE Isolated {Symbol} is flat on Binance. Closed leftover snapshot without a strategy record.",
+                    position.Symbol);
                 continue;
             }
 
@@ -89,6 +89,48 @@ public sealed class LiveIsolatedReconciler
         {
             throw;
         }
+    }
+
+    private async Task CloseSnapshotWithoutStrategyAsync(
+        Bot? bot,
+        Position position,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var quantity = position.Quantity;
+        var exit = position.CurrentPrice > 0m ? position.CurrentPrice : position.AverageEntryPrice;
+        if (_cache.TryGetTicker(position.Symbol, out var mark) && mark > 0m)
+        {
+            exit = mark;
+        }
+
+        var direction = position.Side == PositionSide.Short ? -1m : 1m;
+        var pnl = direction * (exit - position.AverageEntryPrice) * quantity;
+        position.Quantity = 0m;
+        position.CurrentPrice = exit;
+        position.UnrealizedPnL = 0m;
+        position.RealizedPnL += pnl;
+        position.ClosedAt = now;
+        if (bot is null)
+        {
+            return;
+        }
+
+        var openTrade = await _store.GetOpenTradeAsync(bot.Id, cancellationToken);
+        if (openTrade is null ||
+            !string.Equals(openTrade.Symbol, position.Symbol, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var pnlPercent = position.AverageEntryPrice == 0m
+            ? 0m
+            : direction * (exit - position.AverageEntryPrice) / position.AverageEntryPrice * 100m;
+        openTrade.Quantity = quantity > 0m ? quantity : openTrade.Quantity;
+        openTrade.ExitPrice = exit;
+        openTrade.PnL = pnl;
+        openTrade.PnLPercent = pnlPercent;
+        openTrade.ClosedAt = now;
     }
 
     private async Task CloseGhostAsync(Bot bot, Position position, CancellationToken cancellationToken)
@@ -155,11 +197,18 @@ public sealed class LiveIsolatedReconciler
         var pnlPercent = position.AverageEntryPrice == 0m
             ? 0m
             : direction * (exit - position.AverageEntryPrice) / position.AverageEntryPrice * 100m;
+        var window = _clock.UtcNow - position.OpenedAt;
+        if (window < TimeSpan.FromMinutes(15))
+        {
+            window = TimeSpan.FromMinutes(15);
+        }
+
         var already = await _store.FindClosedTradeNearAsync(
-            bot.Id,
             position.Symbol,
+            quantity,
+            position.OpenedAt,
             _clock.UtcNow,
-            TimeSpan.FromMinutes(15),
+            window,
             cancellationToken);
         if (already is not null)
         {

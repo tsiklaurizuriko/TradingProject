@@ -6,6 +6,7 @@ using TradingPlatform.Application.Abstractions.Exchange;
 using TradingPlatform.Application.Auth;
 using TradingPlatform.Application.Trading;
 using TradingPlatform.Infrastructure.Persistence;
+using TradingPlatform.Infrastructure.Research;
 using TradingPlatform.Infrastructure.Security;
 
 namespace TradingPlatform.Infrastructure;
@@ -42,6 +43,8 @@ public static class DependencyInjection
         services.AddScoped<IExchangeCredentialStore, ExchangeCredentialStore>();
         services.AddScoped<DatabaseSeeder>();
         services.AddScoped<ITradingStore, TradingStore>();
+        services.AddSingleton<IScalpingResearchQuery, ScalpingResearchQuery>();
+        services.AddSingleton<IPriceActionResearchQuery, PriceActionResearchQuery>();
 
         return services;
     }

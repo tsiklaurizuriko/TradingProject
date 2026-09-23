@@ -52,6 +52,37 @@ public sealed record ProtectiveStopsResult(
     string? StopError = null,
     string? TakeError = null);
 
+public static class ProtectiveOrderMath
+{
+    public static bool IsStopOrder(string? type) =>
+        Contains(type, "STOP") && !Contains(type, "TAKE");
+
+    public static bool IsTakeOrder(string? type) => Contains(type, "TAKE");
+
+    public static bool IsExistingProtectiveOrder(string? message) =>
+        Contains(message, "-4130")
+        || Contains(message, "-4116")
+        || Contains(message, "duplicat");
+
+    public static decimal RestingTrigger(decimal mark, decimal tickSize, bool closingShort, bool stop)
+    {
+        var tick = tickSize > 0m ? tickSize : 0.00000001m;
+        if (mark <= 0m)
+        {
+            return 0m;
+        }
+
+        var above = closingShort == stop;
+        var raw = above ? mark + tick : Math.Max(tick, mark - tick);
+        var steps = raw / tick;
+        var rounded = (above ? Math.Ceiling(steps) : Math.Floor(steps)) * tick;
+        return rounded > 0m ? rounded : tick;
+    }
+
+    private static bool Contains(string? value, string needle) =>
+        value?.Contains(needle, StringComparison.OrdinalIgnoreCase) == true;
+}
+
 public interface IExchangeConnector
 {
     string Name { get; }
@@ -71,7 +102,9 @@ public interface IExchangeConnector
         decimal takeProfitPrice,
         string stopClientOrderId,
         string takeProfitClientOrderId,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        bool placeStop = true,
+        bool placeTake = true);
     Task CancelOrderAsync(string symbol, string? clientOrderId, string? exchangeOrderId, CancellationToken cancellationToken = default);
     Task CancelAllOrdersAsync(string symbol, CancellationToken cancellationToken = default);
     Task SubscribeMarketDataAsync(string symbol, Timeframe timeframe, CancellationToken cancellationToken = default);

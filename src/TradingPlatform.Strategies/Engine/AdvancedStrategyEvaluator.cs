@@ -2,6 +2,7 @@ using TradingPlatform.Domain.Market;
 using TradingPlatform.Domain.Positions;
 using TradingPlatform.Domain.Trading;
 using TradingPlatform.Strategies.Indicators;
+using TradingPlatform.Strategies.PriceAction;
 
 namespace TradingPlatform.Strategies.Engine;
 
@@ -23,6 +24,9 @@ public static class AdvancedStrategyEvaluator
             StrategyTemplateKeys.FundingOiRegime => FundingRegime(p, candles, i, context, cache),
             StrategyTemplateKeys.VolSpikeEmaTrend => VolSpikeEma(p, candles, i, context, cache),
             StrategyTemplateKeys.Bb202Break => BbBreak(p, candles, i, context, cache),
+            var pa when StrategyTemplateKeys.IsPriceAction(pa) =>
+                PriceActionStrategyEvaluator.Evaluate(p, candles, i, context, cache),
+            var scalp when StrategyTemplateKeys.IsScalping(scalp) => ScalpingStrategyEvaluator.Evaluate(p, candles, i, context, cache),
             _ => AlphaStrategyEvaluator.Evaluate(p, candles, i, context, cache)
         };
 

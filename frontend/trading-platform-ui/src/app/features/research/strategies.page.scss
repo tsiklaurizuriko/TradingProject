@@ -19,9 +19,18 @@
   flex-wrap: wrap;
 }
 
-.strategies-toolbar-actions .field {
-  min-width: 220px;
-  margin: 0;
+.strategies-toolbar-actions .ghost-btn {
+  border: 1px solid var(--border, #2a3b55);
+  background: transparent;
+  color: inherit;
+  border-radius: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.strategies-toolbar-actions .ghost-btn.active {
+  border-color: #36a3ff;
+  color: #36a3ff;
 }
 
 .strategies-grid {

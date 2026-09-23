@@ -64,7 +64,7 @@ public sealed class TradingDbContext : DbContext, IUnitOfWork
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         StampAndBumpVersions();
-        const int attempts = 4;
+        const int attempts = 8;
         for (var attempt = 1; ; attempt++)
         {
             try
@@ -80,14 +80,24 @@ public sealed class TradingDbContext : DbContext, IUnitOfWork
             {
                 await MergeConcurrencyAsync(ex, cancellationToken);
                 StampAndBumpVersions();
+                await Task.Delay(RetryDelay(attempt), cancellationToken);
             }
-            catch (DbUpdateConcurrencyException)
+            catch (DbUpdateConcurrencyException ex)
             {
+                var entities = string.Join(
+                    ", ",
+                    ex.Entries.Select(entry => entry.Metadata.ClrType.Name).Distinct(StringComparer.Ordinal));
                 throw new DomainException(
                     ErrorCodes.ReconciliationRequired,
-                    "This row was updated at the same time. Try Close again.");
+                    $"Concurrent update could not be reconciled ({entities}). Retry the operation.");
             }
         }
+    }
+
+    private static TimeSpan RetryDelay(int attempt)
+    {
+        var exponentialMs = 15 * (1 << Math.Min(attempt - 1, 5));
+        return TimeSpan.FromMilliseconds(exponentialMs + Random.Shared.Next(5, 30));
     }
 
     private static bool IsDuplicateClosedCandle(DbUpdateException exception) =>
@@ -108,6 +118,13 @@ public sealed class TradingDbContext : DbContext, IUnitOfWork
         var utc = DateTimeOffset.UtcNow;
         foreach (var entry in ChangeTracker.Entries<Entity>())
         {
+            if (IsAppendOnlyEvent(entry.Metadata.ClrType)
+                && entry.State is EntityState.Modified or EntityState.Deleted)
+            {
+                entry.State = EntityState.Unchanged;
+                continue;
+            }
+
             if (entry.State == EntityState.Added)
             {
                 entry.Entity.CreatedAt = utc;
@@ -156,6 +173,14 @@ public sealed class TradingDbContext : DbContext, IUnitOfWork
                 continue;
             }
 
+            if (IsAppendOnlyEvent(entry.Metadata.ClrType))
+            {
+                entry.CurrentValues.SetValues(database);
+                entry.OriginalValues.SetValues(database);
+                entry.State = EntityState.Unchanged;
+                continue;
+            }
+
             foreach (var property in entry.Properties)
             {
                 var name = property.Metadata.Name;
@@ -190,6 +215,9 @@ public sealed class TradingDbContext : DbContext, IUnitOfWork
             }
         }
     }
+
+    private static bool IsAppendOnlyEvent(Type type) =>
+        type == typeof(OrderEvent) || type == typeof(PositionEvent);
 
     private static long ReadVersion(object? value) => value switch
     {

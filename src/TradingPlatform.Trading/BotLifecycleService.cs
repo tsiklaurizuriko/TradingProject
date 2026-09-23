@@ -773,7 +773,14 @@ public sealed class TradingQueryService : ITradingQueryService
     public async Task<PortfolioDto> GetOverviewAsync(CancellationToken cancellationToken = default)
     {
         var bots = (await GetBotsAsync(cancellationToken)).ToList();
-        var tradeRows = await _store.GetRecentTradesAsync(OverviewLedgerLimit, cancellationToken);
+        var tradeRows = IsolatedOccupancy.UniqueClosedTrips(
+            await _store.GetRecentTradesAsync(OverviewLedgerLimit, cancellationToken),
+            t => t.Symbol,
+            t => t.Quantity,
+            t => t.OpenedAt,
+            t => t.ClosedAt,
+            t => t.CorrelationId,
+            t => t.Fees);
         var trades = tradeRows.Select(MapTrade).ToList();
         var signals = (await _store.GetRecentSignalsAsync(20, cancellationToken))
             .Select(s => new SignalDto(s.Id, s.BotId, s.Symbol, s.SignalType.ToString(), s.Price, s.Reason, s.Timestamp))
@@ -945,11 +952,7 @@ public sealed class TradingQueryService : ITradingQueryService
             ?? await _store.GetConservativeRiskAsync(cancellationToken);
         var liveBots = bots
             .Where(bot => string.Equals(bot.Mode, "Live", StringComparison.OrdinalIgnoreCase))
-            .GroupBy(bot => IsolatedOccupancy.CoinKey(bot.Symbol), StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(
-                group => group.Key,
-                group => group.OrderBy(bot => bot.Status == "Running" ? 0 : 1).First(),
-                StringComparer.OrdinalIgnoreCase);
+            .ToList();
 
         var stamped = new List<PositionDto>(positions.Count);
         foreach (var row in positions)
@@ -960,7 +963,8 @@ public sealed class TradingQueryService : ITradingQueryService
                 continue;
             }
 
-            liveBots.TryGetValue(IsolatedOccupancy.CoinKey(row.Symbol), out var bot);
+            var bot = liveBots.FirstOrDefault(item => item.Id == row.BotId)
+                ?? UniqueRunningBot(liveBots, row.Symbol);
             var book = bot is not null && books.TryGetValue(bot.RiskProfileId, out var matched)
                 ? matched
                 : active;
@@ -983,6 +987,22 @@ public sealed class TradingQueryService : ITradingQueryService
         }
 
         return stamped;
+    }
+
+    private static BotDto? UniqueRunningBot(IReadOnlyList<BotDto> bots, string symbol)
+    {
+        var running = bots
+            .Where(bot =>
+                bot.Status == "Running"
+                && string.Equals(bot.Symbol, symbol, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (running.Count == 0)
+        {
+            return null;
+        }
+
+        var strategies = running.Select(bot => bot.StrategyId).Distinct().ToList();
+        return strategies.Count == 1 ? running[0] : null;
     }
 
     private static PositionDto MapExchangePosition(LiveOpenPosition position) =>
@@ -1100,7 +1120,14 @@ public sealed class TradingQueryService : ITradingQueryService
         .ToList();
 
     public async Task<IReadOnlyList<TradeDto>> GetTradesAsync(CancellationToken cancellationToken = default) =>
-        (await _store.GetRecentTradesAsync(2000, cancellationToken))
+        IsolatedOccupancy.UniqueClosedTrips(
+            await _store.GetRecentTradesAsync(2000, cancellationToken),
+            t => t.Symbol,
+            t => t.Quantity,
+            t => t.OpenedAt,
+            t => t.ClosedAt,
+            t => t.CorrelationId,
+            t => t.Fees)
         .Select(MapTrade)
         .ToList();
 
@@ -1108,7 +1135,14 @@ public sealed class TradingQueryService : ITradingQueryService
     {
         var tradingMode = string.Equals(mode, "Live", StringComparison.OrdinalIgnoreCase) ? TradingMode.Live : TradingMode.Paper;
         var modeLabel = tradingMode == TradingMode.Live ? "Live" : "Paper";
-        var rows = await _store.GetPerformanceTradesAsync(tradingMode, cancellationToken);
+        var rows = IsolatedOccupancy.UniqueClosedTrips(
+            await _store.GetPerformanceTradesAsync(tradingMode, cancellationToken),
+            t => t.Symbol,
+            t => t.Quantity,
+            t => t.OpenedAt,
+            t => t.ClosedAt,
+            t => t.CorrelationId,
+            t => t.Fees);
         var bots = (await GetBotsAsync(cancellationToken))
             .Where(b => string.Equals(b.Mode, modeLabel, StringComparison.OrdinalIgnoreCase))
             .ToList();

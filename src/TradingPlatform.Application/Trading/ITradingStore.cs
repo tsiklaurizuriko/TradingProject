@@ -68,15 +68,15 @@ public interface ITradingStore
     Task AddTradeAsync(Trade trade, CancellationToken cancellationToken = default);
     Task<bool> HasTradeCorrelationAsync(string correlationId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<Trade>> FindClosedTradesAroundAsync(
-        Guid botId,
         string symbol,
         DateTimeOffset from,
         DateTimeOffset to,
         CancellationToken cancellationToken = default);
     void RemoveTrade(Trade trade);
     Task<Trade?> FindClosedTradeNearAsync(
-        Guid botId,
         string symbol,
+        decimal quantity,
+        DateTimeOffset openedAt,
         DateTimeOffset around,
         TimeSpan window,
         CancellationToken cancellationToken = default);

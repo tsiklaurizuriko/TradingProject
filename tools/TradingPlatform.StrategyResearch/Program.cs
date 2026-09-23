@@ -1,8 +1,12 @@
 using System.Diagnostics;
 using System.Text.Json;
+using TradingPlatform.Backtesting;
+using TradingPlatform.Backtesting.Validation;
 using TradingPlatform.Domain.Market;
+using TradingPlatform.Domain.Trading;
 using TradingPlatform.Research;
 using TradingPlatform.Strategies.Engine;
+using TradingPlatform.Strategies.Indicators;
 using TradingPlatform.StrategyResearch;
 
 string[] pilotSymbols =
@@ -37,6 +41,255 @@ if (args.Any(a => string.Equals(a, "--universe", StringComparison.OrdinalIgnoreC
 {
     Console.WriteLine("Full 528-universe run is blocked. Phase 2 uses representative liquid coins only.");
     return 2;
+}
+
+if (args.Any(a => string.Equals(a, "--price-action-alpha-audit", StringComparison.OrdinalIgnoreCase)))
+{
+    return await PriceActionAlphaData.AuditAsync(root, candleCacheDir);
+}
+
+if (args.Any(a => string.Equals(a, "--price-action-alpha-expand", StringComparison.OrdinalIgnoreCase)))
+{
+    return await PriceActionAlphaData.ExpandAsync(root, candleCacheDir, args);
+}
+
+if (args.Any(a => string.Equals(a, "--price-action-alpha-freeze", StringComparison.OrdinalIgnoreCase)))
+{
+    return PriceActionAlphaDiscovery.Freeze(root);
+}
+
+if (args.Any(a => string.Equals(a, "--price-action-alpha-discover", StringComparison.OrdinalIgnoreCase)))
+{
+    return await PriceActionAlphaDiscovery.RunAsync(root, candleCacheDir, args);
+}
+
+if (args.Any(a => string.Equals(a, "--price-action-alpha-render", StringComparison.OrdinalIgnoreCase)))
+{
+    return PriceActionAlphaDiscovery.Render(root);
+}
+
+if (args.Any(a => string.Equals(a, "--contextual-pa-freeze", StringComparison.OrdinalIgnoreCase)))
+{
+    return ContextualPriceActionDiscovery.Freeze(root);
+}
+
+if (args.Any(a => string.Equals(a, "--contextual-pa-discover", StringComparison.OrdinalIgnoreCase)))
+{
+    return await ContextualPriceActionDiscovery.RunAsync(root, candleCacheDir, args);
+}
+
+if (args.Any(a => string.Equals(a, "--contextual-pa-render", StringComparison.OrdinalIgnoreCase)))
+{
+    return ContextualPriceActionDiscovery.Render(root);
+}
+
+if (args.Any(a => string.Equals(a, "--phase7-data-audit", StringComparison.OrdinalIgnoreCase)))
+{
+    return await Phase7DataExpansion.AuditAsync(root, candleCacheDir);
+}
+
+if (args.Any(a => string.Equals(a, "--phase7-data-expand", StringComparison.OrdinalIgnoreCase)))
+{
+    return await Phase7DataExpansion.ExpandAsync(root, candleCacheDir, args);
+}
+
+if (args.Any(a => string.Equals(a, "--price-action-data", StringComparison.OrdinalIgnoreCase)))
+{
+    return await PriceActionCli.RunDataAsync(root, candleCacheDir, args);
+}
+
+if (args.Any(a => string.Equals(a, "--price-action", StringComparison.OrdinalIgnoreCase)))
+{
+    return await PriceActionCli.RunResearchAsync(root, candleCacheDir, args);
+}
+
+if (args.Any(a => string.Equals(a, "--scalping-data", StringComparison.OrdinalIgnoreCase)))
+{
+    var scalpDir = Path.Combine(root, "artifacts", "strategy-research", "scalping");
+    Directory.CreateDirectory(scalpDir);
+    Console.WriteLine("Scalping coverage. LIVE disabled. Isolated LOW unchanged. Taker/OI/funding not fabricated.");
+    using var scalpHttp = new HttpClient { BaseAddress = new Uri("https://fapi.binance.com/"), Timeout = TimeSpan.FromSeconds(90) };
+    scalpHttp.DefaultRequestHeaders.UserAgent.ParseAdd("TradingPlatformScalpingCoverage/1.0");
+    var rows = await ScalpingCoverage.RunAsync(scalpHttp, candleCacheDir, scalpDir);
+    File.WriteAllText(Path.Combine(root, "docs", "scalping-coverage.md"), ScalpingReport.CoverageMarkdown(rows));
+    Console.WriteLine($"Coverage rows {rows.Count}. Wrote {Path.Combine(scalpDir, "coverage.json")}");
+    Console.WriteLine(ScalpingReport.Confirmation);
+    return 0;
+}
+
+if (args.Any(a => string.Equals(a, "--scalping", StringComparison.OrdinalIgnoreCase)))
+{
+    var scalpDir = Path.Combine(root, "artifacts", "strategy-research", "scalping");
+    Directory.CreateDirectory(scalpDir);
+    var scalpSymbols = string.IsNullOrWhiteSpace(symbolFilter) ? ScalpingCatalog.Universe : symbols;
+    var scalpTfs = (timeframeRaw ?? "5m,15m").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    var scalpCandidates = string.IsNullOrWhiteSpace(candidateId)
+        ? ResearchRegistry.Scalping.ToList()
+        : ResearchRegistry.Scalping.Where(c => string.Equals(c.CandidateId, candidateId, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(c.ParentTemplateKey, candidateId, StringComparison.OrdinalIgnoreCase)).ToList();
+    var scalpNotes = new List<string>
+    {
+        ScalpingReport.Confirmation,
+        "Scalping research wave. LIVE disabled. Frozen five / Isolated LOW catalog numbers unchanged. No OperatorCatalog. No VALIDATED_FOR_PAPER.",
+        "Book: LOW Isolated $1000, 0.5% R, 3x, 0.04% fee, 0.02% slip. MaxHoldBars per TF (1m=15, 3m=12, 5m=8, 15m=6).",
+        "Futures scalp keys skip until coverage supplies taker/OI/funding. Missing = DATA_UNAVAILABLE.",
+        $"Coins {string.Join(",", scalpSymbols)}. Timeframes {string.Join("/", scalpTfs)}. Candidates {scalpCandidates.Count}."
+    };
+    Console.WriteLine(scalpNotes[0]);
+    using var scalpHttp = new HttpClient { BaseAddress = new Uri("https://fapi.binance.com/"), Timeout = TimeSpan.FromSeconds(90) };
+    scalpHttp.DefaultRequestHeaders.UserAgent.ParseAdd("TradingPlatformScalpingResearch/1.0");
+    var coveragePath = Path.Combine(scalpDir, "coverage.json");
+    IReadOnlyList<ScalpingCoverageRow> coverage = [];
+    if (File.Exists(coveragePath))
+    {
+        coverage = JsonSerializer.Deserialize<List<ScalpingCoverageRow>>(File.ReadAllText(coveragePath), new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        }) ?? [];
+        scalpNotes.Add($"Loaded coverage rows={coverage.Count} from {coveragePath}.");
+    }
+    else
+    {
+        coverage = await ScalpingCoverage.RunAsync(scalpHttp, candleCacheDir, scalpDir);
+        scalpNotes.Add($"Coverage generated rows={coverage.Count}.");
+    }
+
+    var scalpEnd = DateTimeOffset.UtcNow;
+    var scalpSeries = new Dictionary<(string Symbol, string Timeframe), IReadOnlyList<MarketCandle>>();
+    foreach (var symbol in scalpSymbols)
+    {
+        foreach (var tf in scalpTfs.Concat(["15m"]).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            Exception? last = null;
+            var windowStart = ScalpingCoverage.WindowStart(tf, scalpEnd);
+            for (var attempt = 1; attempt <= 4; attempt++)
+            {
+                try
+                {
+                    var (loaded, hit, got) = await ResearchKlineCache.LoadAsync(scalpHttp, candleCacheDir, symbol, tf, windowStart, scalpEnd);
+                    var closed = loaded.Where(c => c.IsClosed).OrderBy(c => c.OpenTime).ToList();
+                    const int scalpBarCap = 6000;
+                    if (closed.Count > scalpBarCap)
+                    {
+                        scalpNotes.Add($"{symbol} {tf} truncated to last {scalpBarCap} of {closed.Count} bars for bounded v1 (not a 528-universe run).");
+                        closed = closed.TakeLast(scalpBarCap).ToList();
+                    }
+
+                    scalpSeries[(symbol, tf)] = closed;
+                    scalpNotes.Add($"{symbol} {tf} bars={closed.Count} cache {(hit ? "hit" : "miss")} dl={got}");
+                    Console.WriteLine(scalpNotes[^1]);
+                    last = null;
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    last = ex;
+                    await Task.Delay(250 * attempt);
+                }
+            }
+
+            if (last is not null)
+            {
+                scalpNotes.Add($"{symbol} {tf} load failed ({last.Message})");
+                Console.WriteLine(scalpNotes[^1]);
+            }
+        }
+    }
+
+    var scalpBooks = ResearchRunner.Evaluate(new ResearchRunRequest
+    {
+        Phase = ResearchPhases.Pilot,
+        Candidates = scalpCandidates,
+        Symbols = scalpSymbols,
+        Timeframes = scalpTfs,
+        Series = scalpSeries,
+        CostLabels = [ResearchCostLabels.Base, ResearchCostLabels.Mild, ResearchCostLabels.High, ResearchCostLabels.Stress],
+        Force = true,
+        MaxParallel = maxParallel,
+        UseLowIsolated = true,
+        HonorSuggestedStops = false,
+        SkipWalkForward = true,
+        DataSnapshot = new ResearchDataSnapshot(["OHLCV", "CompletedHtf"])
+    });
+    if (scalpBooks.Any(b => string.Equals(b.Status, ResearchStatuses.ValidatedForPaper, StringComparison.OrdinalIgnoreCase)))
+    {
+        throw new InvalidOperationException("AssignStatus must never return VALIDATED_FOR_PAPER.");
+    }
+
+    OccupancyReplayResult? occupancy = null;
+    try
+    {
+        var from = DateTimeOffset.UtcNow.AddDays(-30);
+        var to = DateTimeOffset.UtcNow;
+        var occSettings = StrategyValidation.LowIsolatedRisk(from, to) with { MaxSimultaneousPositions = 5, MaxHoldBars = 8 };
+        var occBooks = new List<(string StrategyKey, string Symbol, IReadOnlyList<MarketCandle> Candles, IReadOnlyList<TradingPlatform.Domain.Trading.SignalType> Signals)>();
+        foreach (var symbol in scalpSymbols.Take(3))
+        {
+            foreach (var key in new[] { StrategyTemplateKeys.ScalpEmaMomentum, StrategyTemplateKeys.ScalpRsiPullback })
+            {
+                if (!scalpSeries.TryGetValue((symbol, "5m"), out var candles) || candles.Count < 40)
+                {
+                    continue;
+                }
+
+                candles = candles.TakeLast(400).ToList();
+
+                var candidate = scalpCandidates.First(c => c.ParentTemplateKey == key);
+                var engine = new ResearchStrategyEngine(candidate);
+                var definition = ResearchRunner.DefinitionFor(candidate, "5m");
+                var cache = new CausalIndicatorCache(candles);
+                var signals = new SignalType[candles.Count];
+                for (var i = 1; i < candles.Count; i++)
+                {
+                    var ctx = new StrategyContext
+                    {
+                        ClosedCandles = candles.Take(i + 1).ToList(),
+                        CurrentPrice = candles[i].Close,
+                        HasOpenPosition = false
+                    };
+                    signals[i] = engine.EvaluateAt(definition, ctx, cache, i, out _);
+                }
+
+                occBooks.Add((key, symbol, candles, signals));
+            }
+        }
+
+        if (occBooks.Count > 0)
+        {
+            occupancy = PortfolioOccupancyReplay.RunBooks(occBooks, occSettings);
+            scalpNotes.Add($"Occupancy same-coin={occupancy.SameCoinRejects} slots={occupancy.SlotRejects} heat={occupancy.HeatRejects} trades={occupancy.Trades.Count} DD={occupancy.MaximumDrawdownPercent:0.00}%.");
+            File.WriteAllText(Path.Combine(scalpDir, "occupancy.json"), JsonSerializer.Serialize(occupancy, new JsonSerializerOptions { WriteIndented = true }));
+        }
+    }
+    catch (Exception ex)
+    {
+        scalpNotes.Add($"Occupancy replay skipped ({ex.Message}).");
+    }
+
+    var runId = DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmss");
+    var summary = new
+    {
+        id = runId,
+        confirmation = ScalpingReport.Confirmation,
+        liveOff = true,
+        scalpingLiveOff = true,
+        books = scalpBooks,
+        coverage,
+        occupancyRejects = occupancy?.Rejects ?? [],
+        sameCoinRejects = occupancy?.SameCoinRejects ?? 0,
+        slotRejects = occupancy?.SlotRejects ?? 0,
+        heatRejects = occupancy?.HeatRejects ?? 0
+    };
+    File.WriteAllText(Path.Combine(scalpDir, "summary.json"), JsonSerializer.Serialize(summary, new JsonSerializerOptions { WriteIndented = true }));
+    File.WriteAllText(Path.Combine(scalpDir, "books.json"), JsonSerializer.Serialize(scalpBooks));
+    Directory.CreateDirectory(Path.Combine(scalpDir, "runs"));
+    File.WriteAllText(Path.Combine(scalpDir, "runs", $"{runId}.json"), JsonSerializer.Serialize(summary, new JsonSerializerOptions { WriteIndented = true }));
+    var report = Path.Combine(root, "docs", "SCALPING_RESEARCH_REPORT.md");
+    File.WriteAllText(report, ScalpingReport.Render(scalpCandidates, scalpBooks, coverage, occupancy, scalpNotes));
+    Console.WriteLine($"Wrote {report}");
+    Console.WriteLine($"Books {scalpBooks.Count}.");
+    Console.WriteLine(ScalpingReport.Confirmation);
+    return 0;
 }
 
 if (args.Any(a => string.Equals(a, "--btc15m-fit", StringComparison.OrdinalIgnoreCase)))

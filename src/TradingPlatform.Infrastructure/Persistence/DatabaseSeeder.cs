@@ -214,7 +214,8 @@ public sealed class DatabaseSeeder
     {
         var admin = await _db.Users.FirstAsync(cancellationToken);
         var existing = await _db.Strategies.Include(s => s.Versions).ToListAsync(cancellationToken);
-        foreach (var row in Catalog.Where(item => StrategyTemplateKeys.IsOperatorCatalog(item.Key)))
+        foreach (var row in Catalog.Where(item =>
+                     StrategyTemplateKeys.IsOperatorCatalog(item.Key) || StrategyTemplateKeys.IsResearchOnlyFamily(item.Key)))
         {
             var strategy = existing.FirstOrDefault(s => MatchesCatalog(s, row.Key, row.Name));
             var parameters = StrategyTemplates.DefaultsFor(row.Key, qualityOn: !row.Research && !StrategyTemplateKeys.IsHistoricallyFitted(row.Key)) with
@@ -276,8 +277,20 @@ public sealed class DatabaseSeeder
                 key = latest is null ? string.Empty : StrategyTemplates.Read(latest.DefinitionJson).TemplateKey;
             }
 
-            if (StrategyTemplateKeys.IsOperatorCatalog(key))
+            if (StrategyTemplateKeys.IsOperatorCatalog(key) || StrategyTemplateKeys.IsResearchOnlyFamily(key))
             {
+                if (StrategyTemplateKeys.IsResearchOnlyFamily(key))
+                {
+                    strategy.IsEnabled = false;
+                    strategy.IsArchived = false;
+                    strategy.DeletedAt = null;
+                    if (string.IsNullOrWhiteSpace(strategy.ValidationStatus)
+                        || strategy.ValidationStatus == StrategyValidationStatuses.ValidationPending)
+                    {
+                        strategy.ValidationStatus = StrategyValidationStatuses.Researching;
+                    }
+                }
+
                 continue;
             }
 
@@ -304,6 +317,23 @@ public sealed class DatabaseSeeder
         if (StrategyTemplateKeys.IsHistoricallyFitted(row.Key))
         {
             AlignFittedBtc15m(strategy, row, parameters);
+            return;
+        }
+
+        if (StrategyTemplateKeys.IsResearchOnlyFamily(row.Key))
+        {
+            strategy.TemplateKey = row.Key;
+            strategy.AllowedSide = StrategySides.Both;
+            strategy.AppliesToAllSymbols = true;
+            strategy.IsEnabled = false;
+            strategy.IsArchived = false;
+            strategy.DeletedAt = null;
+            strategy.ValidationStatus = StrategyTemplates.ResearchStatus(row.Key);
+            if (string.IsNullOrWhiteSpace(strategy.Description))
+            {
+                strategy.Description = row.Description;
+            }
+
             return;
         }
 
@@ -455,7 +485,87 @@ public sealed class DatabaseSeeder
         (StrategyTemplateKeys.VolSpikeEmaTrend, "BTC 15m Volume Spike EMA",
             "HISTORICALLY_FITTED_CANDIDATE. BTCUSDT 15m BOTH. RelVol spike > 1.5 with close vs EMA21. Use risk book BTC 15m Vol Spike (SL 2.50% / TP 5.00%). Not validated alpha. LIVE off.", true),
         (StrategyTemplateKeys.Bb202Break, "BTC 15m Bollinger Break",
-            "HISTORICALLY_FITTED_CANDIDATE. BTCUSDT 15m BOTH. Close cross of Bollinger (20,2). Use risk book BTC 15m BB Break (SL 4.00% / TP 5.00%). Not validated alpha. LIVE off.", true)
+            "HISTORICALLY_FITTED_CANDIDATE. BTCUSDT 15m BOTH. Close cross of Bollinger (20,2). Use risk book BTC 15m BB Break (SL 4.00% / TP 5.00%). Not validated alpha. LIVE off.", true),
+        (StrategyTemplateKeys.ScalpEmaMomentum, "Scalp EMA Momentum",
+            "RESEARCH_ONLY. Fast/slow EMA momentum on closed 1m–15m bars. Not in the operator catalog. LIVE off.", true),
+        (StrategyTemplateKeys.ScalpVwapReclaim, "Scalp VWAP Reclaim",
+            "RESEARCH_ONLY. Session VWAP reclaim after a dip. Isolated book owns SL/TP. LIVE off.", true),
+        (StrategyTemplateKeys.ScalpVwapReversion, "Scalp VWAP Reversion",
+            "RESEARCH_ONLY. ATR-scaled VWAP deviation fade. LIVE off.", true),
+        (StrategyTemplateKeys.ScalpVwapBreakout, "Scalp VWAP Breakout",
+            "RESEARCH_ONLY. VWAP-aligned breakout with relative volume. LIVE off.", true),
+        (StrategyTemplateKeys.ScalpBreakoutRetest, "Scalp Breakout Retest",
+            "RESEARCH_ONLY. Donchian break that fails and closes back inside. LIVE off.", true),
+        (StrategyTemplateKeys.ScalpLiqSweep, "Scalp Liquidity Sweep",
+            "RESEARCH_ONLY. Failed swing sweep then close back through the level. LIVE off.", true),
+        (StrategyTemplateKeys.ScalpRsiPullback, "Scalp RSI Pullback",
+            "RESEARCH_ONLY. Trend-aligned RSI pullback on short timeframes. LIVE off.", true),
+        (StrategyTemplateKeys.ScalpRsiReversion, "Scalp RSI Reversion",
+            "RESEARCH_ONLY. RSI extreme fade outside strong ADX. LIVE off.", true),
+        (StrategyTemplateKeys.ScalpMacdMicro, "Scalp MACD Micro",
+            "RESEARCH_ONLY. MACD histogram flip with slow EMA side. LIVE off.", true),
+        (StrategyTemplateKeys.ScalpBbReversion, "Scalp Bollinger Reversion",
+            "RESEARCH_ONLY. Close returns inside Bollinger after a tag. LIVE off.", true),
+        (StrategyTemplateKeys.ScalpBbSqueeze, "Scalp Bollinger Squeeze",
+            "RESEARCH_ONLY. Bollinger/Keltner squeeze then structure break. LIVE off.", true),
+        (StrategyTemplateKeys.ScalpAtrBreakout, "Scalp ATR Breakout",
+            "RESEARCH_ONLY. ATR-normalized momentum expansion. LIVE off.", true),
+        (StrategyTemplateKeys.ScalpAdxTrend, "Scalp ADX Trend",
+            "RESEARCH_ONLY. Supertrend + EMA + ADX trend scalp. LIVE off.", true),
+        (StrategyTemplateKeys.ScalpRvolMomentum, "Scalp Relative Volume Momentum",
+            "RESEARCH_ONLY. Relative-volume spike with EMA side. LIVE off.", true),
+        (StrategyTemplateKeys.ScalpMarketStructure, "Scalp Market Structure",
+            "RESEARCH_ONLY. Causal HH/HL or LH/LL continuation. LIVE off.", true),
+        (StrategyTemplateKeys.ScalpStochMomentum, "Scalp Stochastic Momentum",
+            "RESEARCH_ONLY. Stochastic %K/%D cross from an extreme. LIVE off.", true),
+        (StrategyTemplateKeys.ScalpMtf, "Scalp Multi-Timeframe",
+            "RESEARCH_ONLY. Last-completed HTF trend with LTF trigger. No look-ahead. LIVE off.", true),
+        (StrategyTemplateKeys.ScalpSession, "Scalp Session Filter",
+            "RESEARCH_ONLY. UTC session high/low as a filter, not a hardcoded session pick. LIVE off.", true),
+        (StrategyTemplateKeys.ScalpTakerFlow, "Scalp Taker Flow",
+            "RESEARCH_ONLY. Requires taker buy volume. Missing series = DATA_UNAVAILABLE. LIVE off.", true),
+        (StrategyTemplateKeys.ScalpPriceOi, "Scalp Price Open Interest",
+            "RESEARCH_ONLY. Requires open interest. Missing series = DATA_UNAVAILABLE. LIVE off.", true),
+        (StrategyTemplateKeys.ScalpFundingOi, "Scalp Funding Open Interest",
+            "RESEARCH_ONLY. Requires funding + OI. Missing series = DATA_UNAVAILABLE. LIVE off.", true),
+        (StrategyTemplateKeys.ScalpBasis, "Scalp Basis",
+            "RESEARCH_ONLY. Requires mark/index basis. Missing series = DATA_UNAVAILABLE. LIVE off.", true),
+        (StrategyTemplateKeys.PaWDoubleBottom, "PA W Double Bottom",
+            "RESEARCH_ONLY. Causal W / double bottom. Signal only after neckline close. Isolated book owns SL/TP. LIVE off.", true),
+        (StrategyTemplateKeys.PaMDoubleTop, "PA M Double Top",
+            "RESEARCH_ONLY. Causal M / double top. Signal only after neckline close. LIVE off.", true),
+        (StrategyTemplateKeys.PaBullFlag, "PA Bull Flag",
+            "RESEARCH_ONLY. Impulse then consolidation then measured breakout. LIVE off.", true),
+        (StrategyTemplateKeys.PaBearFlag, "PA Bear Flag",
+            "RESEARCH_ONLY. Impulse then consolidation then measured breakout. LIVE off.", true),
+        (StrategyTemplateKeys.PaPennant, "PA Pennant",
+            "RESEARCH_ONLY. Impulse plus contracting consolidation plus breakout. LIVE off.", true),
+        (StrategyTemplateKeys.PaAscendingTriangle, "PA Ascending Triangle",
+            "RESEARCH_ONLY. Flat highs, rising lows, measured breakout direction. LIVE off.", true),
+        (StrategyTemplateKeys.PaDescendingTriangle, "PA Descending Triangle",
+            "RESEARCH_ONLY. Flat lows, falling highs, measured breakout direction. LIVE off.", true),
+        (StrategyTemplateKeys.PaSymmetricalTriangle, "PA Symmetrical Triangle",
+            "RESEARCH_ONLY. Contracting highs and lows. Direction is measured, not assumed. LIVE off.", true),
+        (StrategyTemplateKeys.PaRisingWedge, "PA Rising Wedge",
+            "RESEARCH_ONLY. Rising converging bounds. Reversal and continuation researched separately. LIVE off.", true),
+        (StrategyTemplateKeys.PaFallingWedge, "PA Falling Wedge",
+            "RESEARCH_ONLY. Falling converging bounds. Reversal and continuation researched separately. LIVE off.", true),
+        (StrategyTemplateKeys.PaRectangleBreakout, "PA Rectangle Breakout",
+            "RESEARCH_ONLY. Range high/low with measured breakout. LIVE off.", true),
+        (StrategyTemplateKeys.PaBreakoutRetest, "PA Breakout Retest",
+            "RESEARCH_ONLY. Level break then retest acceptance. LIVE off.", true),
+        (StrategyTemplateKeys.PaLiquiditySweep, "PA Liquidity Sweep",
+            "RESEARCH_ONLY. Sweep of a confirmed swing then close back through the level. LIVE off.", true),
+        (StrategyTemplateKeys.PaHeadShoulders, "PA Head And Shoulders",
+            "RESEARCH_ONLY. Objective H&S geometry. Signal at neckline close. LIVE off.", true),
+        (StrategyTemplateKeys.PaInverseHeadShoulders, "PA Inverse Head And Shoulders",
+            "RESEARCH_ONLY. Objective inverse H&S. Signal at neckline close. LIVE off.", true),
+        (StrategyTemplateKeys.PaCandleSequence, "PA Candle Sequence",
+            "RESEARCH_ONLY. Sequence plus rejection as an event, not 3-green=long. LIVE off.", true),
+        (StrategyTemplateKeys.PaStructureBreak, "PA Structure Break",
+            "RESEARCH_ONLY. Causal BOS of last confirmed swing. LIVE off.", true),
+        (StrategyTemplateKeys.PaFailedBreakout, "PA Failed Breakout",
+            "RESEARCH_ONLY. Close beyond a range then close back inside. LIVE off.", true)
     ];
 
     private async Task UpsertSystemRiskAsync(

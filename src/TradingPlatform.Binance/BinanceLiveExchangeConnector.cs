@@ -163,24 +163,26 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
         decimal takeProfitPrice,
         string stopClientOrderId,
         string takeProfitClientOrderId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool placeStop = true,
+        bool placeTake = true)
     {
         var (key, secret) = await RequireKeys(cancellationToken);
-        var stopError = await TryPlaceCloseStopAsync(
-            key, secret, symbol, closeSide, "STOP_MARKET", stopLossPrice, stopClientOrderId, cancellationToken);
-        var takeError = await TryPlaceCloseStopAsync(
-            key, secret, symbol, closeSide, "TAKE_PROFIT_MARKET", takeProfitPrice, takeProfitClientOrderId, cancellationToken);
-
-        if (stopError is not null && takeError is null)
+        string? stopError = null;
+        string? takeError = null;
+        if (placeStop)
         {
-            await CancelOrderAsync(symbol, takeProfitClientOrderId, null, cancellationToken);
+            stopError = await TryPlaceCloseStopAsync(
+                key, secret, symbol, closeSide, "STOP_MARKET", stopLossPrice, stopClientOrderId, cancellationToken);
         }
 
-        return new ProtectiveStopsResult(
-            stopError is null,
-            takeError is null,
-            stopError,
-            takeError);
+        if (placeTake)
+        {
+            takeError = await TryPlaceCloseStopAsync(
+                key, secret, symbol, closeSide, "TAKE_PROFIT_MARKET", takeProfitPrice, takeProfitClientOrderId, cancellationToken);
+        }
+
+        return new ProtectiveStopsResult(!placeStop || stopError is null, !placeTake || takeError is null, stopError, takeError);
     }
 
     private async Task<string?> TryPlaceCloseStopAsync(
@@ -198,15 +200,33 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
             return "Protective trigger price is invalid.";
         }
 
-        var error = await PlaceOnceAsync(priceProtect: true);
-        if (error is null || IsImmediateTrigger(error))
+        var error = await PlaceOnceAsync(stopPrice, priceProtect: true);
+        if (IsAccepted(error))
         {
+            return null;
+        }
+
+        if (IsImmediateTrigger(error))
+        {
+            var resting = await TryRestingTriggerAsync(key, secret, symbol, closeSide, type, cancellationToken);
+            if (resting > 0m && resting != stopPrice)
+            {
+                var nudged = await PlaceOnceAsync(resting, priceProtect: false);
+                if (IsAccepted(nudged))
+                {
+                    return null;
+                }
+
+                return nudged;
+            }
+
             return error;
         }
 
-        return await PlaceOnceAsync(priceProtect: false);
+        var fallback = await PlaceOnceAsync(stopPrice, priceProtect: false);
+        return IsAccepted(fallback) ? null : fallback;
 
-        async Task<string?> PlaceOnceAsync(bool priceProtect)
+        async Task<string?> PlaceOnceAsync(decimal trigger, bool priceProtect)
         {
             try
             {
@@ -216,7 +236,7 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
                     symbol,
                     closeSide,
                     type,
-                    stopPrice,
+                    trigger,
                     clientOrderId,
                     cancellationToken,
                     priceProtect);
@@ -229,9 +249,64 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
         }
     }
 
-    private static bool IsImmediateTrigger(string message) =>
-        message.Contains("-2021", StringComparison.Ordinal)
-        || message.Contains("immediately trigger", StringComparison.OrdinalIgnoreCase);
+    private async Task<decimal> TryRestingTriggerAsync(
+        string key,
+        string secret,
+        string symbol,
+        OrderSide closeSide,
+        string type,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var positions = await _signed.GetFuturesPositionsAsync(key, secret, cancellationToken);
+            var mark = ReadMark(positions, symbol);
+            var tick = (await MapFiltersAsync(symbol, cancellationToken)).TickSize;
+            return ProtectiveOrderMath.RestingTrigger(
+                mark,
+                tick,
+                closingShort: closeSide == OrderSide.Buy,
+                stop: ProtectiveOrderMath.IsStopOrder(type));
+        }
+        catch (Exception)
+        {
+            return 0m;
+        }
+    }
+
+    private static decimal ReadMark(JsonElement positions, string symbol)
+    {
+        if (positions.ValueKind != JsonValueKind.Array)
+        {
+            return 0m;
+        }
+
+        foreach (var row in positions.EnumerateArray())
+        {
+            var name = row.TryGetProperty("symbol", out var symbolEl) ? symbolEl.GetString() : null;
+            if (!string.Equals(name, symbol, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var amount = row.TryGetProperty("positionAmt", out var amountEl) ? Dec(amountEl) : 0m;
+            if (amount == 0m)
+            {
+                continue;
+            }
+
+            return row.TryGetProperty("markPrice", out var markEl) ? Dec(markEl) : 0m;
+        }
+
+        return 0m;
+    }
+
+    private static bool IsAccepted(string? error) =>
+        error is null || ProtectiveOrderMath.IsExistingProtectiveOrder(error);
+
+    private static bool IsImmediateTrigger(string? message) =>
+        message?.Contains("-2021", StringComparison.Ordinal) == true
+        || message?.Contains("immediately trigger", StringComparison.OrdinalIgnoreCase) == true;
 
     public async Task CancelOrderAsync(string symbol, string? clientOrderId, string? exchangeOrderId, CancellationToken cancellationToken = default)
     {

@@ -358,7 +358,7 @@ export class TradeTableComponent {
   readonly list = new ListQuery();
   readonly visible = computed(() =>
     this.list.apply(
-      this.trades(),
+      this.trades().filter((row) => !!row.closedAt),
       (row) => [row.symbol],
       {
         time: (row) => timeValue(row.closedAt ?? row.openedAt),

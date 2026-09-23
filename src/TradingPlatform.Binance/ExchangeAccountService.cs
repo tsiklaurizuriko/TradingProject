@@ -8,6 +8,7 @@ using TradingPlatform.Domain.Bots;
 using TradingPlatform.Domain.Errors;
 using TradingPlatform.Domain.Identity;
 using TradingPlatform.Domain.Orders;
+using TradingPlatform.Domain.Positions;
 using TradingPlatform.Domain.Trades;
 using TradingPlatform.Domain.Trading;
 
@@ -59,7 +60,7 @@ public sealed class ExchangeAccountService : IExchangeAccountService
             var futures = await TryFuturesAsync(keys.Value.ApiKey, keys.Value.ApiSecret, cancellationToken);
             var canTrade = futures.CanTrade;
             var openOrders = await TryOpenOrdersAsync(keys.Value.ApiKey, keys.Value.ApiSecret, cancellationToken);
-            var (positionsOk, fetchedPositions) = await TryFuturesPositionsAsync(keys.Value.ApiKey, keys.Value.ApiSecret, cancellationToken);
+            var (positionsOk, fetchedPositions, positionError) = await TryFuturesPositionsAsync(keys.Value.ApiKey, keys.Value.ApiSecret, cancellationToken);
             var openPositions = positionsOk ? fetchedPositions : previous.OpenPositions;
             var hint = Hint(keys.Value.ApiKey);
             var futuresEquity = futures.Equity > 0m ? futures.Equity : futures.Wallet;
@@ -67,7 +68,9 @@ public sealed class ExchangeAccountService : IExchangeAccountService
             var spotUsdt = previous.SpotUsdt;
             var fundingUsdt = previous.FundingUsdt;
             var usdtTotal = spotUsdt + fundingUsdt + futuresEquity;
-            var message = BuildMessage(canTrade, spotUsdt, fundingUsdt, futures.Wallet, futures.Available);
+            var message = positionsOk
+                ? BuildMessage(canTrade, spotUsdt, fundingUsdt, futures.Wallet, futures.Available)
+                : $"Binance position book unavailable. {positionError}";
 
             _logger.LogInformation(
                 "Binance USD-M Isolated snapshot futuresWallet={Futures} futuresFree={Free} orders={Orders} positions={Positions}",
@@ -102,7 +105,8 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                 _logger.LogWarning(ex, "Live Isolated open-order persist failed");
             }
 
-            QueueHistoryPersist(keys.Value.ApiKey, keys.Value.ApiSecret, openPositions);
+            var forceHistory = positionsOk && await HasClosedSnapshotAsync(openPositions, cancellationToken);
+            QueueHistoryPersist(keys.Value.ApiKey, keys.Value.ApiSecret, openPositions, forceHistory);
             return new ExchangeConnectionDto(
                 true,
                 canTrade,
@@ -217,7 +221,11 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                     }
 
                     available = row.TryGetProperty("availableBalance", out var free) ? ParseDecimal(free) : 0m;
-                    wallet = row.TryGetProperty("walletBalance", out var bal) ? ParseDecimal(bal) : available;
+                    wallet = row.TryGetProperty("walletBalance", out var bal)
+                        ? ParseDecimal(bal)
+                        : row.TryGetProperty("balance", out var balance)
+                            ? ParseDecimal(balance)
+                            : available;
                     var margin = row.TryGetProperty("marginBalance", out var marginEl) ? ParseDecimal(marginEl) : 0m;
                     var pnl = row.TryGetProperty("unrealizedProfit", out var pnlEl) ? ParseDecimal(pnlEl) : 0m;
                     equity = margin > 0m ? margin : wallet + pnl;
@@ -266,51 +274,164 @@ public sealed class ExchangeAccountService : IExchangeAccountService
         return list;
     }
 
-    private async Task<(bool Ok, IReadOnlyList<LiveOpenPosition> Rows)> TryFuturesPositionsAsync(string apiKey, string apiSecret, CancellationToken cancellationToken)
+    private async Task<(bool Ok, IReadOnlyList<LiveOpenPosition> Rows, string? Error)> TryFuturesPositionsAsync(
+        string apiKey,
+        string apiSecret,
+        CancellationToken cancellationToken)
     {
-        try
+        string? error = null;
+        foreach (var version in new[] { "v3", "v2" })
         {
-            var json = await _signed.GetFuturesPositionsAsync(apiKey, apiSecret, cancellationToken);
-            if (json.ValueKind != JsonValueKind.Array)
+            try
             {
-                return (false, []);
-            }
-
-            var list = new List<LiveOpenPosition>();
-            foreach (var row in json.EnumerateArray())
-            {
-                var amt = ParseDecimal(row, "positionAmt");
-                if (amt == 0m)
+                var json = version == "v3"
+                    ? await _signed.GetFuturesPositionsAsync(apiKey, apiSecret, cancellationToken)
+                    : await _signed.GetFuturesPositionsV2Async(apiKey, apiSecret, cancellationToken);
+                if (TryReadOpenPositions(json, out var rows))
                 {
-                    continue;
+                    return (true, rows, null);
                 }
 
-                var symbol = row.TryGetProperty("symbol", out var symbolEl) ? symbolEl.GetString() ?? "" : "";
-                list.Add(new LiveOpenPosition(
-                    symbol,
-                    amt > 0m ? "Long" : "Short",
-                    Math.Abs(amt),
-                    ParseDecimal(row, "entryPrice"),
-                    ParseDecimal(row, "markPrice"),
-                    ParseDecimal(row, "unRealizedProfit"),
-                    "Futures"));
+                error = "Binance position book was not a list.";
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                _logger.LogInformation("Futures positions {Version} skipped: {Message}", version, ex.Message);
+            }
+        }
+
+        var symbols = (await _trading.GetOpenPositionsForModeAsync(TradingMode.Live, cancellationToken))
+            .Where(row => row.Quantity > 0m && row.ClosedAt is null)
+            .Select(row => row.Symbol.Trim().ToUpperInvariant())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (symbols.Count == 0)
+        {
+            return (false, [], error ?? "Binance position book was not readable.");
+        }
+
+        var confirmed = new List<LiveOpenPosition>();
+        foreach (var symbol in symbols)
+        {
+            try
+            {
+                var json = await _signed.GetFuturesPositionsAsync(apiKey, apiSecret, cancellationToken, symbol);
+                if (!TryReadOpenPositions(json, out var rows))
+                {
+                    return (false, [], error ?? $"Binance position book for {symbol} was not a list.");
+                }
+
+                confirmed.AddRange(rows);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogInformation("Futures position {Symbol} skipped: {Message}", symbol, ex.Message);
+                return (false, [], ex.Message);
+            }
+        }
+
+        return (true, confirmed, null);
+    }
+
+    private static bool TryReadOpenPositions(JsonElement json, out IReadOnlyList<LiveOpenPosition> rows)
+    {
+        if (json.ValueKind == JsonValueKind.Array)
+        {
+            rows = ReadOpenPositions(json);
+            return true;
+        }
+
+        if (json.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var name in new[] { "positions", "data" })
+            {
+                if (json.TryGetProperty(name, out var nested) && nested.ValueKind == JsonValueKind.Array)
+                {
+                    rows = ReadOpenPositions(nested);
+                    return true;
+                }
             }
 
-            return (true, list);
+            if (json.TryGetProperty("symbol", out _) && json.TryGetProperty("positionAmt", out _))
+            {
+                rows = ReadOpenPositions(json);
+                return true;
+            }
         }
-        catch (Exception ex)
+
+        rows = [];
+        return false;
+    }
+
+    private static IReadOnlyList<LiveOpenPosition> ReadOpenPositions(JsonElement json)
+    {
+        var list = new List<LiveOpenPosition>();
+        if (json.ValueKind == JsonValueKind.Object)
         {
-            _logger.LogInformation("Futures positions skipped: {Message}", ex.Message);
-            return (false, []);
+            AddOpenPosition(list, json);
+            return list;
         }
+
+        if (json.ValueKind != JsonValueKind.Array)
+        {
+            return list;
+        }
+
+        foreach (var row in json.EnumerateArray())
+        {
+            AddOpenPosition(list, row);
+        }
+
+        return list;
+    }
+
+    private static void AddOpenPosition(List<LiveOpenPosition> list, JsonElement row)
+    {
+        var amount = ParseDecimal(row, "positionAmt");
+        if (amount == 0m)
+        {
+            return;
+        }
+
+        var symbol = row.TryGetProperty("symbol", out var symbolEl) ? symbolEl.GetString() ?? "" : "";
+        if (string.IsNullOrWhiteSpace(symbol))
+        {
+            return;
+        }
+
+        list.Add(new LiveOpenPosition(
+            symbol,
+            amount > 0m ? "Long" : "Short",
+            Math.Abs(amount),
+            ParseDecimal(row, "entryPrice"),
+            ParseDecimal(row, "markPrice"),
+            ParseDecimal(row, "unRealizedProfit"),
+            "Futures"));
+    }
+
+    private async Task<bool> HasClosedSnapshotAsync(
+        IReadOnlyList<LiveOpenPosition> openPositions,
+        CancellationToken cancellationToken)
+    {
+        var live = openPositions
+            .Where(row => row.Quantity > 0m)
+            .Select(row => row.Symbol.Trim().ToUpperInvariant())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var book = await _trading.GetOpenPositionsForModeAsync(TradingMode.Live, cancellationToken);
+        return book.Any(row =>
+            row.Quantity > 0m
+            && row.ClosedAt is null
+            && !live.Contains(row.Symbol.Trim().ToUpperInvariant()));
     }
 
     private void QueueHistoryPersist(
         string apiKey,
         string apiSecret,
-        IReadOnlyList<LiveOpenPosition> openPositions)
+        IReadOnlyList<LiveOpenPosition> openPositions,
+        bool force = false)
     {
-        if (DateTimeOffset.UtcNow - LastHistoryUtc < HistoryEvery)
+        if (!force && DateTimeOffset.UtcNow - LastHistoryUtc < HistoryEvery)
         {
             return;
         }
@@ -344,13 +465,42 @@ public sealed class ExchangeAccountService : IExchangeAccountService
     private async Task<Dictionary<string, Bot>> LoadLiveBotsBySymbolAsync(CancellationToken cancellationToken)
     {
         var user = await _trading.GetFirstAdminAsync(cancellationToken);
-        return (await _trading.ListWorkspaceBotsAsync(user.Id, TradingMode.Live, cancellationToken))
+        var bots = (await _trading.ListWorkspaceBotsAsync(user.Id, TradingMode.Live, cancellationToken))
             .Where(bot => bot.StrategyVersion is not null)
+            .ToList();
+        var book = await _trading.GetOpenPositionsForModeAsync(TradingMode.Live, cancellationToken);
+        return bots
             .GroupBy(bot => bot.Symbol, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(
                 group => group.Key,
-                group => group.OrderBy(bot => bot.Status == BotStatus.Running ? 0 : 1).ThenByDescending(bot => bot.StartedAt).First(),
+                group => LiveOwnerFor(group.Key, group.ToList(), book),
                 StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Keep in sync with IsolatedOccupancy.PickLiveOwner: open snapshot owns the coin;
+    /// otherwise the earliest-started running bot may occupy it.
+    /// </summary>
+    private static Bot LiveOwnerFor(string symbol, IReadOnlyList<Bot> bots, IReadOnlyList<Position> book)
+    {
+        var holders = book
+            .Where(row =>
+                row.Quantity > 0m
+                && string.Equals(row.Symbol, symbol, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(row => row.OpenedAt)
+            .ThenBy(row => row.BotId)
+            .ToList();
+        if (holders.Count > 0)
+        {
+            var ownerId = holders[0].BotId;
+            return bots.FirstOrDefault(bot => bot.Id == ownerId) ?? bots[0];
+        }
+
+        return bots
+            .OrderBy(bot => bot.Status == BotStatus.Running ? 0 : 1)
+            .ThenBy(bot => bot.StartedAt ?? DateTimeOffset.MaxValue)
+            .ThenBy(bot => bot.Id)
+            .First();
     }
 
     private async Task PersistOpenLedgerAsync(
@@ -414,6 +564,14 @@ public sealed class ExchangeAccountService : IExchangeAccountService
         foreach (var coin in openCoins)
         {
             symbols.Add(coin);
+        }
+
+        foreach (var row in await _trading.GetOpenPositionsForModeAsync(TradingMode.Live, cancellationToken))
+        {
+            if (row.Quantity > 0m && row.ClosedAt is null && !string.IsNullOrWhiteSpace(row.Symbol))
+            {
+                symbols.Add(row.Symbol);
+            }
         }
 
         IReadOnlyList<IncomeRow> income = [];
@@ -745,14 +903,22 @@ public sealed class ExchangeAccountService : IExchangeAccountService
         var correlationId = string.IsNullOrWhiteSpace(trip.CloseTradeId)
             ? BinanceClosedFill.TradeKey(trip.Symbol + trip.ClosedAt.ToUnixTimeMilliseconds())
             : BinanceClosedFill.TradeKey(trip.CloseTradeId);
-        var around = await _trading.FindClosedTradesAroundAsync(
-            bot.Id,
-            trip.Symbol,
-            trip.OpenedAt,
-            trip.ClosedAt,
-            cancellationToken);
+        var around = (await _trading.FindClosedTradesAroundAsync(
+                trip.Symbol,
+                trip.OpenedAt,
+                trip.ClosedAt,
+                cancellationToken))
+            .Where(item =>
+                item.ClosedAt is { } closed
+                && item.OpenedAt <= trip.ClosedAt
+                && trip.OpenedAt <= closed
+                && item.Quantity == trip.Quantity)
+            .ToList();
         var existing = around.FirstOrDefault(item =>
                            string.Equals(item.CorrelationId, correlationId, StringComparison.OrdinalIgnoreCase))
+                       ?? around.FirstOrDefault(item =>
+                           item.CorrelationId.StartsWith(BinanceClosedFill.TradePrefix, StringComparison.OrdinalIgnoreCase)
+                           || item.CorrelationId.StartsWith(BinanceClosedFill.IncomePrefix, StringComparison.OrdinalIgnoreCase))
                        ?? around.OrderByDescending(item => item.ClosedAt).FirstOrDefault();
         foreach (var extra in around.Where(item => existing is not null && item.Id != existing.Id))
         {
@@ -760,26 +926,54 @@ public sealed class ExchangeAccountService : IExchangeAccountService
         }
 
         var exitOrder = await _trading.GetOrderByClientOrderIdAsync(correlationId, cancellationToken);
-        if (existing is not null)
+        var open = await _trading.GetOpenTradeAsync(bot.Id, cancellationToken);
+        if (open is not null && !string.Equals(open.Symbol, trip.Symbol, StringComparison.OrdinalIgnoreCase))
         {
-            existing.Side = trip.EntrySide;
-            existing.Quantity = trip.Quantity > 0m ? trip.Quantity : existing.Quantity;
-            existing.ExitPrice = trip.ExitPrice > 0m ? trip.ExitPrice : existing.ExitPrice;
-            existing.EntryPrice = trip.EntryPrice > 0m ? trip.EntryPrice : existing.EntryPrice;
-            existing.PnL = trip.RealizedPnl;
-            existing.PnLPercent = BinanceClosedFill.PnLPercent(
-                existing.EntryPrice,
-                existing.Quantity,
-                trip.RealizedPnl);
-            existing.Fees = trip.Fees;
-            existing.OpenedAt = trip.OpenedAt;
-            existing.ClosedAt = trip.ClosedAt;
-            existing.CorrelationId = correlationId;
-            if (exitOrder is not null)
+            open = null;
+        }
+
+        void Apply(Trade trade)
+        {
+            trade.BotId = bot.Id;
+            if (bot.StrategyVersion is not null)
             {
-                existing.ExitOrderId ??= exitOrder.Id;
+                trade.StrategyId = bot.StrategyVersion.StrategyId;
+                trade.StrategyVersionId = bot.StrategyVersionId;
             }
 
+            trade.Side = trip.EntrySide;
+            trade.Quantity = trip.Quantity > 0m ? trip.Quantity : trade.Quantity;
+            trade.ExitPrice = trip.ExitPrice > 0m ? trip.ExitPrice : trade.ExitPrice;
+            trade.EntryPrice = trip.EntryPrice > 0m ? trip.EntryPrice : trade.EntryPrice;
+            trade.PnL = trip.RealizedPnl;
+            trade.PnLPercent = BinanceClosedFill.PnLPercent(
+                trade.EntryPrice,
+                trade.Quantity,
+                trip.RealizedPnl);
+            trade.Fees = trip.Fees;
+            trade.OpenedAt = trip.OpenedAt;
+            trade.ClosedAt = trip.ClosedAt;
+            trade.CorrelationId = correlationId;
+            if (exitOrder is not null)
+            {
+                trade.ExitOrderId ??= exitOrder.Id;
+            }
+        }
+
+        if (existing is not null)
+        {
+            Apply(existing);
+            if (open is not null && open.Id != existing.Id)
+            {
+                _trading.RemoveTrade(open);
+            }
+
+            return;
+        }
+
+        if (open is not null)
+        {
+            Apply(open);
             return;
         }
 

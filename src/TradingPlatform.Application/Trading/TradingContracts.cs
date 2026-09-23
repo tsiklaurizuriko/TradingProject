@@ -325,7 +325,8 @@ public sealed record PerformanceTradeRow(
     DateTimeOffset? ClosedAt,
     string StrategyName,
     string Mode,
-    string Side = "Long");
+    string Side = "Long",
+    string CorrelationId = "");
 
 public sealed record PerformanceDayDto(string Date, decimal PnL, decimal Cumulative);
 

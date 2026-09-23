@@ -45,6 +45,46 @@ public static class StrategyTemplateKeys
     public const string OiBreakoutConfirmation = "oi_breakout_confirmation";
     public const string VolSpikeEmaTrend = "vol_spike_ema_trend";
     public const string Bb202Break = "bb20_2_break";
+    public const string ScalpEmaMomentum = "scalp_ema_momentum";
+    public const string ScalpVwapReclaim = "scalp_vwap_reclaim";
+    public const string ScalpVwapReversion = "scalp_vwap_reversion";
+    public const string ScalpVwapBreakout = "scalp_vwap_breakout";
+    public const string ScalpBreakoutRetest = "scalp_breakout_retest";
+    public const string ScalpLiqSweep = "scalp_liq_sweep";
+    public const string ScalpRsiPullback = "scalp_rsi_pullback";
+    public const string ScalpRsiReversion = "scalp_rsi_reversion";
+    public const string ScalpMacdMicro = "scalp_macd_micro";
+    public const string ScalpBbReversion = "scalp_bb_reversion";
+    public const string ScalpBbSqueeze = "scalp_bb_squeeze";
+    public const string ScalpAtrBreakout = "scalp_atr_breakout";
+    public const string ScalpAdxTrend = "scalp_adx_trend";
+    public const string ScalpRvolMomentum = "scalp_rvol_momentum";
+    public const string ScalpMarketStructure = "scalp_market_structure";
+    public const string ScalpStochMomentum = "scalp_stoch_momentum";
+    public const string ScalpMtf = "scalp_mtf";
+    public const string ScalpSession = "scalp_session";
+    public const string ScalpTakerFlow = "scalp_taker_flow";
+    public const string ScalpPriceOi = "scalp_price_oi";
+    public const string ScalpFundingOi = "scalp_funding_oi";
+    public const string ScalpBasis = "scalp_basis";
+    public const string PaWDoubleBottom = "pa_w_double_bottom";
+    public const string PaMDoubleTop = "pa_m_double_top";
+    public const string PaBullFlag = "pa_bull_flag";
+    public const string PaBearFlag = "pa_bear_flag";
+    public const string PaPennant = "pa_pennant";
+    public const string PaAscendingTriangle = "pa_ascending_triangle";
+    public const string PaDescendingTriangle = "pa_descending_triangle";
+    public const string PaSymmetricalTriangle = "pa_symmetrical_triangle";
+    public const string PaRisingWedge = "pa_rising_wedge";
+    public const string PaFallingWedge = "pa_falling_wedge";
+    public const string PaRectangleBreakout = "pa_rectangle_breakout";
+    public const string PaBreakoutRetest = "pa_breakout_retest";
+    public const string PaLiquiditySweep = "pa_liquidity_sweep";
+    public const string PaHeadShoulders = "pa_head_shoulders";
+    public const string PaInverseHeadShoulders = "pa_inverse_head_shoulders";
+    public const string PaCandleSequence = "pa_candle_sequence";
+    public const string PaStructureBreak = "pa_structure_break";
+    public const string PaFailedBreakout = "pa_failed_breakout";
 
     public static readonly string[] Frozen =
     [
@@ -99,7 +139,55 @@ public static class StrategyTemplateKeys
         Bb202Break
     ];
 
-    public static readonly string[] Research = [.. AdvancedSix, .. Alpha, .. HistoricallyFitted];
+    public static readonly string[] Scalping =
+    [
+        ScalpEmaMomentum,
+        ScalpVwapReclaim,
+        ScalpVwapReversion,
+        ScalpVwapBreakout,
+        ScalpBreakoutRetest,
+        ScalpLiqSweep,
+        ScalpRsiPullback,
+        ScalpRsiReversion,
+        ScalpMacdMicro,
+        ScalpBbReversion,
+        ScalpBbSqueeze,
+        ScalpAtrBreakout,
+        ScalpAdxTrend,
+        ScalpRvolMomentum,
+        ScalpMarketStructure,
+        ScalpStochMomentum,
+        ScalpMtf,
+        ScalpSession,
+        ScalpTakerFlow,
+        ScalpPriceOi,
+        ScalpFundingOi,
+        ScalpBasis
+    ];
+
+    public static readonly string[] PriceAction =
+    [
+        PaWDoubleBottom,
+        PaMDoubleTop,
+        PaBullFlag,
+        PaBearFlag,
+        PaPennant,
+        PaAscendingTriangle,
+        PaDescendingTriangle,
+        PaSymmetricalTriangle,
+        PaRisingWedge,
+        PaFallingWedge,
+        PaRectangleBreakout,
+        PaBreakoutRetest,
+        PaLiquiditySweep,
+        PaHeadShoulders,
+        PaInverseHeadShoulders,
+        PaCandleSequence,
+        PaStructureBreak,
+        PaFailedBreakout
+    ];
+
+    public static readonly string[] Research = [.. AdvancedSix, .. Alpha, .. HistoricallyFitted, .. Scalping, .. PriceAction];
 
     public static readonly string[] All = [.. Frozen, .. Research];
 
@@ -122,6 +210,7 @@ public static class StrategyTemplateKeys
     ];
 
     public static readonly string[] SupportedTimeframes = ["5m", "15m", "1h"];
+    public static readonly string[] ScalpingTimeframes = ["1m", "3m", "5m", "15m"];
     public static readonly string[] SupportedDirections = ["LONG", "SHORT"];
 
     public static bool IsKnown(string? key) =>
@@ -139,6 +228,14 @@ public static class StrategyTemplateKeys
         return OperatorCatalog.Contains(raw, StringComparer.OrdinalIgnoreCase);
     }
 
+    public static bool IsScalping(string? key) =>
+        Scalping.Contains(Normalize(key), StringComparer.OrdinalIgnoreCase);
+
+    public static bool IsPriceAction(string? key) =>
+        PriceAction.Contains(Normalize(key), StringComparer.OrdinalIgnoreCase);
+
+    public static bool IsResearchOnlyFamily(string? key) => IsScalping(key) || IsPriceAction(key);
+
     public static bool IsResearch(string? key) =>
         Research.Contains(Normalize(key), StringComparer.OrdinalIgnoreCase);
 
@@ -147,15 +244,15 @@ public static class StrategyTemplateKeys
 
     public static IReadOnlyList<string> RequiredDatasets(string templateKey) => Normalize(templateKey) switch
     {
-        TakerFlowMomentum => ["OHLCV", "TakerFlow"],
-        OiPriceMomentum or OiPriceVolumeRegime or OiBreakoutConfirmation => ["OHLCV", "OpenInterest"],
-        FundingOiRegime or FundingOiReversal => ["OHLCV", "Funding", "OpenInterest"],
+        TakerFlowMomentum or ScalpTakerFlow => ["OHLCV", "TakerFlow"],
+        OiPriceMomentum or OiPriceVolumeRegime or OiBreakoutConfirmation or ScalpPriceOi => ["OHLCV", "OpenInterest"],
+        FundingOiRegime or FundingOiReversal or ScalpFundingOi => ["OHLCV", "Funding", "OpenInterest"],
         FundingBasisRv or FundingBasisVwap => ["OHLCV", "Funding", "MarkPrice", "IndexPrice", "Basis"],
         FundingPriceMomentum or FundingExtremeMomentumExhaustion => ["OHLCV", "Funding"],
-        BasisMeanReversion => ["OHLCV", "MarkPrice", "IndexPrice", "Basis"],
+        BasisMeanReversion or ScalpBasis => ["OHLCV", "MarkPrice", "IndexPrice", "Basis"],
         CryptoPairsArb => ["OHLCV", "CausalPairUniverse"],
         XsRelativeStrength => ["OHLCV", "CrossSectionUniverse"],
-        MtfTrendStructure => ["OHLCV", "CompletedHtf"],
+        MtfTrendStructure or ScalpMtf => ["OHLCV", "CompletedHtf"],
         _ => ["OHLCV"]
     };
 
@@ -173,6 +270,8 @@ public static class StrategyTemplateKeys
         DonchianBreakout => "BREAKOUT / TREND",
         Bb202Break => "BREAKOUT / TREND",
         VolSpikeEmaTrend => "TREND",
+        var scalp when IsScalping(scalp) => "SCALPING",
+        var pa when IsPriceAction(pa) => "SCALPING_PRICE_ACTION",
         _ => "TREND"
     };
 
@@ -381,6 +480,36 @@ public static class StrategyTemplates
                 BbPeriod = 20,
                 BbStdDev = 2m,
                 VolumeFilterEnabled = false
+            },
+            var pa when StrategyTemplateKeys.IsPriceAction(pa) => core with
+            {
+                EmaFast = 8,
+                EmaSlow = 21,
+                RsiPeriod = 9,
+                RelativeVolumePeriod = 20,
+                VolumeFilterEnabled = false,
+                SwingLength = 3,
+                Timeframe = "5m",
+                AllowedSide = StrategySides.Both
+            },
+            var scalp when StrategyTemplateKeys.IsScalping(scalp) => core with
+            {
+                EmaFast = 8,
+                EmaSlow = 21,
+                RsiPeriod = 9,
+                RsiMinimum = 45m,
+                RsiLongMax = 70m,
+                MacdFast = 8,
+                MacdSlow = 17,
+                MacdSignal = 9,
+                BbPeriod = 20,
+                DonchianLength = 10,
+                AdxPeriod = 14,
+                MinimumAdx = 20m,
+                RelativeVolumePeriod = 20,
+                MinimumRelativeVolume = 1.2m,
+                VolumeFilterEnabled = true,
+                Timeframe = "5m"
             },
             _ => core
         };
@@ -663,6 +792,46 @@ public static class StrategyTemplates
         StrategyTemplateKeys.OiBreakoutConfirmation => "OI Breakout Confirmation",
         StrategyTemplateKeys.VolSpikeEmaTrend => "BTC 15m Volume Spike EMA",
         StrategyTemplateKeys.Bb202Break => "BTC 15m Bollinger Break",
+        StrategyTemplateKeys.ScalpEmaMomentum => "Scalp EMA Momentum",
+        StrategyTemplateKeys.ScalpVwapReclaim => "Scalp VWAP Reclaim",
+        StrategyTemplateKeys.ScalpVwapReversion => "Scalp VWAP Reversion",
+        StrategyTemplateKeys.ScalpVwapBreakout => "Scalp VWAP Breakout",
+        StrategyTemplateKeys.ScalpBreakoutRetest => "Scalp Breakout Retest",
+        StrategyTemplateKeys.ScalpLiqSweep => "Scalp Liquidity Sweep",
+        StrategyTemplateKeys.ScalpRsiPullback => "Scalp RSI Pullback",
+        StrategyTemplateKeys.ScalpRsiReversion => "Scalp RSI Reversion",
+        StrategyTemplateKeys.ScalpMacdMicro => "Scalp MACD Micro",
+        StrategyTemplateKeys.ScalpBbReversion => "Scalp Bollinger Reversion",
+        StrategyTemplateKeys.ScalpBbSqueeze => "Scalp Bollinger Squeeze",
+        StrategyTemplateKeys.ScalpAtrBreakout => "Scalp ATR Breakout",
+        StrategyTemplateKeys.ScalpAdxTrend => "Scalp ADX Trend",
+        StrategyTemplateKeys.ScalpRvolMomentum => "Scalp Relative Volume Momentum",
+        StrategyTemplateKeys.ScalpMarketStructure => "Scalp Market Structure",
+        StrategyTemplateKeys.ScalpStochMomentum => "Scalp Stochastic Momentum",
+        StrategyTemplateKeys.ScalpMtf => "Scalp Multi-Timeframe",
+        StrategyTemplateKeys.ScalpSession => "Scalp Session Filter",
+        StrategyTemplateKeys.ScalpTakerFlow => "Scalp Taker Flow",
+        StrategyTemplateKeys.ScalpPriceOi => "Scalp Price Open Interest",
+        StrategyTemplateKeys.ScalpFundingOi => "Scalp Funding Open Interest",
+        StrategyTemplateKeys.ScalpBasis => "Scalp Basis",
+        StrategyTemplateKeys.PaWDoubleBottom => "PA W Double Bottom",
+        StrategyTemplateKeys.PaMDoubleTop => "PA M Double Top",
+        StrategyTemplateKeys.PaBullFlag => "PA Bull Flag",
+        StrategyTemplateKeys.PaBearFlag => "PA Bear Flag",
+        StrategyTemplateKeys.PaPennant => "PA Pennant",
+        StrategyTemplateKeys.PaAscendingTriangle => "PA Ascending Triangle",
+        StrategyTemplateKeys.PaDescendingTriangle => "PA Descending Triangle",
+        StrategyTemplateKeys.PaSymmetricalTriangle => "PA Symmetrical Triangle",
+        StrategyTemplateKeys.PaRisingWedge => "PA Rising Wedge",
+        StrategyTemplateKeys.PaFallingWedge => "PA Falling Wedge",
+        StrategyTemplateKeys.PaRectangleBreakout => "PA Rectangle Breakout",
+        StrategyTemplateKeys.PaBreakoutRetest => "PA Breakout Retest",
+        StrategyTemplateKeys.PaLiquiditySweep => "PA Liquidity Sweep",
+        StrategyTemplateKeys.PaHeadShoulders => "PA Head And Shoulders",
+        StrategyTemplateKeys.PaInverseHeadShoulders => "PA Inverse Head And Shoulders",
+        StrategyTemplateKeys.PaCandleSequence => "PA Candle Sequence",
+        StrategyTemplateKeys.PaStructureBreak => "PA Structure Break",
+        StrategyTemplateKeys.PaFailedBreakout => "PA Failed Breakout",
         _ => "EMA RSI Trend"
     };
 
@@ -704,24 +873,48 @@ public static class StrategyTemplates
         StrategyTemplateKeys.OiBreakoutConfirmation => "Research whether OI expansion adds incremental information to a volume-confirmed breakout. OI_SAMPLE_LIMITED.",
         StrategyTemplateKeys.VolSpikeEmaTrend => "ისტორიულად მორგებული BTCUSDT 15m კანდიდატი: volume spike + EMA21. არ არის validated alpha. SL 2.50% / TP 5.00% / 192 bar.",
         StrategyTemplateKeys.Bb202Break => "ისტორიულად მორგებული BTCUSDT 15m კანდიდატი: Bollinger (20,2) break. არ არის validated alpha. SL 4.00% / TP 5.00% / 192 bar.",
+        StrategyTemplateKeys.ScalpEmaMomentum => "RESEARCH_ONLY scalping hypothesis: fast/slow EMA momentum on closed 1m–15m bars. Not a profit claim.",
+        StrategyTemplateKeys.ScalpVwapReclaim => "RESEARCH_ONLY scalping hypothesis: session VWAP reclaim after a dip. Isolated book owns SL/TP.",
+        StrategyTemplateKeys.ScalpVwapReversion => "RESEARCH_ONLY scalping hypothesis: ATR-scaled VWAP deviation fade. Isolated book owns SL/TP.",
+        StrategyTemplateKeys.ScalpVwapBreakout => "RESEARCH_ONLY scalping hypothesis: VWAP-aligned breakout with relative volume.",
+        StrategyTemplateKeys.ScalpBreakoutRetest => "RESEARCH_ONLY scalping hypothesis: Donchian break that fails and closes back inside.",
+        StrategyTemplateKeys.ScalpLiqSweep => "RESEARCH_ONLY scalping hypothesis: failed swing sweep then close back through the level.",
+        StrategyTemplateKeys.ScalpRsiPullback => "RESEARCH_ONLY scalping hypothesis: trend-aligned RSI pullback on short timeframes.",
+        StrategyTemplateKeys.ScalpRsiReversion => "RESEARCH_ONLY scalping hypothesis: RSI extreme mean reversion outside strong ADX.",
+        StrategyTemplateKeys.ScalpMacdMicro => "RESEARCH_ONLY scalping hypothesis: MACD histogram flip with slow EMA side.",
+        StrategyTemplateKeys.ScalpBbReversion => "RESEARCH_ONLY scalping hypothesis: close returns inside Bollinger after a tag.",
+        StrategyTemplateKeys.ScalpBbSqueeze => "RESEARCH_ONLY scalping hypothesis: Bollinger/Keltner squeeze then structure break.",
+        StrategyTemplateKeys.ScalpAtrBreakout => "RESEARCH_ONLY scalping hypothesis: ATR-normalized momentum expansion.",
+        StrategyTemplateKeys.ScalpAdxTrend => "RESEARCH_ONLY scalping hypothesis: Supertrend + EMA + ADX trend scalp.",
+        StrategyTemplateKeys.ScalpRvolMomentum => "RESEARCH_ONLY scalping hypothesis: relative-volume spike with EMA side.",
+        StrategyTemplateKeys.ScalpMarketStructure => "RESEARCH_ONLY scalping hypothesis: causal HH/HL or LH/LL continuation.",
+        StrategyTemplateKeys.ScalpStochMomentum => "RESEARCH_ONLY scalping hypothesis: Stochastic %K/%D cross from an extreme.",
+        StrategyTemplateKeys.ScalpMtf => "RESEARCH_ONLY scalping hypothesis: last-completed HTF trend with LTF trigger. No look-ahead.",
+        StrategyTemplateKeys.ScalpSession => "RESEARCH_ONLY scalping hypothesis: UTC-session high/low context as a filter, not a hardcoded session pick.",
+        StrategyTemplateKeys.ScalpTakerFlow => "RESEARCH_ONLY. Requires taker buy volume. Missing series = DATA_UNAVAILABLE.",
+        StrategyTemplateKeys.ScalpPriceOi => "RESEARCH_ONLY. Requires open interest. Missing series = DATA_UNAVAILABLE.",
+        StrategyTemplateKeys.ScalpFundingOi => "RESEARCH_ONLY. Requires funding + OI. Missing series = DATA_UNAVAILABLE.",
+        StrategyTemplateKeys.ScalpBasis => "RESEARCH_ONLY. Requires mark/index basis. Missing series = DATA_UNAVAILABLE.",
+        var pa when StrategyTemplateKeys.IsPriceAction(pa) =>
+            "RESEARCH_ONLY price-action hypothesis. Causal confirmation only. Not a textbook LONG/SHORT. Isolated book owns SL/TP. LIVE off.",
         _ => "ახალ ტრენდს იწყებს: სწრაფი EMA ნელს კვეთს, RSI ადასტურებს. მიზანი — მიმართულების ცვლილება, სუსტი გადაკვეთების გარეშე."
     };
 
     public static string DataDependencies(string templateKey) => StrategyTemplateKeys.Normalize(templateKey) switch
     {
         StrategyTemplateKeys.OiPriceMomentum => "OHLCV + OpenInterest. GET /futures/data/openInterestHist (~30d). Missing/short series = DATA_UNAVAILABLE. OI_HISTORICAL_DATA_LIMITATION.",
-        StrategyTemplateKeys.FundingOiRegime => "OHLCV + Funding + OpenInterest. Funding = settled GET /fapi/v1/fundingRate at fundingTime. Missing = DATA_UNAVAILABLE.",
+        StrategyTemplateKeys.FundingOiRegime or StrategyTemplateKeys.ScalpFundingOi => "OHLCV + Funding + OpenInterest. Funding = settled GET /fapi/v1/fundingRate at fundingTime. Missing = DATA_UNAVAILABLE.",
         StrategyTemplateKeys.FundingBasisRv => "OHLCV + Funding + MarkPrice + IndexPrice + Basis. Basis=(MarkClose-IndexClose)/IndexClose. Missing = DATA_UNAVAILABLE.",
         StrategyTemplateKeys.FundingOiReversal => "OHLCV + Funding + OpenInterest. Settled fundingTime only. Missing = DATA_UNAVAILABLE.",
-        StrategyTemplateKeys.TakerFlowMomentum => "OHLCV + TakerFlow. Binance kline index 9 taker buy base. TakerSell=Volume-TakerBuy. Zero buy = DATA_UNAVAILABLE, not 0 imbalance.",
-        StrategyTemplateKeys.OiPriceVolumeRegime => "OHLCV + OpenInterest. OI_HISTORICAL_DATA_LIMITATION if window longer than public hist.",
+        StrategyTemplateKeys.TakerFlowMomentum or StrategyTemplateKeys.ScalpTakerFlow => "OHLCV + TakerFlow. Binance kline index 9 taker buy base. Zero buy = DATA_UNAVAILABLE, not 0 imbalance.",
+        StrategyTemplateKeys.MtfTrendStructure or StrategyTemplateKeys.ScalpMtf => "Entry timeframe OHLCV plus last completed HTF candles only.",
+        StrategyTemplateKeys.OiPriceVolumeRegime or StrategyTemplateKeys.ScalpPriceOi => "OHLCV + OpenInterest. OI_HISTORICAL_DATA_LIMITATION if window longer than public hist.",
         StrategyTemplateKeys.CryptoPairsArb => "Multi-symbol OHLCV with causal pair selection windows. Single-book replay = DATA_UNAVAILABLE.",
         StrategyTemplateKeys.XsRelativeStrength => "Universe snapshot at each timestamp. Single-book replay = DATA_UNAVAILABLE.",
-        StrategyTemplateKeys.MtfTrendStructure => "Entry timeframe OHLCV plus last completed HTF candles only.",
         StrategyTemplateKeys.VpVwapReversion => "OHLCV and volume. Volume profile reconstructed from typical-price × volume bins.",
         StrategyTemplateKeys.FundingPriceMomentum => "OHLCV + Funding. Settled fundingTime only.",
         StrategyTemplateKeys.FundingExtremeMomentumExhaustion => "OHLCV + Funding. Settled fundingTime only.",
-        StrategyTemplateKeys.BasisMeanReversion => "OHLCV + MarkPrice + IndexPrice + Basis. Matching closeTime only.",
+        StrategyTemplateKeys.BasisMeanReversion or StrategyTemplateKeys.ScalpBasis => "OHLCV + MarkPrice + IndexPrice + Basis. Matching closeTime only.",
         StrategyTemplateKeys.FundingBasisVwap => "OHLCV + Funding + Basis. Matching closeTime only.",
         StrategyTemplateKeys.OiBreakoutConfirmation => "OHLCV + OpenInterest. OI_HISTORICAL_DATA_LIMITATION (~29d). OI_SAMPLE_LIMITED.",
         _ => "Closed kline candles only."
@@ -729,19 +922,19 @@ public static class StrategyTemplates
 
     public static string ResearchStatus(string templateKey) => StrategyTemplateKeys.Normalize(templateKey) switch
     {
-        StrategyTemplateKeys.OiPriceMomentum => "DATA_UNAVAILABLE",
-        StrategyTemplateKeys.FundingOiRegime => "DATA_UNAVAILABLE",
+        StrategyTemplateKeys.TakerFlowMomentum or StrategyTemplateKeys.ScalpTakerFlow => "DATA_UNAVAILABLE",
+        StrategyTemplateKeys.OiPriceMomentum or StrategyTemplateKeys.ScalpPriceOi => "DATA_UNAVAILABLE",
+        StrategyTemplateKeys.FundingOiRegime or StrategyTemplateKeys.ScalpFundingOi => "DATA_UNAVAILABLE",
+        StrategyTemplateKeys.BasisMeanReversion or StrategyTemplateKeys.ScalpBasis => "RESEARCHING",
         StrategyTemplateKeys.FundingBasisRv => "RESEARCHING",
         StrategyTemplateKeys.FundingOiReversal => "RESEARCHING",
         StrategyTemplateKeys.OiPriceVolumeRegime => "RESEARCHING",
         StrategyTemplateKeys.FundingPriceMomentum => "RESEARCHING",
         StrategyTemplateKeys.FundingExtremeMomentumExhaustion => "RESEARCHING",
-        StrategyTemplateKeys.BasisMeanReversion => "RESEARCHING",
         StrategyTemplateKeys.FundingBasisVwap => "RESEARCHING",
         StrategyTemplateKeys.OiBreakoutConfirmation => "RESEARCHING",
         StrategyTemplateKeys.CryptoPairsArb => "DATA_UNAVAILABLE",
         StrategyTemplateKeys.XsRelativeStrength => "DATA_UNAVAILABLE",
-        StrategyTemplateKeys.TakerFlowMomentum => "DATA_UNAVAILABLE",
         StrategyTemplateKeys.VolSpikeEmaTrend => StrategyValidationStatuses.HistoricallyFittedCandidate,
         StrategyTemplateKeys.Bb202Break => StrategyValidationStatuses.HistoricallyFittedCandidate,
         var key when StrategyTemplateKeys.IsResearch(key) => "RESEARCHING",

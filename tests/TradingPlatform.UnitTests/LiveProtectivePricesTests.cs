@@ -68,4 +68,32 @@ public sealed class LiveProtectivePricesTests
         sl.Should().NotBe(tp);
         LiveProtectivePrices.StopClientOrderId(botId).Should().Be(sl);
     }
+
+    [Fact]
+    public void Stop_and_take_types_do_not_count_as_each_other()
+    {
+        LiveProtectivePrices.IsStopOrder("STOP_MARKET").Should().BeTrue();
+        LiveProtectivePrices.IsTakeOrder("TAKE_PROFIT_MARKET").Should().BeTrue();
+        LiveProtectivePrices.IsStopOrder("TAKE_PROFIT_MARKET").Should().BeFalse();
+        LiveProtectivePrices.IsTakeOrder("STOP_MARKET").Should().BeFalse();
+    }
+
+    [Fact]
+    public void Existing_close_position_order_is_not_treated_as_a_new_failure()
+    {
+        LiveProtectivePrices.IsExistingProtectiveOrder(
+            "Binance -4130: An open stop or take profit order with closePosition is existing.")
+            .Should().BeTrue();
+        LiveProtectivePrices.IsExistingProtectiveOrder("Order would immediately trigger. -2021")
+            .Should().BeFalse();
+    }
+
+    [Fact]
+    public void Resting_trigger_stays_on_the_side_binance_can_accept()
+    {
+        LiveProtectivePrices.RestingTrigger(100m, 0.1m, closingShort: false, stop: true).Should().Be(99.9m);
+        LiveProtectivePrices.RestingTrigger(100m, 0.1m, closingShort: false, stop: false).Should().Be(100.1m);
+        LiveProtectivePrices.RestingTrigger(100m, 0.1m, closingShort: true, stop: true).Should().Be(100.1m);
+        LiveProtectivePrices.RestingTrigger(100m, 0.1m, closingShort: true, stop: false).Should().Be(99.9m);
+    }
 }

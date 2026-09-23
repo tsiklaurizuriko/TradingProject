@@ -92,8 +92,10 @@ public sealed class PaperExchangeConnector : IExchangeConnector
         decimal takeProfitPrice,
         string stopClientOrderId,
         string takeProfitClientOrderId,
-        CancellationToken cancellationToken = default) =>
-        Task.FromResult(new ProtectiveStopsResult(true, true));
+        CancellationToken cancellationToken = default,
+        bool placeStop = true,
+        bool placeTake = true) =>
+        Task.FromResult(new ProtectiveStopsResult(placeStop, placeTake));
 
     public Task CancelOrderAsync(string symbol, string? clientOrderId, string? exchangeOrderId, CancellationToken cancellationToken = default) =>
         Task.CompletedTask;

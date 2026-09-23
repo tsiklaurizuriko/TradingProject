@@ -351,11 +351,36 @@ export interface PositionDto {
   riskPerTradePercent?: number;
 }
 
+export function hasBotId(id: string | null | undefined): boolean {
+  return !!id && id !== '00000000-0000-0000-0000-000000000000';
+}
+
+export function isolatedOwners(rows: PositionDto[]): PositionDto[] {
+  const byCoin = new Map<string, PositionDto>();
+  for (const row of rows) {
+    if ((row.quantity ?? 0) <= 0 || !row.symbol) {
+      continue;
+    }
+    const coin = row.symbol.trim().toUpperCase();
+    const existing = byCoin.get(coin);
+    if (!existing || isolatedOwnerRank(row) < isolatedOwnerRank(existing)) {
+      byCoin.set(coin, row);
+    }
+  }
+  return [...byCoin.values()];
+}
+
+function isolatedOwnerRank(row: PositionDto): number {
+  const empty = hasBotId(row.botId) ? 0 : 1_000_000_000_000;
+  const opened = Date.parse(row.openedAt);
+  return empty + (Number.isFinite(opened) ? opened : 0);
+}
+
 export function resolvePositionStrategy(
   row: PositionDto,
   bots: BotDto[],
 ): { key: string; name: string } {
-  const byId = row.botId
+  const byId = hasBotId(row.botId)
     ? bots.find((item) => item.id === row.botId)
     : undefined;
   if (byId) {
@@ -364,12 +389,12 @@ export function resolvePositionStrategy(
   }
 
   const coin = row.symbol.trim().toUpperCase();
-  const matches = bots.filter((item) => item.symbol.trim().toUpperCase() === coin);
-  const running = matches.filter((item) => item.status === 'Running');
-  const pool = running.length > 0 ? running : matches;
-  const strategyKeys = new Set(pool.map((item) => item.strategyId || item.strategyName || item.id));
+  const running = bots.filter(
+    (item) => item.status === 'Running' && item.symbol.trim().toUpperCase() === coin,
+  );
+  const strategyKeys = new Set(running.map((item) => item.strategyId || item.strategyName || item.id));
   if (strategyKeys.size === 1) {
-    const bot = pool[0];
+    const bot = running[0];
     const name = (bot.strategyName || '').trim() || 'Unassigned strategy';
     return { key: bot.strategyId || name, name };
   }
@@ -382,7 +407,7 @@ export function groupPositionsByStrategy(
   bots: BotDto[],
 ): { key: string; name: string; rows: PositionDto[]; pnl: number; notional: number }[] {
   const groups = new Map<string, { key: string; name: string; rows: PositionDto[] }>();
-  for (const row of rows) {
+  for (const row of isolatedOwners(rows)) {
     const { key, name } = resolvePositionStrategy(row, bots);
     const current = groups.get(key) ?? { key, name, rows: [] };
     current.rows.push(row);
@@ -459,7 +484,7 @@ export function strategyOccupancy(
   }
 
   for (const group of groupPositionsByStrategy(
-    positions.filter((row) => (row.quantity ?? 0) > 0),
+    isolatedOwners(positions.filter((row) => (row.quantity ?? 0) > 0)),
     bots,
   )) {
     const row = ensure(group.key, group.name);
@@ -920,4 +945,181 @@ export function dailyPnlSeries(
     cumulative += pnl;
     return { date, pnl, cumulative, balance: cumulative };
   });
+}
+
+export interface ScalpingCoverageDto {
+  coin: string;
+  timeframe: string;
+  start: string | null;
+  end: string | null;
+  source: string;
+  gaps: number;
+  bars: number;
+  takerCoverage: number;
+  status: string;
+  notes: string;
+}
+
+export interface ScalpingStrategyStatusDto {
+  templateKey: string;
+  name: string;
+  family: string;
+  status: string;
+  blurb: string;
+  operatorCatalog: boolean;
+  enabled: boolean;
+}
+
+export interface ScalpingBookDto {
+  candidateId: string;
+  coin: string;
+  timeframe: string;
+  phase: string;
+  costLabel: string;
+  status: string;
+  tradeCount: number;
+  profitFactor: number | null;
+  medianHoldingMinutes: number | null;
+  p25HoldingMinutes: number | null;
+  p75HoldingMinutes: number | null;
+  netPnl: number;
+}
+
+export interface ScalpingRejectDto {
+  time: string;
+  strategyKey: string;
+  coin: string;
+  reason: string;
+}
+
+export interface ScalpingResearchSummaryDto {
+  confirmation: string;
+  liveOff: boolean;
+  scalpingLiveOff: boolean;
+  isolatedEnforced: boolean;
+  riskEngineAuthoritative: boolean;
+  validatedForPaperAssigned: boolean;
+  lastRunId: string | null;
+  strategies: ScalpingStrategyStatusDto[];
+  coverage: ScalpingCoverageDto[];
+  books: ScalpingBookDto[];
+  occupancyRejects: ScalpingRejectDto[];
+  sameCoinRejects: number;
+  slotRejects: number;
+  heatRejects: number;
+}
+
+export interface ScalpingResearchRunDto {
+  id: string;
+  summary: ScalpingResearchSummaryDto;
+}
+
+export interface PriceActionSequenceDto {
+  coin: string;
+  timeframe: string;
+  name: string;
+  occurrences: number;
+  meanFwd1: number;
+  meanFwd3: number;
+  meanFwd5: number;
+  medianMfe: number;
+  medianMae: number;
+  hitPos50: number;
+  hitNeg50: number;
+}
+
+export interface PriceActionPatternStatDto {
+  coin: string;
+  timeframe: string;
+  patternType: string;
+  status: string;
+  occurrences: number;
+  meanFwd3: number;
+  medianMfe: number;
+  medianMae: number;
+}
+
+export interface PriceActionPointDto {
+  role: string;
+  price: number;
+  time: string | null;
+}
+
+export interface PriceActionBarDto {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export interface PriceActionOccurrenceDto {
+  coin: string;
+  timeframe: string;
+  patternType: string;
+  version: string;
+  start: string | null;
+  detection: string | null;
+  confirmation: string | null;
+  entry: string | null;
+  neckline: number | null;
+  level: number | null;
+  direction: string;
+  status: string;
+  points: PriceActionPointDto[];
+  bars: PriceActionBarDto[];
+}
+
+export interface PriceActionDataCoverageDto {
+  coin: string;
+  timeframe: string;
+  requestedFrom: string;
+  requestedTo: string;
+  actualFirstBar: string | null;
+  actualLastBar: string | null;
+  barCount: number;
+  expectedBarCount: number;
+  gapCount: number;
+  missingBarCount: number;
+  duplicateCount: number;
+  coveragePercent: number;
+  downloadedPages: number;
+  cacheHits: number;
+  cacheMisses: number;
+  continuous: boolean;
+  qualityPassed: boolean;
+  status: string;
+}
+
+export interface PriceActionResearchSummaryDto {
+  confirmation: string;
+  liveOff: boolean;
+  scalpingLiveOff: boolean;
+  priceActionLiveOff: boolean;
+  isolatedEnforced: boolean;
+  riskEngineAuthoritative: boolean;
+  validatedForPaperAssigned: boolean;
+  cupAndHandle: string;
+  lastRunId: string | null;
+  strategies: ScalpingStrategyStatusDto[];
+  coverage: ScalpingCoverageDto[];
+  books: ScalpingBookDto[];
+  sequences: PriceActionSequenceDto[];
+  patterns: PriceActionPatternStatDto[];
+  occurrences: PriceActionOccurrenceDto[];
+  hypotheses: string[];
+  dataExpansion: PriceActionDataCoverageDto[];
+  occupancyRejects: ScalpingRejectDto[];
+  sameCoinRejects: number;
+  slotRejects: number;
+  heatRejects: number;
+}
+
+export interface PatternOverlay {
+  neckline?: number | null;
+  detection?: string | null;
+  confirmation?: string | null;
+  entry?: string | null;
+  points: PriceActionPointDto[];
 }

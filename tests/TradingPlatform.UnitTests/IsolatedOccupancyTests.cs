@@ -4,6 +4,7 @@ using TradingPlatform.Application.Trading;
 using TradingPlatform.Domain.Bots;
 using TradingPlatform.Domain.Positions;
 using TradingPlatform.Domain.Strategies;
+using TradingPlatform.Domain.Trading;
 using TradingPlatform.Trading;
 using Xunit;
 
@@ -86,6 +87,70 @@ public sealed class IsolatedOccupancyTests
         IsolatedOccupancy.UniqueCoins(book, live, liveAuthoritative: true, DateTimeOffset.UtcNow).Should().Be(2);
         IsolatedOccupancy.UniqueCoinsForStrategy(book, rsi, live, liveAuthoritative: true, DateTimeOffset.UtcNow)
             .Should().Be(1);
+    }
+
+    [Fact]
+    public void UniqueCoinsForStrategy_does_not_count_a_later_strategy_claiming_the_same_coin()
+    {
+        var ema = Guid.NewGuid();
+        var rsi = Guid.NewGuid();
+        var first = DateTimeOffset.UtcNow.AddHours(-2);
+        var later = DateTimeOffset.UtcNow.AddMinutes(-10);
+        var book = new[]
+        {
+            Open("EIGENUSDT", ema, first),
+            Open("EIGENUSDT", rsi, later),
+            Open("FILUSDT", ema, first),
+            Open("TLMUSDT", ema, first),
+            Open("WAXPUSDT", ema, first),
+            Open("ZKPUSDT", ema, first),
+            Open("IDOLUSDT", Guid.NewGuid(), first)
+        };
+
+        IsolatedOccupancy.UniqueCoinsForStrategy(book, ema).Should().Be(5);
+        IsolatedOccupancy.UniqueCoinsForStrategy(book, rsi).Should().Be(0);
+        IsolatedOccupancy.IsolatedOwner(book.Where(row => row.Symbol == "EIGENUSDT")).Bot!.StrategyVersion!.StrategyId
+            .Should().Be(ema);
+    }
+
+    [Fact]
+    public void Merge_keeps_the_earliest_bot_fill_when_two_strategies_have_the_same_coin()
+    {
+        var emaBot = Guid.NewGuid();
+        var rsiBot = Guid.NewGuid();
+        var ema = new PositionDto(
+            Guid.NewGuid(),
+            emaBot,
+            "EIGENUSDT",
+            "Long",
+            1m,
+            0.24m,
+            0.24m,
+            0m,
+            0m,
+            0m,
+            DateTimeOffset.UtcNow.AddHours(-2),
+            "Bot");
+        var rsi = new PositionDto(
+            Guid.NewGuid(),
+            rsiBot,
+            "EIGENUSDT",
+            "Long",
+            1m,
+            0.24m,
+            0.24m,
+            0m,
+            0m,
+            0m,
+            DateTimeOffset.UtcNow.AddMinutes(-5),
+            "Bot");
+        var live = new LiveOpenPosition("EIGENUSDT", "Long", 1m, 0.238m, 0.236m, -0.07m, "Futures");
+
+        var merged = IsolatedOccupancy.MergeBotAndExchange([rsi, ema], [live], Overlay);
+
+        merged.Should().ContainSingle();
+        merged[0].BotId.Should().Be(emaBot);
+        merged[0].UnrealizedPnL.Should().Be(-0.07m);
     }
 
     [Fact]
@@ -237,6 +302,125 @@ public sealed class IsolatedOccupancyTests
         stamped.TakeProfitPrice.Should().BeGreaterThan(overlay.AverageEntryPrice);
         stamped.UnrealizedPnL.Should().Be(-0.04m);
     }
+
+    [Fact]
+    public void PickLiveOwner_uses_the_earliest_fill_not_the_latest_started_bot()
+    {
+        var first = DateTimeOffset.UtcNow.AddHours(-1);
+        var bollinger = new Bot
+        {
+            Name = "AKE Bollinger Reversion LOW Live",
+            Symbol = "AKEUSDT",
+            Status = BotStatus.Running,
+            Mode = TradingMode.Live,
+            StartedAt = first
+        };
+        var rsi = new Bot
+        {
+            Name = "AKE RSI Pullback LOW Live",
+            Symbol = "AKEUSDT",
+            Status = BotStatus.Running,
+            Mode = TradingMode.Live,
+            StartedAt = first.AddMilliseconds(140)
+        };
+        var book = new[]
+        {
+            new Position
+            {
+                BotId = bollinger.Id,
+                Symbol = "AKEUSDT",
+                Quantity = 139m,
+                AverageEntryPrice = 0.043409m,
+                OpenedAt = first.AddMinutes(48),
+                Bot = bollinger
+            }
+        };
+
+        IsolatedOccupancy.PickLiveOwner("AKEUSDT", [bollinger, rsi], book, TradingMode.Live)!.Id
+            .Should().Be(bollinger.Id);
+        IsolatedOccupancy.IsOwner(rsi, [bollinger, rsi], book).Should().BeFalse();
+        IsolatedOccupancy.IsOwner(bollinger, [bollinger, rsi], book).Should().BeTrue();
+    }
+
+    [Fact]
+    public void PickLiveOwner_lets_the_earliest_started_bot_enter_when_the_coin_is_flat()
+    {
+        var first = DateTimeOffset.UtcNow.AddHours(-1);
+        var bollinger = new Bot
+        {
+            Name = "AKE Bollinger",
+            Symbol = "AKEUSDT",
+            Status = BotStatus.Running,
+            Mode = TradingMode.Live,
+            StartedAt = first
+        };
+        var rsi = new Bot
+        {
+            Name = "AKE RSI",
+            Symbol = "AKEUSDT",
+            Status = BotStatus.Running,
+            Mode = TradingMode.Live,
+            StartedAt = first.AddSeconds(1)
+        };
+
+        IsolatedOccupancy.PickLiveOwner("AKEUSDT", [rsi, bollinger], [], TradingMode.Live)!.Id
+            .Should().Be(bollinger.Id);
+    }
+
+    [Fact]
+    public void UniqueClosedTrips_keeps_the_binance_fill_when_two_bots_recorded_the_same_isolated_close()
+    {
+        var opened = DateTimeOffset.Parse("2026-09-23T09:44:36Z");
+        var rows = new[]
+        {
+            new Trip("AKEUSDT", 139m, 0.043409m, 0.043799m, -0.05421m, 0.003m, opened.AddSeconds(1), opened.AddMinutes(2.4), "1ddfb4cb"),
+            new Trip("AKEUSDT", 139m, 0.043673m, 0.044308m, -0.088265m, 0.006m, opened, opened.AddMinutes(2), "BNT418072822")
+        };
+
+        var unique = IsolatedOccupancy.UniqueClosedTrips(
+            rows,
+            t => t.Symbol,
+            t => t.Quantity,
+            t => t.OpenedAt,
+            t => t.ClosedAt,
+            t => t.CorrelationId,
+            t => t.Fees);
+
+        unique.Should().ContainSingle();
+        unique[0].CorrelationId.Should().Be("BNT418072822");
+        unique[0].PnL.Should().Be(-0.088265m);
+    }
+
+    [Fact]
+    public void UniqueClosedTrips_keeps_two_sequential_round_trips_on_the_same_coin()
+    {
+        var firstOpen = DateTimeOffset.Parse("2026-09-23T09:00:00Z");
+        var rows = new[]
+        {
+            new Trip("AKEUSDT", 139m, 0.043m, 0.044m, -0.09m, 0.006m, firstOpen, firstOpen.AddMinutes(3), "BNT1"),
+            new Trip("AKEUSDT", 139m, 0.044m, 0.043m, 0.08m, 0.006m, firstOpen.AddMinutes(10), firstOpen.AddMinutes(14), "BNT2")
+        };
+
+        IsolatedOccupancy.UniqueClosedTrips(
+            rows,
+            t => t.Symbol,
+            t => t.Quantity,
+            t => t.OpenedAt,
+            t => t.ClosedAt,
+            t => t.CorrelationId,
+            t => t.Fees).Should().HaveCount(2);
+    }
+
+    private sealed record Trip(
+        string Symbol,
+        decimal Quantity,
+        decimal Entry,
+        decimal Exit,
+        decimal PnL,
+        decimal Fees,
+        DateTimeOffset OpenedAt,
+        DateTimeOffset ClosedAt,
+        string CorrelationId);
 
     private static PositionDto Overlay(LiveOpenPosition position) =>
         new(

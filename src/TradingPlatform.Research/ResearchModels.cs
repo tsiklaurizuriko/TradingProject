@@ -54,6 +54,8 @@ public sealed record ResearchFilters(
     decimal? MaxAtrPercentile = null,
     decimal? MinRelativeVolume = null,
     string? HigherTimeframe = null,
+    string? ConfirmationTimeframe = null,
+    string? ContextTimeframe = null,
     int AdxPeriod = 14,
     int AtrPeriod = 14,
     int AtrPercentileLookback = 50,
@@ -132,7 +134,9 @@ public sealed record ResearchBookResult(
     decimal? Return5,
     decimal? Return10,
     string Regime,
-    IReadOnlyList<string> Notes);
+    IReadOnlyList<string> Notes,
+    decimal? P25HoldingMinutes = null,
+    decimal? P75HoldingMinutes = null);
 
 public sealed record ResearchRobustness(
     string CandidateId,

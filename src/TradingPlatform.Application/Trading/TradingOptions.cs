@@ -19,6 +19,29 @@ public sealed class TradingOptions
     public int UniverseRefreshMinutes { get; set; } = 15;
     public string UniverseCachePath { get; set; } = "data/futures-universe.json";
     public ScannerOptions Scanner { get; set; } = new();
+    public ScalpingOptions Scalping { get; set; } = new();
+    public PriceActionOptions PriceAction { get; set; } = new();
+}
+
+public sealed class ScalpingOptions
+{
+    public bool Enabled { get; set; }
+    public bool AllowLive { get; set; }
+    public string ArtifactDirectory { get; set; } = "";
+    public Dictionary<string, int> MaxHoldBars { get; set; } = new()
+    {
+        ["1m"] = 15,
+        ["3m"] = 12,
+        ["5m"] = 8,
+        ["15m"] = 6
+    };
+}
+
+public sealed class PriceActionOptions
+{
+    public bool Enabled { get; set; }
+    public bool AllowLive { get; set; }
+    public string ArtifactDirectory { get; set; } = "";
 }
 
 public sealed class NullTradingRealtimePublisher : ITradingRealtimePublisher

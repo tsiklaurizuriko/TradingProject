@@ -20,6 +20,8 @@ public sealed class TradingController : ControllerBase
     private readonly IMarketScanner _scanner;
     private readonly ITradeEligibility _eligibility;
     private readonly IBacktestService _backtests;
+    private readonly IScalpingResearchQuery _scalping;
+    private readonly IPriceActionResearchQuery _priceAction;
 
     public TradingController(
         ITradingQueryService query,
@@ -28,7 +30,9 @@ public sealed class TradingController : ControllerBase
         IPublicMarketDataClient market,
         IMarketScanner scanner,
         ITradeEligibility eligibility,
-        IBacktestService backtests)
+        IBacktestService backtests,
+        IScalpingResearchQuery scalping,
+        IPriceActionResearchQuery priceAction)
     {
         _query = query;
         _lifecycle = lifecycle;
@@ -37,6 +41,8 @@ public sealed class TradingController : ControllerBase
         _scanner = scanner;
         _eligibility = eligibility;
         _backtests = backtests;
+        _scalping = scalping;
+        _priceAction = priceAction;
     }
 
     [HttpGet("overview")]
@@ -302,6 +308,33 @@ public sealed class TradingController : ControllerBase
     [HttpPost("backtests")]
     public Task<BacktestResultDto> RunBacktest([FromBody] RunBacktestRequest request, CancellationToken cancellationToken) =>
         _backtests.RunAsync(UserId(), request, cancellationToken);
+
+    [HttpGet("research/scalping")]
+    public Task<ScalpingResearchSummaryDto> ScalpingResearch(CancellationToken cancellationToken) =>
+        _scalping.GetSummaryAsync(cancellationToken);
+
+    [HttpGet("research/scalping/coverage")]
+    public Task<IReadOnlyList<ScalpingCoverageDto>> ScalpingCoverage(CancellationToken cancellationToken) =>
+        _scalping.GetCoverageAsync(cancellationToken);
+
+    [HttpGet("research/scalping/runs/{id}")]
+    public async Task<ActionResult<ScalpingResearchRunDto>> ScalpingRun(string id, CancellationToken cancellationToken)
+    {
+        var run = await _scalping.GetRunAsync(id, cancellationToken);
+        return run is null ? NotFound() : Ok(run);
+    }
+
+    [HttpGet("research/scalping/price-action")]
+    public Task<PriceActionResearchSummaryDto> PriceActionResearch(CancellationToken cancellationToken) =>
+        _priceAction.GetSummaryAsync(cancellationToken);
+
+    [HttpGet("research/scalping/price-action/occurrences")]
+    public Task<IReadOnlyList<PriceActionOccurrenceDto>> PriceActionOccurrences(CancellationToken cancellationToken) =>
+        _priceAction.GetOccurrencesAsync(cancellationToken);
+
+    [HttpGet("research/contextual-price-action")]
+    public Task<ContextualPriceActionSummaryDto> ContextualPriceAction(CancellationToken cancellationToken) =>
+        _priceAction.GetContextualSummaryAsync(cancellationToken);
 
     private Guid UserId()
     {

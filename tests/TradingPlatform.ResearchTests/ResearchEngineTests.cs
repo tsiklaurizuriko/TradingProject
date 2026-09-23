@@ -23,8 +23,8 @@ public sealed class ResearchEngineTests
             "rsi_pullback",
             "bollinger_reversion",
             "donchian_breakout");
-        StrategyTemplateKeys.All.Should().HaveCount(37);
-        StrategyTemplateKeys.Research.Should().HaveCount(32);
+        StrategyTemplateKeys.All.Should().HaveCount(77);
+        StrategyTemplateKeys.Research.Should().HaveCount(72);
         StrategyTemplateKeys.AdvancedSix.Should().HaveCount(6);
         StrategyTemplateKeys.Alpha.Should().HaveCount(24);
     }
@@ -203,6 +203,99 @@ public sealed class ResearchEngineTests
     }
 
     [Fact]
+    public void Scalping_registry_is_research_only_and_never_validated_for_paper()
+    {
+        ResearchRegistry.Scalping.Should().HaveCount(StrategyTemplateKeys.Scalping.Length);
+        ResearchRegistry.Scalping.Should().OnlyContain(c =>
+            c.Status == ResearchStatuses.Researching
+            && c.SupportedTimeframes.Contains("1m")
+            && c.SupportedTimeframes.Contains("5m"));
+        StrategyTemplateKeys.OperatorCatalog.Should().NotContain(StrategyTemplateKeys.ScalpEmaMomentum);
+        StrategyTemplateKeys.OperatorCatalog.Should().NotContain(StrategyTemplateKeys.PaWDoubleBottom);
+        ResearchRegistry.PriceAction.Should().HaveCount(18);
+        ResearchRegistry.PriceAction.Should().OnlyContain(c => c.Status == ResearchStatuses.Researching);
+        ResearchStatuses.ValidatedForPaper.Should().Be("VALIDATED_FOR_PAPER");
+
+        var skipped = ResearchRunner.Evaluate(new ResearchRunRequest
+        {
+            Phase = "ALL",
+            Candidates = [ResearchRegistry.Scalping[0]],
+            Symbols = ["BTCUSDT"],
+            Timeframes = ["5m"],
+            Series = new Dictionary<(string Symbol, string Timeframe), IReadOnlyList<MarketCandle>>(),
+            UseLowIsolated = true,
+            SkipWalkForward = true,
+            CostLabels = [ResearchCostLabels.Base]
+        });
+        skipped.Should().NotBeEmpty();
+        skipped.Should().OnlyContain(b => b.Status != ResearchStatuses.ValidatedForPaper);
+    }
+
+    [Fact]
+    public void Cost_stress_flags_fragile_when_base_pf_beats_one_and_high_does_not()
+    {
+        var baseTotals = new PnlTotals(10, 6, 4, 0, 20m, 10m, 10m, 0.4m);
+        var highTotals = new PnlTotals(10, 4, 6, 0, 8m, 12m, -4m, 0.6m);
+        var robustness = ResearchDiagnostics.Summarize("SCALP-X", [
+            CostBook("SCALP-X", "OOS", ResearchCostLabels.Base, baseTotals),
+            CostBook("SCALP-X", "OOS", ResearchCostLabels.High, highTotals)
+        ]);
+        baseTotals.ProfitFactor.IsFinite.Should().BeTrue();
+        baseTotals.ProfitFactor.Ratio.Should().BeGreaterThan(1m);
+        highTotals.ProfitFactor.Ratio.Should().BeLessThan(1m);
+        robustness.CostFragile.Should().BeTrue();
+        robustness.Status.Should().Be(ResearchStatuses.CostFragile);
+        robustness.Status.Should().NotBe(ResearchStatuses.ValidatedForPaper);
+    }
+
+    private static ResearchBookResult CostBook(string id, string phase, string cost, PnlTotals totals) =>
+        new(
+            id, "BTCUSDT", "5m", phase, cost, ResearchStatuses.Researching,
+            100, totals.Trades, totals.NetPnl, totals.Fees, totals.WinRate, totals.Expectancy,
+            "NORMAL", totals.ProfitFactor.FiniteRatio,
+            totals.PositivePnlSum, totals.AbsoluteNegativePnlSum,
+            totals.WinningTrades, totals.LosingTrades, totals.ZeroPnlTrades,
+            null, null, totals,
+            null, null, null, null, null, null, null, null, null,
+            "RANGE", []);
+
+    [Fact]
+    public void Holding_percentiles_are_filled_on_research_books()
+    {
+        var start = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var replay = new ReplayResult(
+            1000m, 1000m, 0m, 0m, 2, 0.5m, 1m, 1m, 1m, 0m, null, 0m, 1m, -1m, 10, start, start.AddHours(1), "",
+            [
+                new ReplayTrade(start, start.AddMinutes(10), 1m, 100m, 101m, 1m, 0.1m, "Take profit"),
+                new ReplayTrade(start, start.AddMinutes(40), 1m, 100m, 99m, -1m, 0.1m, "Stop loss")
+            ],
+            [],
+            new ReplaySideMetrics(1, 1m, 1m, 0m, 1m, 0m),
+            new ReplaySideMetrics(1, -1m, 0m, 0m, -1m, 0m));
+        var seed = new ResearchBookResult(
+            "SCALP-EMA", "BTCUSDT", "5m", "OOS", "BASE", ResearchStatuses.Researching,
+            10, 0, 0, 0, 0, 0, "NO_TRADES",
+            null, 0, 0, 0, 0, 0,
+            null, null, null, null, null, null, null, null, null, null, null, null,
+            "RANGE", []);
+        var candles = Enumerable.Range(0, 12).Select(i => new MarketCandle
+        {
+            OpenTime = start.AddMinutes(i * 5),
+            CloseTime = start.AddMinutes(i * 5 + 5),
+            Open = 100m,
+            High = 101m,
+            Low = 99m,
+            Close = 100m,
+            IsClosed = true
+        }).ToList();
+        ResearchDiagnostics.Fill(seed, replay, candles, out var filled);
+        filled.MedianHoldingMinutes.Should().NotBeNull();
+        filled.P25HoldingMinutes.Should().NotBeNull();
+        filled.P75HoldingMinutes.Should().NotBeNull();
+        filled.Status.Should().NotBe(ResearchStatuses.ValidatedForPaper);
+    }
+
+    [Fact]
     public void Registry_has_fifteen_hypothesis_candidates()
     {
         ResearchRegistry.All.Should().HaveCount(15);
@@ -279,6 +372,92 @@ public sealed class ResearchEngineTests
 
         var later = ResearchStrategyEngine.LastClosedHigherTimeframeIndex(htf, t0.AddMinutes(45));
         later.Should().Be(2);
+    }
+
+    [Fact]
+    public void Price_action_mtf_gate_is_unchanged_when_future_context_is_appended()
+    {
+        var t0 = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var entry = Enumerable.Range(0, 180).Select(i =>
+        {
+            var bar = Bar(t0, i, 1);
+            bar.Open = 100m + i * 0.01m;
+            bar.High = 101m + i * 0.01m;
+            bar.Low = 99m + i * 0.01m;
+            bar.Close = 100.5m + i * 0.01m;
+            return bar;
+        }).ToList();
+        var confirmationPrefix = Enumerable.Range(0, 50).Select(i => Bar(t0, i * 3, 3)).ToList();
+        var confirmationFull = confirmationPrefix
+            .Concat(Enumerable.Range(50, 10).Select(i =>
+            {
+                var bar = Bar(t0, i * 3, 3);
+                bar.Close = 500m;
+                bar.High = 501m;
+                return bar;
+            }))
+            .ToList();
+        var contextPrefix = Enumerable.Range(0, 10).Select(i => Bar(t0, i * 15, 15)).ToList();
+        var contextFull = contextPrefix
+            .Concat(Enumerable.Range(10, 5).Select(i =>
+            {
+                var bar = Bar(t0, i * 15, 15);
+                bar.Close = 500m;
+                bar.High = 501m;
+                return bar;
+            }))
+            .ToList();
+        var source = ResearchRegistry.PriceAction.First();
+        var candidate = source with
+        {
+            Filters = source.Filters with { ConfirmationTimeframe = "3m", ContextTimeframe = "15m" },
+            SupportedTimeframes = ["1m"]
+        };
+        var definition = ResearchRunner.DefinitionFor(candidate, "1m");
+        var cache = new CausalIndicatorCache(entry);
+        var context = new StrategyContext { ClosedCandles = entry, CurrentPrice = entry[89].Close };
+        var a = new PriceActionMtfResearchEngine(
+            candidate,
+            new CausalIndicatorCache(confirmationPrefix),
+            new CausalIndicatorCache(contextPrefix)).EvaluateDetailAt(definition, context, cache, 89);
+        var b = new PriceActionMtfResearchEngine(
+            candidate,
+            new CausalIndicatorCache(confirmationFull),
+            new CausalIndicatorCache(contextFull)).EvaluateDetailAt(definition, context, cache, 89);
+
+        b.Signal.Should().Be(a.Signal);
+        b.Reason.Should().Be(a.Reason);
+    }
+
+    [Fact]
+    public void Precomputed_price_action_signals_match_direct_causal_evaluation()
+    {
+        var candles = ValidationBenchmark.CreateDeterministicSeries(300).ToList();
+        var candidate = ResearchRegistry.PriceAction.First(c =>
+            c.ParentTemplateKey == StrategyTemplateKeys.PaStructureBreak) with
+        {
+            SupportedTimeframes = ["1h"]
+        };
+        var definition = ResearchRunner.DefinitionFor(candidate, "1h");
+        var cache = new CausalIndicatorCache(candles);
+        var direct = new ResearchStrategyEngine(candidate);
+        var signals = Enumerable.Range(0, candles.Count).Select(i =>
+            direct.EvaluateAt(
+                definition,
+                new StrategyContext { ClosedCandles = candles, CurrentPrice = candles[i].Close },
+                cache,
+                i,
+                out _)).ToArray();
+        var precomputed = new PrecomputedResearchSignalEngine(signals);
+        for (var i = 0; i < candles.Count; i++)
+        {
+            precomputed.EvaluateAt(
+                definition,
+                new StrategyContext { ClosedCandles = candles, CurrentPrice = candles[i].Close },
+                cache,
+                i,
+                out _).Should().Be(signals[i]);
+        }
     }
 
     [Fact]

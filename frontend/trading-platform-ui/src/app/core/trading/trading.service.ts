@@ -16,6 +16,7 @@ import {
   OrderDto,
   PortfolioDto,
   PositionDto,
+  hasBotId,
   RiskPreviewDto,
   RiskProfileDto,
   RunBacktestRequest,
@@ -27,6 +28,11 @@ import {
   SystemHealthDto,
   TradeDto,
   PerformanceDto,
+  ScalpingResearchSummaryDto,
+  ScalpingCoverageDto,
+  ScalpingResearchRunDto,
+  PriceActionResearchSummaryDto,
+  PriceActionOccurrenceDto,
 } from './trading.models';
 
 @Injectable({ providedIn: 'root' })
@@ -82,6 +88,14 @@ export class TradingService {
       return [...rows].sort((a, b) => byTimeDesc(a.openedAt, b.openedAt));
     }
     const byCoin = new Map<string, PositionDto>();
+    const preferOwner = (a: PositionDto, b: PositionDto): PositionDto => {
+      const aBot = hasBotId(a.botId) ? 0 : 1;
+      const bBot = hasBotId(b.botId) ? 0 : 1;
+      if (aBot !== bBot) {
+        return aBot < bBot ? a : b;
+      }
+      return byTimeDesc(a.openedAt, b.openedAt) >= 0 ? a : b;
+    };
     for (const row of rows) {
       const key = row.symbol.trim().toUpperCase();
       const existing = byCoin.get(key);
@@ -90,7 +104,7 @@ export class TradingService {
         continue;
       }
       const filled = row.source === 'Binance' ? row : existing.source === 'Binance' ? existing : row;
-      const snapshot = row.source !== 'Binance' ? row : existing.source !== 'Binance' ? existing : filled;
+      const snapshot = preferOwner(existing, row);
       const entry = filled.averageEntryPrice || snapshot.averageEntryPrice;
       byCoin.set(key, {
         ...snapshot,
@@ -509,6 +523,26 @@ export class TradingService {
         this.performance.set(null);
       }
     }
+  }
+
+  scalpingResearch(): Promise<ScalpingResearchSummaryDto> {
+    return firstValueFrom(this.http.get<ScalpingResearchSummaryDto>(`${environment.apiBaseUrl}/trading/research/scalping`));
+  }
+
+  scalpingCoverage(): Promise<ScalpingCoverageDto[]> {
+    return firstValueFrom(this.http.get<ScalpingCoverageDto[]>(`${environment.apiBaseUrl}/trading/research/scalping/coverage`));
+  }
+
+  scalpingRun(id: string): Promise<ScalpingResearchRunDto> {
+    return firstValueFrom(this.http.get<ScalpingResearchRunDto>(`${environment.apiBaseUrl}/trading/research/scalping/runs/${id}`));
+  }
+
+  priceActionResearch(): Promise<PriceActionResearchSummaryDto> {
+    return firstValueFrom(this.http.get<PriceActionResearchSummaryDto>(`${environment.apiBaseUrl}/trading/research/scalping/price-action`));
+  }
+
+  priceActionOccurrences(): Promise<PriceActionOccurrenceDto[]> {
+    return firstValueFrom(this.http.get<PriceActionOccurrenceDto[]>(`${environment.apiBaseUrl}/trading/research/scalping/price-action/occurrences`));
   }
 
   private syncWorkspacePrefs(strategies: StrategyDto[], profiles: RiskProfileDto[]): void {

@@ -6,6 +6,10 @@ namespace TradingPlatform.StrategyResearch;
 
 internal static class ResearchKlineCache
 {
+    internal const int PageSize = 1500;
+    private static readonly SemaphoreSlim RequestGate = new(1, 1);
+    private static DateTimeOffset _nextRequestAt = DateTimeOffset.MinValue;
+
     internal sealed class CachedBar
     {
         public DateTimeOffset OpenTime { get; set; }
@@ -26,7 +30,8 @@ internal static class ResearchKlineCache
         DateTimeOffset start,
         DateTimeOffset end,
         CancellationToken cancellationToken = default,
-        bool requireTaker = false)
+        bool requireTaker = false,
+        bool strictCoverage = false)
     {
         Directory.CreateDirectory(cacheDir);
         var path = Path.Combine(cacheDir, $"{symbol}_{timeframe}.json");
@@ -47,15 +52,24 @@ internal static class ResearchKlineCache
             return (Slice(closedFresh, start, end), false, downloaded);
         }
 
+        var headCovered = strictCoverage
+            ? merged.Count > 0 && merged[0].OpenTime <= start
+            : merged.Count > 0 && merged[0].OpenTime <= start.AddMilliseconds(interval * 2);
+        var tailCovered = strictCoverage
+            ? merged.Count > 0 && merged[^1].CloseTime >= end
+            : merged.Count > 0 && merged[^1].CloseTime >= end.AddMilliseconds(-interval * 2);
         if (merged.Count >= 80
-            && merged[0].OpenTime <= start.AddMilliseconds(interval * 2)
-            && merged[^1].CloseTime >= end.AddMilliseconds(-interval * 2)
+            && headCovered
+            && tailCovered
             && (!requireTaker || takerOk))
         {
             return (Slice(merged, start, end), true, 0);
         }
 
-        if (merged.Count > 0 && merged[0].OpenTime > start.AddMilliseconds(interval * 2))
+        if (merged.Count > 0
+            && (strictCoverage
+                ? merged[0].OpenTime > start
+                : merged[0].OpenTime > start.AddMilliseconds(interval * 2)))
         {
             var head = await DownloadAsync(http, symbol, timeframe, start, merged[0].OpenTime.AddMilliseconds(-1), cancellationToken);
             downloaded += head.Count;
@@ -67,7 +81,9 @@ internal static class ResearchKlineCache
             merged = await DownloadAsync(http, symbol, timeframe, start, end, cancellationToken);
             downloaded += merged.Count;
         }
-        else if (merged[^1].CloseTime < end.AddMilliseconds(-interval * 2))
+        else if (strictCoverage
+            ? merged[^1].CloseTime < end
+            : merged[^1].CloseTime < end.AddMilliseconds(-interval * 2))
         {
             var tail = await DownloadAsync(http, symbol, timeframe, merged[^1].CloseTime.AddMilliseconds(1), end, cancellationToken);
             downloaded += tail.Count;
@@ -77,6 +93,16 @@ internal static class ResearchKlineCache
         var closed = ClosedUnique(merged, preferLast: requireTaker);
         await File.WriteAllTextAsync(path, JsonSerializer.Serialize(closed.Select(FromCandle).ToList()), cancellationToken);
         return (Slice(closed, start, end), downloaded == 0 && existing.Count >= 80 && (!requireTaker || takerOk), downloaded);
+    }
+
+    public static async Task<IReadOnlyList<MarketCandle>> ReadCachedAsync(
+        string cacheDir,
+        string symbol,
+        string timeframe)
+    {
+        var path = Path.Combine(cacheDir, $"{symbol}_{timeframe}.json");
+        var cached = await ReadAsync(path);
+        return cached.Select(ToCandle).ToList();
     }
 
     public static double TakerCoverage(IReadOnlyList<MarketCandle> candles) =>
@@ -130,9 +156,10 @@ internal static class ResearchKlineCache
             return candles;
         }
 
-        const int page = 1500;
         var cap = timeframe switch
         {
+            "1m" => 300_000,
+            "3m" => 150_000,
             "5m" => 220_000,
             "15m" => 80_000,
             _ => 20_000
@@ -141,10 +168,9 @@ internal static class ResearchKlineCache
         while (candles.Count < cap && cursor <= endMs)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var remaining = Math.Min(page, cap - candles.Count);
+            var remaining = Math.Min(PageSize, cap - candles.Count);
             var url = $"fapi/v1/klines?symbol={symbol}&interval={timeframe}&startTime={cursor}&endTime={endMs}&limit={remaining}";
-            using var response = await http.GetAsync(url, cancellationToken);
-            response.EnsureSuccessStatusCode();
+            using var response = await GetWithRateLimitAsync(http, url, cancellationToken);
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
             using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
             var batch = Parse(doc.RootElement);
@@ -166,10 +192,67 @@ internal static class ResearchKlineCache
                 break;
             }
 
-            await Task.Delay(80, cancellationToken);
         }
 
         return candles;
+    }
+
+    private static async Task<HttpResponseMessage> GetWithRateLimitAsync(
+        HttpClient http,
+        string url,
+        CancellationToken cancellationToken)
+    {
+        HttpResponseMessage? last = null;
+        for (var attempt = 1; attempt <= 8; attempt++)
+        {
+            await RequestGate.WaitAsync(cancellationToken);
+            try
+            {
+                var delay = _nextRequestAt - DateTimeOffset.UtcNow;
+                if (delay > TimeSpan.Zero)
+                {
+                    await Task.Delay(delay, cancellationToken);
+                }
+
+                _nextRequestAt = DateTimeOffset.UtcNow.AddMilliseconds(400);
+                last?.Dispose();
+                last = await http.GetAsync(url, cancellationToken);
+            }
+            finally
+            {
+                RequestGate.Release();
+            }
+
+            if (last.IsSuccessStatusCode)
+            {
+                return last;
+            }
+
+            var code = (int)last.StatusCode;
+            if (code is not (418 or 429))
+            {
+                last.EnsureSuccessStatusCode();
+            }
+
+            var retry = last.Headers.RetryAfter?.Delta
+                ?? (code == 418 ? TimeSpan.FromMinutes(3) : TimeSpan.FromSeconds(60));
+            await RequestGate.WaitAsync(cancellationToken);
+            try
+            {
+                var retryAt = DateTimeOffset.UtcNow + retry;
+                if (_nextRequestAt < retryAt)
+                {
+                    _nextRequestAt = retryAt;
+                }
+            }
+            finally
+            {
+                RequestGate.Release();
+            }
+        }
+
+        last?.EnsureSuccessStatusCode();
+        throw new HttpRequestException("Binance kline request failed after rate-limit retries.");
     }
 
     private static List<MarketCandle> Merge(IReadOnlyList<MarketCandle> left, IReadOnlyList<MarketCandle> right) =>
@@ -205,13 +288,36 @@ internal static class ResearchKlineCache
         return candles;
     }
 
-    private static long IntervalMs(string timeframe) => timeframe switch
+    internal static long IntervalMs(string timeframe) => timeframe switch
     {
+        "1m" => 60 * 1000,
+        "3m" => 3 * 60 * 1000,
         "5m" => 5 * 60 * 1000,
         "15m" => 15 * 60 * 1000,
         "1h" => 60 * 60 * 1000,
         _ => 60 * 60 * 1000
     };
+
+    internal static int GapCount(IReadOnlyList<MarketCandle> candles, string timeframe)
+    {
+        if (candles.Count < 2)
+        {
+            return 0;
+        }
+
+        var step = IntervalMs(timeframe);
+        var gaps = 0;
+        for (var i = 1; i < candles.Count; i++)
+        {
+            var delta = candles[i].OpenTime.ToUnixTimeMilliseconds() - candles[i - 1].OpenTime.ToUnixTimeMilliseconds();
+            if (delta > step + 1)
+            {
+                gaps++;
+            }
+        }
+
+        return gaps;
+    }
 
     private static decimal Dec(JsonElement value) =>
         decimal.Parse(value.GetString() ?? value.ToString(), CultureInfo.InvariantCulture);

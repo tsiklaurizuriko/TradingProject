@@ -80,12 +80,15 @@ public static class ResearchDiagnostics
             MeanHoldingMinutes = holds.Count == 0 ? null : (decimal)holds.Average(),
             MedianHoldingMinutes = holds.Count == 0 ? null : (decimal)Median(holds),
             MaxHoldingMinutes = holds.Count == 0 ? null : (decimal)holds.Max(),
+            P25HoldingMinutes = holds.Count == 0 ? null : (decimal)Percentile(holds, 0.25),
+            P75HoldingMinutes = holds.Count == 0 ? null : (decimal)Percentile(holds, 0.75),
             MfeMean = Mean(mfe),
             MaeMean = Mean(mae),
             Return1 = Mean(r1),
             Return3 = Mean(r3),
             Return5 = Mean(r5),
-            Return10 = Mean(r10)
+            Return10 = Mean(r10),
+            Notes = WithHoldNote(seed, holds)
         };
     }
 
@@ -244,11 +247,49 @@ public static class ResearchDiagnostics
     private static decimal? Mean(IReadOnlyList<decimal> values) =>
         values.Count == 0 ? null : values.Average();
 
+    private static IReadOnlyList<string> WithHoldNote(ResearchBookResult seed, List<double> holds)
+    {
+        var notes = seed.Notes?.ToList() ?? [];
+        if (holds.Count == 0)
+        {
+            return notes;
+        }
+
+        var median = Median(holds);
+        var barMinutes = seed.Timeframe switch
+        {
+            "1m" => 1d,
+            "3m" => 3d,
+            "5m" => 5d,
+            "15m" => 15d,
+            _ => 5d
+        };
+        if (median > barMinutes * 24d)
+        {
+            notes.Add("HOLDING_LOOKS_LIKE_SWING: median hold is longer than 24 bars for this scalp timeframe.");
+        }
+
+        return notes;
+    }
+
     private static double Median(List<double> values)
     {
         values.Sort();
         var mid = values.Count / 2;
         return values.Count % 2 == 1 ? values[mid] : (values[mid - 1] + values[mid]) / 2.0;
+    }
+
+    private static double Percentile(List<double> values, double p)
+    {
+        if (values.Count == 0)
+        {
+            return 0;
+        }
+
+        var copy = values.ToList();
+        copy.Sort();
+        var idx = (int)Math.Clamp(p * (copy.Count - 1), 0, copy.Count - 1);
+        return copy[idx];
     }
 
     private static decimal Median(IReadOnlyList<decimal> values)

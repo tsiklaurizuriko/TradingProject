@@ -30,7 +30,7 @@ public sealed class BinanceSignedRestClient
         SendAsync(_spot, HttpMethod.Post, "sapi/v1/asset/get-funding-asset", new Dictionary<string, string>(), apiKey, apiSecret, cancellationToken);
 
     public Task<JsonElement> GetFuturesAccountAsync(string apiKey, string apiSecret, CancellationToken cancellationToken) =>
-        SendAsync(_futures, HttpMethod.Get, "fapi/v2/account", new Dictionary<string, string>(), apiKey, apiSecret, cancellationToken);
+        SendAsync(_futures, HttpMethod.Get, "fapi/v3/account", new Dictionary<string, string>(), apiKey, apiSecret, cancellationToken);
 
     public Task<JsonElement> GetSpotOpenOrdersAsync(string apiKey, string apiSecret, CancellationToken cancellationToken) =>
         SendAsync(_spot, HttpMethod.Get, "api/v3/openOrders", new Dictionary<string, string>(), apiKey, apiSecret, cancellationToken);
@@ -79,8 +79,35 @@ public sealed class BinanceSignedRestClient
         return SendAsync(_futures, HttpMethod.Get, "fapi/v1/allOrders", fields, apiKey, apiSecret, cancellationToken);
     }
 
-    public Task<JsonElement> GetFuturesPositionsAsync(string apiKey, string apiSecret, CancellationToken cancellationToken) =>
-        SendAsync(_futures, HttpMethod.Get, "fapi/v2/positionRisk", new Dictionary<string, string>(), apiKey, apiSecret, cancellationToken);
+    public Task<JsonElement> GetFuturesPositionsAsync(
+        string apiKey,
+        string apiSecret,
+        CancellationToken cancellationToken,
+        string? symbol = null) =>
+        SendPositionRiskAsync(apiKey, apiSecret, "fapi/v3/positionRisk", symbol, cancellationToken);
+
+    public Task<JsonElement> GetFuturesPositionsV2Async(
+        string apiKey,
+        string apiSecret,
+        CancellationToken cancellationToken,
+        string? symbol = null) =>
+        SendPositionRiskAsync(apiKey, apiSecret, "fapi/v2/positionRisk", symbol, cancellationToken);
+
+    private Task<JsonElement> SendPositionRiskAsync(
+        string apiKey,
+        string apiSecret,
+        string path,
+        string? symbol,
+        CancellationToken cancellationToken)
+    {
+        var fields = new Dictionary<string, string>();
+        if (!string.IsNullOrWhiteSpace(symbol))
+        {
+            fields["symbol"] = symbol.ToUpperInvariant();
+        }
+
+        return SendAsync(_futures, HttpMethod.Get, path, fields, apiKey, apiSecret, cancellationToken);
+    }
 
     public Task<JsonElement> PlaceMarketOrderAsync(
         string apiKey,

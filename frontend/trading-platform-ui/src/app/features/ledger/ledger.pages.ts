@@ -225,7 +225,7 @@ export class PositionsPage {
   template: `
     <header class="page-header"><p>{{ trading.workspace() }} closed Isolated positions — one row per round-trip, like Binance Position History.</p></header>
     <section class="panel">
-      @if (trading.workspaceTrades().length === 0) {
+      @if (rows().length === 0) {
         <app-empty-state title="No trades yet" message="Closed Isolated positions for this workspace appear here." />
       } @else {
         <table class="data-table">
@@ -290,7 +290,7 @@ export class TradesPage {
   }
   readonly rows = computed(() =>
     this.list.apply(
-      this.trading.workspaceTrades(),
+      this.trading.workspaceTrades().filter((row) => !!row.closedAt),
       (row) => [row.symbol, sideLabel(row.side), row.closedAt ? 'Closed' : 'Open'],
       {
         opened: (row) => timeValue(row.openedAt),

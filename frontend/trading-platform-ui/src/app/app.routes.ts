@@ -8,6 +8,7 @@ import { BotDetailPage } from './features/bots/bot-detail.page';
 import { TradingPage } from './features/trading/trading.page';
 import { ScannerPage, WatchlistPage } from './features/markets/markets.pages';
 import { BacktestingPage, StrategiesPage } from './features/research/research.pages';
+import { ScalpingPage } from './features/research/scalping.page';
 import { PerformancePage, PortfolioPage } from './features/account/account.pages';
 import { OrdersPage, PositionsPage, TradesPage, FillsPage } from './features/ledger/ledger.pages';
 import { AdminPage, ExchangesPage, NotificationsPage, RiskPage, SettingsPage } from './features/system/system.pages';
@@ -28,6 +29,7 @@ export const routes: Routes = [
       { path: 'scanner', component: ScannerPage, data: page('Market Scanner', '') },
       { path: 'watchlist', component: WatchlistPage, data: page('Watchlist', '') },
       { path: 'strategies', component: StrategiesPage, data: page('Strategies', '') },
+      { path: 'scalping', component: ScalpingPage, data: page('Scalping', 'Research-only. LIVE off.') },
       { path: 'strategy-builder', redirectTo: 'strategies' },
       { path: 'backtesting', component: BacktestingPage, data: page('Backtesting', '') },
       { path: 'performance', component: PerformancePage, data: page('Performance', '') },

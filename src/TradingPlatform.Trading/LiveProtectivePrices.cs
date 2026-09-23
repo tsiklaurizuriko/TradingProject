@@ -1,3 +1,4 @@
+using TradingPlatform.Application.Abstractions.Exchange;
 using TradingPlatform.Domain.Positions;
 
 namespace TradingPlatform.Trading;
@@ -79,6 +80,16 @@ public static class LiveProtectivePrices
     public static string StopClientOrderId(Guid botId) => $"sl{botId:N}"[..18];
 
     public static string TakeClientOrderId(Guid botId) => $"tp{botId:N}"[..18];
+
+    public static bool IsStopOrder(string? type) => ProtectiveOrderMath.IsStopOrder(type);
+
+    public static bool IsTakeOrder(string? type) => ProtectiveOrderMath.IsTakeOrder(type);
+
+    public static bool IsExistingProtectiveOrder(string? message) =>
+        ProtectiveOrderMath.IsExistingProtectiveOrder(message);
+
+    public static decimal RestingTrigger(decimal mark, decimal tickSize, bool closingShort, bool stop) =>
+        ProtectiveOrderMath.RestingTrigger(mark, tickSize, closingShort, stop);
 
     public static decimal RoundToTick(decimal price, decimal tick, bool down)
     {

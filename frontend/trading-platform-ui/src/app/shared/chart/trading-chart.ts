@@ -17,7 +17,7 @@ import {
   createChart,
   createSeriesMarkers,
 } from 'lightweight-charts';
-import { KlineBarDto, PositionDto, SignalDto, TradeDto, signalLabel } from '../../core/trading/trading.models';
+import { KlineBarDto, PositionDto, SignalDto, TradeDto, PatternOverlay, signalLabel } from '../../core/trading/trading.models';
 
 @Component({
   selector: 'app-trading-chart',
@@ -31,12 +31,14 @@ export class TradingChartComponent implements OnDestroy {
   readonly trades = input<TradeDto[]>([]);
   readonly signals = input<SignalDto[]>([]);
   readonly symbol = input('BTCUSDT');
+  readonly patternOverlay = input<PatternOverlay | null>(null);
 
   private chart?: IChartApi;
   private candles?: ISeriesApi<'Candlestick'>;
   private volume?: ISeriesApi<'Histogram'>;
   private emaFast?: ISeriesApi<'Line'>;
   private emaSlow?: ISeriesApi<'Line'>;
+  private neckline?: ISeriesApi<'Line'>;
   private markers?: { setMarkers(markers: object[]): void };
   private resize?: ResizeObserver;
 
@@ -48,6 +50,7 @@ export class TradingChartComponent implements OnDestroy {
       this.trades();
       this.signals();
       this.symbol();
+      this.patternOverlay();
       this.render();
     });
   }
@@ -94,6 +97,7 @@ export class TradingChartComponent implements OnDestroy {
     this.chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.78, bottom: 0 } });
     this.emaFast = this.chart.addSeries(LineSeries, { color: '#1677ff', lineWidth: 2, priceLineVisible: false });
     this.emaSlow = this.chart.addSeries(LineSeries, { color: '#ffb020', lineWidth: 2, priceLineVisible: false });
+    this.neckline = this.chart.addSeries(LineSeries, { color: '#b388ff', lineWidth: 1, lineStyle: 2, priceLineVisible: false });
     this.markers = createSeriesMarkers(this.candles, []) as { setMarkers(markers: object[]): void };
     this.resize = new ResizeObserver(() => {
       if (!this.chart) {
@@ -163,7 +167,18 @@ export class TradingChartComponent implements OnDestroy {
           shape: 'arrowDown' as const,
           text: 'EXIT',
         })),
+      ...patternMarks(this.patternOverlay()),
     ];
+    markers.sort((a, b) => Number(a.time) - Number(b.time));
+    this.markers?.setMarkers(markers);
+    const overlay = this.patternOverlay();
+    if (this.neckline) {
+      if (overlay?.neckline && bars.length) {
+        this.neckline.setData(bars.map((bar) => ({ time: bar.time as UTCTimestamp, value: Number(overlay.neckline) })));
+      } else {
+        this.neckline.setData([]);
+      }
+    }
     markers.sort((a, b) => Number(a.time) - Number(b.time));
     this.markers?.setMarkers(markers);
     if (bars.length) {
@@ -180,4 +195,27 @@ function ema(bars: KlineBarDto[], period: number) {
     prev = index === 0 ? close : close * k + prev * (1 - k);
     return { time: bar.time as UTCTimestamp, value: prev };
   });
+}
+
+function patternMarks(overlay: PatternOverlay | null) {
+  if (!overlay) {
+    return [];
+  }
+  const marks: { time: UTCTimestamp; position: 'aboveBar' | 'belowBar'; color: string; shape: 'circle' | 'arrowUp' | 'arrowDown'; text: string }[] = [];
+  const push = (raw: string | null | undefined, text: string, color: string) => {
+    if (!raw || !Number.isFinite(Date.parse(raw))) {
+      return;
+    }
+    marks.push({
+      time: Math.floor(new Date(raw).getTime() / 1000) as UTCTimestamp,
+      position: 'belowBar',
+      color,
+      shape: 'circle',
+      text,
+    });
+  };
+  push(overlay.detection ?? null, 'DETECT', '#b388ff');
+  push(overlay.confirmation ?? null, 'CONFIRM', '#00c853');
+  push(overlay.entry ?? null, 'TRIGGER', '#36a3ff');
+  return marks;
 }

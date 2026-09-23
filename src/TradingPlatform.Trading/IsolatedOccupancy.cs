@@ -1,6 +1,8 @@
 using TradingPlatform.Application.Abstractions.Exchange;
 using TradingPlatform.Application.Trading;
+using TradingPlatform.Domain.Bots;
 using TradingPlatform.Domain.Positions;
+using TradingPlatform.Domain.Trading;
 using TradingPlatform.Risk;
 
 namespace TradingPlatform.Trading;
@@ -77,9 +79,11 @@ public static class IsolatedOccupancy
             : 0m;
 
     /// <summary>
-    /// Max simultaneous Isolated slots are per running strategy. Live coins owned by other strategies are ignored.
+    /// Max simultaneous Isolated slots are per running strategy. Another strategy's coin does not fill this cap.
     /// One Isolated position per coin still applies globally via <see cref="IsCoinOpen"/>.
-    /// Occupancy is the strategy's DB book. Overlay lag must not drop those slots to zero.
+    /// When two books claim the same coin, the earliest fill owns it.
+    /// Overlay lag must not drop those slots to zero; ghosts after <see cref="OverlayGrace"/> do not keep a slot
+    /// once Binance still shows other coins.
     /// </summary>
     public static int UniqueCoinsForStrategy(
         IReadOnlyList<Position> book,
@@ -90,10 +94,211 @@ public static class IsolatedOccupancy
         IReadOnlySet<Guid>? strategyBotIds = null,
         IReadOnlySet<Guid>? strategyVersionIds = null)
     {
-        var strategyBook = ForStrategy(book, strategyId, strategyBotIds, strategyVersionIds);
-        return UniqueCoins(
-            strategyBook.Where(row => row.Quantity > 0m).Select(row => row.Symbol));
+        var owned = OccupiedByStrategy(book, strategyId, strategyBotIds, strategyVersionIds);
+        if (liveAuthoritative && live is { Count: > 0 })
+        {
+            var stamp = now ?? DateTimeOffset.UtcNow;
+            var liveCoins = live
+                .Where(row => row.Quantity > 0m)
+                .Select(row => CoinKey(row.Symbol))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            owned = owned
+                .Where(row => liveCoins.Contains(CoinKey(row.Symbol)) || stamp - row.OpenedAt < OverlayGrace)
+                .ToList();
+        }
+
+        return UniqueCoins(owned.Select(row => row.Symbol));
     }
+
+    public static IReadOnlyList<Position> OccupiedByStrategy(
+        IReadOnlyList<Position> book,
+        Guid strategyId,
+        IReadOnlySet<Guid>? strategyBotIds = null,
+        IReadOnlySet<Guid>? strategyVersionIds = null)
+    {
+        var owners = book
+            .Where(row => row.Quantity > 0m)
+            .GroupBy(row => CoinKey(row.Symbol), StringComparer.OrdinalIgnoreCase)
+            .Select(IsolatedOwner);
+        return owners.Where(row => OwnsStrategy(row, strategyId, strategyBotIds, strategyVersionIds)).ToList();
+    }
+
+    public static Position IsolatedOwner(IEnumerable<Position> rows) =>
+        rows
+            .Where(row => row.Quantity > 0m)
+            .OrderBy(row => row.OpenedAt)
+            .ThenBy(row => row.BotId)
+            .First();
+
+    public static PositionDto IsolatedOwner(IEnumerable<PositionDto> rows) =>
+        rows
+            .Where(row => row.Quantity > 0m)
+            .OrderBy(row => row.BotId == Guid.Empty ? 1 : 0)
+            .ThenBy(row => row.OpenedAt)
+            .ThenBy(row => row.BotId)
+            .First();
+
+    /// <summary>
+    /// One Isolated coin has one owner. An open snapshot owns it; otherwise the earliest-started
+    /// running bot on that coin may enter. Later bots wait until it is flat.
+    /// </summary>
+    public static Bot? PickLiveOwner(
+        string symbol,
+        IReadOnlyList<Bot> bots,
+        IReadOnlyList<Position> book,
+        TradingMode? mode = null)
+    {
+        var key = CoinKey(symbol);
+        var holders = book
+            .Where(row =>
+                row.Quantity > 0m
+                && string.Equals(CoinKey(row.Symbol), key, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (holders.Count > 0)
+        {
+            var owner = IsolatedOwner(holders);
+            return bots.FirstOrDefault(bot => bot.Id == owner.BotId) ?? owner.Bot;
+        }
+
+        return bots
+            .Where(bot =>
+                (mode is null || bot.Mode == mode)
+                && string.Equals(CoinKey(bot.Symbol), key, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(bot => bot.Status == BotStatus.Running ? 0 : 1)
+            .ThenBy(bot => bot.StartedAt ?? DateTimeOffset.MaxValue)
+            .ThenBy(bot => bot.Id)
+            .FirstOrDefault();
+    }
+
+    public static bool IsOwner(Bot bot, IReadOnlyList<Bot> peers, IReadOnlyList<Position> book) =>
+        PickLiveOwner(bot.Symbol, peers, book, bot.Mode)?.Id == bot.Id;
+
+    public static bool IsExchangeLedgerKey(string? correlationId) =>
+        !string.IsNullOrWhiteSpace(correlationId)
+        && (correlationId.StartsWith("BNT", StringComparison.OrdinalIgnoreCase)
+            || correlationId.StartsWith("BNI", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// One Isolated round-trip is one row. Overlapping same-coin same-size closes from different
+    /// bots are the same Binance position recorded twice.
+    /// </summary>
+    public static IReadOnlyList<T> UniqueClosedTrips<T>(
+        IReadOnlyList<T> rows,
+        Func<T, string> symbol,
+        Func<T, decimal> quantity,
+        Func<T, DateTimeOffset> openedAt,
+        Func<T, DateTimeOffset?> closedAt,
+        Func<T, string?> correlationId,
+        Func<T, decimal>? fees = null)
+    {
+        var chosen = new List<T>(rows.Count);
+        foreach (var row in rows)
+        {
+            if (closedAt(row) is null)
+            {
+                chosen.Add(row);
+                continue;
+            }
+
+            var index = chosen.FindIndex(existing =>
+                closedAt(existing) is not null
+                && SameIsolatedTrip(
+                    symbol(existing),
+                    quantity(existing),
+                    openedAt(existing),
+                    closedAt(existing),
+                    symbol(row),
+                    quantity(row),
+                    openedAt(row),
+                    closedAt(row)));
+            if (index < 0)
+            {
+                chosen.Add(row);
+                continue;
+            }
+
+            if (PreferClosedTrip(row, chosen[index], correlationId, fees))
+            {
+                chosen[index] = row;
+            }
+        }
+
+        return chosen;
+    }
+
+    public static bool SameIsolatedTrip(
+        string leftSymbol,
+        decimal leftQty,
+        DateTimeOffset leftOpened,
+        DateTimeOffset? leftClosed,
+        string rightSymbol,
+        decimal rightQty,
+        DateTimeOffset rightOpened,
+        DateTimeOffset? rightClosed)
+    {
+        if (!string.Equals(CoinKey(leftSymbol), CoinKey(rightSymbol), StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var scale = Math.Max(0.00000001m, Math.Abs(leftQty) * 0.0001m);
+        if (Math.Abs(leftQty - rightQty) > scale)
+        {
+            return false;
+        }
+
+        if (leftClosed is null || rightClosed is null)
+        {
+            return false;
+        }
+
+        return leftOpened <= rightClosed && rightOpened <= leftClosed;
+    }
+
+    private static bool PreferClosedTrip<T>(
+        T candidate,
+        T existing,
+        Func<T, string?> correlationId,
+        Func<T, decimal>? fees)
+    {
+        var candidateRank = ClosedTripRank(correlationId(candidate), fees?.Invoke(candidate) ?? 0m);
+        var existingRank = ClosedTripRank(correlationId(existing), fees?.Invoke(existing) ?? 0m);
+        if (candidateRank != existingRank)
+        {
+            return candidateRank > existingRank;
+        }
+
+        var candidateFees = fees?.Invoke(candidate) ?? 0m;
+        var existingFees = fees?.Invoke(existing) ?? 0m;
+        return candidateFees > existingFees;
+    }
+
+    private static int ClosedTripRank(string? correlationId, decimal fees)
+    {
+        if (IsExchangeLedgerKey(correlationId))
+        {
+            return 3;
+        }
+
+        if (!string.IsNullOrWhiteSpace(correlationId)
+            && correlationId.StartsWith("binance-fill", StringComparison.OrdinalIgnoreCase))
+        {
+            return 2;
+        }
+
+        return fees > 0m ? 1 : 0;
+    }
+
+    private static bool OwnsStrategy(
+        Position row,
+        Guid strategyId,
+        IReadOnlySet<Guid>? strategyBotIds,
+        IReadOnlySet<Guid>? strategyVersionIds) =>
+        row.Bot?.StrategyVersion?.StrategyId == strategyId
+        || (strategyBotIds is { Count: > 0 } && strategyBotIds.Contains(row.BotId))
+        || (strategyVersionIds is { Count: > 0 }
+            && row.Bot is not null
+            && strategyVersionIds.Contains(row.Bot.StrategyVersionId));
 
     public static int UniqueCoins(
         IReadOnlyList<Position> book,
@@ -174,7 +379,10 @@ public static class IsolatedOccupancy
         var bots = botPositions
             .Where(row => row.Quantity > 0m)
             .GroupBy(row => CoinKey(row.Symbol), StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+            .ToDictionary(
+                group => group.Key,
+                group => IsolatedOwner(group),
+                StringComparer.OrdinalIgnoreCase);
         var merged = new List<PositionDto>();
         var taken = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 

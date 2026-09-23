@@ -1,6 +1,7 @@
 using TradingPlatform.Backtesting;
 using TradingPlatform.Backtesting.Validation;
 using TradingPlatform.Domain.Market;
+using TradingPlatform.Domain.Trading;
 using TradingPlatform.Strategies.Engine;
 using TradingPlatform.Strategies.Indicators;
 
@@ -21,6 +22,10 @@ public sealed class ResearchRunRequest
     public bool UseLowIsolated { get; init; }
     public bool HonorSuggestedStops { get; init; }
     public bool SkipWalkForward { get; init; }
+    public bool IncludeChronologicalBlocks { get; init; }
+    public bool IncludeWalkForward { get; init; }
+    public IReadOnlyDictionary<(string Symbol, string Timeframe), CausalIndicatorCache>? IndicatorCaches { get; init; }
+    public IReadOnlyDictionary<(string CandidateId, string Symbol, string Timeframe), IReadOnlyList<SignalType>>? PrecomputedSignals { get; init; }
 }
 
 public static class ResearchRunner
@@ -133,18 +138,46 @@ public static class ResearchRunner
             return rows;
         }
 
-        var cache = new CausalIndicatorCache(closed);
+        var cache = request.IndicatorCaches?.GetValueOrDefault((symbol, timeframe))
+            ?? new CausalIndicatorCache(closed);
         CausalIndicatorCache? htf = null;
         var htfName = ResolveHigherTimeframe(candidate, timeframe);
         if (!string.IsNullOrWhiteSpace(htfName) && request.Series.TryGetValue((symbol, htfName), out var htfBars))
         {
-            htf = new CausalIndicatorCache(htfBars.Where(c => c.IsClosed).OrderBy(c => c.OpenTime).ToList());
+            htf = request.IndicatorCaches?.GetValueOrDefault((symbol, htfName))
+                ?? new CausalIndicatorCache(htfBars.Where(c => c.IsClosed).OrderBy(c => c.OpenTime).ToList());
+        }
+
+        CausalIndicatorCache? confirmation = null;
+        CausalIndicatorCache? contextCache = null;
+        if (!string.IsNullOrWhiteSpace(candidate.Filters.ConfirmationTimeframe))
+        {
+            if (!request.Series.TryGetValue((symbol, candidate.Filters.ConfirmationTimeframe), out var confirmationBars))
+            {
+                rows.Add(Skip(candidate, symbol, timeframe, "IS", ResearchCostLabels.Base, ResearchStatuses.InsufficientData, "MTF confirmation series unavailable."));
+                return rows;
+            }
+
+            confirmation = request.IndicatorCaches?.GetValueOrDefault((symbol, candidate.Filters.ConfirmationTimeframe))
+                ?? new CausalIndicatorCache(confirmationBars.Where(c => c.IsClosed).OrderBy(c => c.OpenTime).ToList());
+        }
+
+        if (!string.IsNullOrWhiteSpace(candidate.Filters.ContextTimeframe))
+        {
+            if (!request.Series.TryGetValue((symbol, candidate.Filters.ContextTimeframe), out var contextBars))
+            {
+                rows.Add(Skip(candidate, symbol, timeframe, "IS", ResearchCostLabels.Base, ResearchStatuses.InsufficientData, "MTF context series unavailable."));
+                return rows;
+            }
+
+            contextCache = request.IndicatorCaches?.GetValueOrDefault((symbol, candidate.Filters.ContextTimeframe))
+                ?? new CausalIndicatorCache(contextBars.Where(c => c.IsClosed).OrderBy(c => c.OpenTime).ToList());
         }
 
         var (insEnd, valEnd) = StrategyValidation.ChronologicalSplitIndices(closed.Count);
         foreach (var cost in request.CostLabels)
         {
-            foreach (var (phase, from, to) in Windows(request.Phase, closed.Count, warmup, insEnd, valEnd))
+            foreach (var (phase, from, to) in Windows(request.Phase, closed.Count, warmup, insEnd, valEnd, request.IncludeChronologicalBlocks))
             {
                 var key = $"{candidate.CandidateId}|{symbol}|{timeframe}|{phase}|{cost}";
                 if (!request.Force && request.Done.Contains(key))
@@ -158,8 +191,13 @@ public static class ResearchRunner
                     continue;
                 }
 
-                var engine = new ResearchStrategyEngine(candidate);
+                var engine = ResolveEngine(request, candidate, symbol, timeframe, confirmation, contextCache);
                 var settings = CostScaledRisk(request, closed[Math.Max(from, 0)].OpenTime, closed[Math.Min(to, closed.Count) - 1].CloseTime, cost, candidate);
+                if (StrategyTemplateKeys.IsScalping(templateKey) && settings.MaxHoldBars <= 0)
+                {
+                    settings = settings with { MaxHoldBars = ScalpingCatalog.MaxHoldBars(timeframe) };
+                }
+
                 var signalFrom = Math.Max(from, warmup);
                 var replay = new BacktestReplay(engine).Run(definition, closed, settings, cache, signalFrom, to, htf);
                 var seed = new ResearchBookResult(
@@ -180,7 +218,7 @@ public static class ResearchRunner
                 rows.Add(filled with { Status = AssignStatus(filled, phase) });
             }
 
-            if (IncludesWalkForward(request.Phase) && !request.SkipWalkForward)
+            if ((IncludesWalkForward(request.Phase) || request.IncludeWalkForward) && !request.SkipWalkForward)
             {
                 var train = Math.Min(400, Math.Max(warmup, Math.Max(80, closed.Count / 3)));
                 var test = Math.Min(80, Math.Max(20, closed.Count / 10));
@@ -205,8 +243,13 @@ public static class ResearchRunner
                         continue;
                     }
 
-                    var engine = new ResearchStrategyEngine(candidate);
+                    var engine = ResolveEngine(request, candidate, symbol, timeframe, confirmation, contextCache);
                     var settings = CostScaledRisk(request, closed[testStart].OpenTime, closed[testEnd - 1].CloseTime, cost, candidate);
+                    if (StrategyTemplateKeys.IsScalping(templateKey) && settings.MaxHoldBars <= 0)
+                    {
+                        settings = settings with { MaxHoldBars = ScalpingCatalog.MaxHoldBars(timeframe) };
+                    }
+
                     var replay = new BacktestReplay(engine).Run(definition, closed, settings, cache, testStart, testEnd, htf);
                     var seed = new ResearchBookResult(
                         candidate.CandidateId,
@@ -230,6 +273,24 @@ public static class ResearchRunner
         }
 
         return rows;
+    }
+
+    private static IStrategyEngine ResolveEngine(
+        ResearchRunRequest request,
+        ResearchCandidate candidate,
+        string symbol,
+        string timeframe,
+        CausalIndicatorCache? confirmation,
+        CausalIndicatorCache? context)
+    {
+        if (request.PrecomputedSignals?.GetValueOrDefault((candidate.CandidateId, symbol, timeframe)) is { } signals)
+        {
+            return new PrecomputedResearchSignalEngine(signals);
+        }
+
+        return context is null
+            ? new ResearchStrategyEngine(candidate)
+            : new PriceActionMtfResearchEngine(candidate, confirmation, context);
     }
 
     public static ReplaySettings CostScaledRisk(DateTimeOffset from, DateTimeOffset to, string costLabel) =>
@@ -320,15 +381,22 @@ public static class ResearchRunner
             : raw;
     }
 
-    private static IEnumerable<(string Phase, int From, int To)> Windows(string phase, int count, int warmup, int insEnd, int valEnd)
+    private static IEnumerable<(string Phase, int From, int To)> Windows(
+        string phase,
+        int count,
+        int warmup,
+        int insEnd,
+        int valEnd,
+        bool includeChronologicalBlocks)
     {
         var all = IsFullRun(phase);
-        if (all || string.Equals(phase, ResearchPhases.Is, StringComparison.OrdinalIgnoreCase))
+        var discovery = string.Equals(phase, "DISCOVERY", StringComparison.OrdinalIgnoreCase);
+        if (all || discovery || string.Equals(phase, ResearchPhases.Is, StringComparison.OrdinalIgnoreCase))
         {
             yield return ("IS", 0, insEnd);
         }
 
-        if (all || string.Equals(phase, ResearchPhases.Validation, StringComparison.OrdinalIgnoreCase))
+        if (all || discovery || string.Equals(phase, ResearchPhases.Validation, StringComparison.OrdinalIgnoreCase))
         {
             yield return ("VALIDATION", insEnd, valEnd);
         }
@@ -336,6 +404,16 @@ public static class ResearchRunner
         if (all || string.Equals(phase, ResearchPhases.Oos, StringComparison.OrdinalIgnoreCase))
         {
             yield return ("OOS", valEnd, count);
+        }
+
+        if (includeChronologicalBlocks)
+        {
+            for (var block = 0; block < 4; block++)
+            {
+                var from = block * count / 4;
+                var to = (block + 1) * count / 4;
+                yield return ($"BLOCK{block + 1}", from, to);
+            }
         }
     }
 
@@ -351,6 +429,7 @@ public static class ResearchRunner
 
     private static string AssignStatus(ResearchBookResult row, string phase)
     {
+        // Research CLI never auto-promotes. VALIDATED_FOR_PAPER is not assigned here.
         if (row.TradeCount == 0)
         {
             return ResearchStatuses.NoTrades;

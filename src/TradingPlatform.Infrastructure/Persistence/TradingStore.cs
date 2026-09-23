@@ -404,7 +404,6 @@ public sealed class TradingStore : ITradingStore
         _db.Trades.AnyAsync(t => t.CorrelationId == correlationId, cancellationToken);
 
     public async Task<IReadOnlyList<Trade>> FindClosedTradesAroundAsync(
-        Guid botId,
         string symbol,
         DateTimeOffset from,
         DateTimeOffset to,
@@ -414,8 +413,7 @@ public sealed class TradingStore : ITradingStore
         var start = from - TimeSpan.FromMinutes(15);
         var end = to + TimeSpan.FromMinutes(15);
         return await _db.Trades
-            .Where(t => t.BotId == botId
-                && t.Symbol == name
+            .Where(t => t.Symbol == name
                 && t.ClosedAt != null
                 && t.ClosedAt >= start
                 && t.ClosedAt <= end)
@@ -425,8 +423,9 @@ public sealed class TradingStore : ITradingStore
     public void RemoveTrade(Trade trade) => _db.Trades.Remove(trade);
 
     public Task<Trade?> FindClosedTradeNearAsync(
-        Guid botId,
         string symbol,
+        decimal quantity,
+        DateTimeOffset openedAt,
         DateTimeOffset around,
         TimeSpan window,
         CancellationToken cancellationToken = default)
@@ -435,11 +434,13 @@ public sealed class TradingStore : ITradingStore
         var from = around - window;
         var to = around + window;
         return _db.Trades.FirstOrDefaultAsync(
-            t => t.BotId == botId
-                && t.Symbol == name
+            t => t.Symbol == name
                 && t.ClosedAt != null
                 && t.ClosedAt >= from
-                && t.ClosedAt <= to,
+                && t.ClosedAt <= to
+                && t.OpenedAt <= around
+                && openedAt <= t.ClosedAt
+                && t.Quantity == quantity,
             cancellationToken);
     }
 
@@ -579,7 +580,8 @@ public sealed class TradingStore : ITradingStore
                 t.ClosedAt,
                 t.Strategy.Name,
                 t.Bot.Mode.ToString(),
-                t.Side == OrderSide.Sell ? "Short" : "Long"))
+                t.Side == OrderSide.Sell ? "Short" : "Long",
+                t.CorrelationId))
             .ToListAsync(cancellationToken);
 
     public async Task<IReadOnlyList<Signal>> GetRecentSignalsAsync(int take, CancellationToken cancellationToken = default) =>

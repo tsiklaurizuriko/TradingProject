@@ -320,8 +320,10 @@ public sealed class PaperPipelineTests
         order.Side.Should().Be(OrderSide.Sell);
     }
 
-    [Fact]
-    public async Task Live_open_position_is_not_flattened_by_a_strategy_exit()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Live_open_position_is_never_automatically_flattened(bool protectiveStopPlaced)
     {
         var options = new DbContextOptionsBuilder<TradingDbContext>()
             .UseInMemoryDatabase($"live-exit-{Guid.NewGuid():N}")
@@ -423,7 +425,7 @@ public sealed class PaperPipelineTests
         });
         var clock = new SystemClock();
         var correlation = new CorrelationIdAccessor();
-        var liveOrders = new RecordingLiveConnector();
+        var liveOrders = new RecordingLiveConnector(protectiveStopPlaced);
         var engine = new BotEngine(
             store,
             new FakeMarket(candles, last),
@@ -446,7 +448,9 @@ public sealed class PaperPipelineTests
 
         liveOrders.Placed.Should().BeEmpty();
         (await db.Positions.CountAsync(p => p.ClosedAt == null)).Should().Be(1);
-        bot.LastError.Should().Contain("Live Isolated SL/TP own the exit");
+        bot.LastError.Should().Contain(protectiveStopPlaced
+            ? "Live Isolated SL/TP own the exit"
+            : "Automatic close is disabled");
     }
 
     private static List<MarketCandle> CrossingCandles()
@@ -521,6 +525,13 @@ public sealed class PaperPipelineTests
 
     private sealed class RecordingLiveConnector : IExchangeConnector, ILiveExchangeConnectorFactory
     {
+        private readonly bool _protectiveStopPlaced;
+
+        public RecordingLiveConnector(bool protectiveStopPlaced = true)
+        {
+            _protectiveStopPlaced = protectiveStopPlaced;
+        }
+
         public List<PlaceOrderRequest> Placed { get; } = [];
         public string Name => "RecordingLive";
         public TradingMode Mode => TradingMode.Live;
@@ -571,8 +582,14 @@ public sealed class PaperPipelineTests
             decimal takeProfitPrice,
             string stopClientOrderId,
             string takeProfitClientOrderId,
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult(new ProtectiveStopsResult(true, true));
+            CancellationToken cancellationToken = default,
+            bool placeStop = true,
+            bool placeTake = true) =>
+            Task.FromResult(new ProtectiveStopsResult(
+                !placeStop || _protectiveStopPlaced,
+                !placeTake || _protectiveStopPlaced,
+                placeStop && !_protectiveStopPlaced ? "simulated stop failure" : null,
+                placeTake && !_protectiveStopPlaced ? "simulated take-profit failure" : null));
 
         public Task CancelOrderAsync(string symbol, string? clientOrderId, string? exchangeOrderId, CancellationToken cancellationToken = default) =>
             Task.CompletedTask;

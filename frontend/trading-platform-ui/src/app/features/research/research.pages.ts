@@ -272,6 +272,7 @@ function depsFor(key: string): string {
               <option value="MEAN REVERSION">MEAN REVERSION</option>
               <option value="REVERSAL">REVERSAL</option>
               <option value="FUTURES / FLOW">FUTURES / FLOW</option>
+              <option value="SCALPING">SCALPING</option>
               <option value="ROUTER">ROUTER</option>
             </select>
           </label>

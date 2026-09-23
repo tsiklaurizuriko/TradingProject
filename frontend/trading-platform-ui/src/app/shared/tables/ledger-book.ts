@@ -57,7 +57,7 @@ export type LedgerBookTab = 'positions' | 'open' | 'history' | 'fills' | 'closed
       @if (tab() === 'positions') {
         <app-position-table [positions]="visiblePositions()" [embedded]="true" />
       } @else if (tab() === 'closed') {
-        <app-trade-table [trades]="visibleTrades()" [embedded]="true" />
+        <app-trade-table [trades]="closedTrades()" [embedded]="true" />
       } @else if (orderRows().length === 0) {
         <app-empty-state [title]="emptyTitle()" [message]="emptyMessage()" />
       } @else {
@@ -174,6 +174,7 @@ export class LedgerBookComponent {
 
   readonly visiblePositions = computed(() => this.filterCoin(this.positions()));
   readonly visibleTrades = computed(() => this.filterCoin(this.trades()));
+  readonly closedTrades = computed(() => this.visibleTrades().filter((row) => !!row.closedAt));
   readonly scopedOrders = computed(() => this.filterCoin(this.orders()));
   readonly openOrders = computed(() => this.scopedOrders().filter(isWorkingOrder));
   readonly basicOpen = computed(() => this.openOrders().filter((row) => !isProtectionOrder(row)));
