@@ -136,7 +136,8 @@ public sealed record ResearchBookResult(
     string Regime,
     IReadOnlyList<string> Notes,
     decimal? P25HoldingMinutes = null,
-    decimal? P75HoldingMinutes = null);
+    decimal? P75HoldingMinutes = null,
+    decimal? MaximumDrawdown = null);
 
 public sealed record ResearchRobustness(
     string CandidateId,

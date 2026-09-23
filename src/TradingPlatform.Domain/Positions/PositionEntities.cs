@@ -25,6 +25,8 @@ public sealed class Position : Entity
     public decimal TakeProfitPercent { get; set; }
     public decimal InitialRiskUsdt { get; set; }
     public decimal MarginUsdt { get; set; }
+    public decimal MaxAdverseExcursion { get; set; }
+    public decimal MaxFavorableExcursion { get; set; }
     public decimal AvailableBalanceAtEntry { get; set; }
     public decimal RiskPerTradePercent { get; set; }
     public decimal StopLossPrice { get; set; }

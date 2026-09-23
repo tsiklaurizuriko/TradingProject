@@ -189,7 +189,9 @@ public static class StrategyTemplateKeys
 
     public static readonly string[] Research = [.. AdvancedSix, .. Alpha, .. HistoricallyFitted, .. Scalping, .. PriceAction];
 
-    public static readonly string[] All = [.. Frozen, .. Research];
+    public static readonly string[] NearMiss = NearMissAudit.SelectedRows.Select(NearMissAudit.TemplateKey).ToArray();
+
+    public static readonly string[] All = [.. Frozen, .. Research, .. NearMiss];
 
     /// <summary>
     /// Operator catalog: PAPER or weak guidance only. Avoid/blocked templates stay in the engine
@@ -234,6 +236,37 @@ public static class StrategyTemplateKeys
     public static bool IsPriceAction(string? key) =>
         PriceAction.Contains(Normalize(key), StringComparer.OrdinalIgnoreCase);
 
+    public static bool IsNearMiss(string? key) =>
+        NearMiss.Contains(Normalize(key), StringComparer.OrdinalIgnoreCase);
+
+    public static string NearMissHypothesisId(string? key)
+    {
+        var normalized = Normalize(key);
+        foreach (var row in NearMissAudit.SelectedRows)
+        {
+            if (string.Equals(NearMissAudit.TemplateKey(row), normalized, StringComparison.OrdinalIgnoreCase))
+            {
+                return row.HypothesisId;
+            }
+        }
+
+        return "";
+    }
+
+    public static string NearMissFamily(string? key)
+    {
+        var normalized = Normalize(key);
+        foreach (var row in NearMissAudit.SelectedRows)
+        {
+            if (string.Equals(NearMissAudit.TemplateKey(row), normalized, StringComparison.OrdinalIgnoreCase))
+            {
+                return row.Family;
+            }
+        }
+
+        return "";
+    }
+
     public static bool IsResearchOnlyFamily(string? key) => IsScalping(key) || IsPriceAction(key);
 
     public static bool IsResearch(string? key) =>
@@ -272,6 +305,7 @@ public static class StrategyTemplateKeys
         VolSpikeEmaTrend => "TREND",
         var scalp when IsScalping(scalp) => "SCALPING",
         var pa when IsPriceAction(pa) => "SCALPING_PRICE_ACTION",
+        var near when IsNearMiss(near) => "NEAR_MISS",
         _ => "TREND"
     };
 
@@ -832,6 +866,7 @@ public static class StrategyTemplates
         StrategyTemplateKeys.PaCandleSequence => "PA Candle Sequence",
         StrategyTemplateKeys.PaStructureBreak => "PA Structure Break",
         StrategyTemplateKeys.PaFailedBreakout => "PA Failed Breakout",
+        var near when StrategyTemplateKeys.IsNearMiss(near) => NearMissTitle(near),
         _ => "EMA RSI Trend"
     };
 
@@ -897,6 +932,8 @@ public static class StrategyTemplates
         StrategyTemplateKeys.ScalpBasis => "RESEARCH_ONLY. Requires mark/index basis. Missing series = DATA_UNAVAILABLE.",
         var pa when StrategyTemplateKeys.IsPriceAction(pa) =>
             "RESEARCH_ONLY price-action hypothesis. Causal confirmation only. Not a textbook LONG/SHORT. Isolated book owns SL/TP. LIVE off.",
+        var near when StrategyTemplateKeys.IsNearMiss(near) =>
+            "NEAR_MISS. Not validated and not a profit claim. Frozen Phase 8 definition. Paper and LIVE stay off until you arm them. Same Isolated risk and execution path.",
         _ => "ახალ ტრენდს იწყებს: სწრაფი EMA ნელს კვეთს, RSI ადასტურებს. მიზანი — მიმართულების ცვლილება, სუსტი გადაკვეთების გარეშე."
     };
 
@@ -917,6 +954,8 @@ public static class StrategyTemplates
         StrategyTemplateKeys.BasisMeanReversion or StrategyTemplateKeys.ScalpBasis => "OHLCV + MarkPrice + IndexPrice + Basis. Matching closeTime only.",
         StrategyTemplateKeys.FundingBasisVwap => "OHLCV + Funding + Basis. Matching closeTime only.",
         StrategyTemplateKeys.OiBreakoutConfirmation => "OHLCV + OpenInterest. OI_HISTORICAL_DATA_LIMITATION (~29d). OI_SAMPLE_LIMITED.",
+        var near when StrategyTemplateKeys.IsNearMiss(near) =>
+            "Closed 5m entry plus last closed 1m, 3m, 15m, and 1h. Missing series is not fabricated.",
         _ => "Closed kline candles only."
     };
 
@@ -937,9 +976,18 @@ public static class StrategyTemplates
         StrategyTemplateKeys.XsRelativeStrength => "DATA_UNAVAILABLE",
         StrategyTemplateKeys.VolSpikeEmaTrend => StrategyValidationStatuses.HistoricallyFittedCandidate,
         StrategyTemplateKeys.Bb202Break => StrategyValidationStatuses.HistoricallyFittedCandidate,
+        var near when StrategyTemplateKeys.IsNearMiss(near) => StrategyValidationStatuses.NearMiss,
         var key when StrategyTemplateKeys.IsResearch(key) => "RESEARCHING",
         _ => "VALIDATION_PENDING"
     };
+
+    private static string NearMissTitle(string templateKey)
+    {
+        var family = StrategyTemplateKeys.NearMissFamily(templateKey);
+        var id = StrategyTemplateKeys.NearMissHypothesisId(templateKey);
+        var variant = id.Split('|').ElementAtOrDefault(1) ?? "";
+        return $"NEAR-MISS {family} {variant} 5m";
+    }
 
     private static bool LooksLegacyEmaRsi(JsonElement root) =>
         root.TryGetProperty("entry", out _) && !root.TryGetProperty("template", out _);

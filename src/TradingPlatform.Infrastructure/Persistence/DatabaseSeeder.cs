@@ -215,7 +215,9 @@ public sealed class DatabaseSeeder
         var admin = await _db.Users.FirstAsync(cancellationToken);
         var existing = await _db.Strategies.Include(s => s.Versions).ToListAsync(cancellationToken);
         foreach (var row in Catalog.Where(item =>
-                     StrategyTemplateKeys.IsOperatorCatalog(item.Key) || StrategyTemplateKeys.IsResearchOnlyFamily(item.Key)))
+                     StrategyTemplateKeys.IsOperatorCatalog(item.Key)
+                     || StrategyTemplateKeys.IsResearchOnlyFamily(item.Key)
+                     || StrategyTemplateKeys.IsNearMiss(item.Key)))
         {
             var strategy = existing.FirstOrDefault(s => MatchesCatalog(s, row.Key, row.Name));
             var parameters = StrategyTemplates.DefaultsFor(row.Key, qualityOn: !row.Research && !StrategyTemplateKeys.IsHistoricallyFitted(row.Key)) with
@@ -277,7 +279,9 @@ public sealed class DatabaseSeeder
                 key = latest is null ? string.Empty : StrategyTemplates.Read(latest.DefinitionJson).TemplateKey;
             }
 
-            if (StrategyTemplateKeys.IsOperatorCatalog(key) || StrategyTemplateKeys.IsResearchOnlyFamily(key))
+            if (StrategyTemplateKeys.IsOperatorCatalog(key)
+                || StrategyTemplateKeys.IsResearchOnlyFamily(key)
+                || StrategyTemplateKeys.IsNearMiss(key))
             {
                 if (StrategyTemplateKeys.IsResearchOnlyFamily(key))
                 {
@@ -288,6 +292,16 @@ public sealed class DatabaseSeeder
                         || strategy.ValidationStatus == StrategyValidationStatuses.ValidationPending)
                     {
                         strategy.ValidationStatus = StrategyValidationStatuses.Researching;
+                    }
+                }
+                else if (StrategyTemplateKeys.IsNearMiss(key))
+                {
+                    strategy.IsArchived = false;
+                    strategy.DeletedAt = null;
+                    if (string.IsNullOrWhiteSpace(strategy.ValidationStatus)
+                        || strategy.ValidationStatus == StrategyValidationStatuses.ValidationPending)
+                    {
+                        strategy.ValidationStatus = StrategyValidationStatuses.NearMiss;
                     }
                 }
 
@@ -320,15 +334,19 @@ public sealed class DatabaseSeeder
             return;
         }
 
-        if (StrategyTemplateKeys.IsResearchOnlyFamily(row.Key))
+        if (StrategyTemplateKeys.IsResearchOnlyFamily(row.Key) || StrategyTemplateKeys.IsNearMiss(row.Key))
         {
             strategy.TemplateKey = row.Key;
             strategy.AllowedSide = StrategySides.Both;
             strategy.AppliesToAllSymbols = true;
-            strategy.IsEnabled = false;
             strategy.IsArchived = false;
             strategy.DeletedAt = null;
             strategy.ValidationStatus = StrategyTemplates.ResearchStatus(row.Key);
+            if (StrategyTemplateKeys.IsResearchOnlyFamily(row.Key))
+            {
+                strategy.IsEnabled = false;
+            }
+
             if (string.IsNullOrWhiteSpace(strategy.Description))
             {
                 strategy.Description = row.Description;
@@ -565,8 +583,16 @@ public sealed class DatabaseSeeder
         (StrategyTemplateKeys.PaStructureBreak, "PA Structure Break",
             "RESEARCH_ONLY. Causal BOS of last confirmed swing. LIVE off.", true),
         (StrategyTemplateKeys.PaFailedBreakout, "PA Failed Breakout",
-            "RESEARCH_ONLY. Close beyond a range then close back inside. LIVE off.", true)
+            "RESEARCH_ONLY. Close beyond a range then close back inside. LIVE off.", true),
+        ..NearMissCatalog()
     ];
+
+    private static IEnumerable<(string Key, string Name, string Description, bool Research)> NearMissCatalog() =>
+        NearMissAudit.SelectedRows.Select(row => (
+            NearMissAudit.TemplateKey(row),
+            StrategyTemplates.DisplayName(NearMissAudit.TemplateKey(row)),
+            $"{row.HypothesisId} is NEAR_MISS, not validated. {NearMissAudit.StrictFailure(row)} Paper and LIVE default off.",
+            true));
 
     private async Task UpsertSystemRiskAsync(
         string name,

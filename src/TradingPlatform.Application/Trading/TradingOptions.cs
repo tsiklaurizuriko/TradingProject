@@ -41,7 +41,15 @@ public sealed class PriceActionOptions
 {
     public bool Enabled { get; set; }
     public bool AllowLive { get; set; }
+    public bool PaperEnabled { get; set; }
+    public bool LiveEnabled { get; set; }
     public string ArtifactDirectory { get; set; } = "";
+    public Dictionary<string, NearMissCandidateOptions> Candidates { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+}
+
+public sealed class NearMissCandidateOptions
+{
+    public bool Enabled { get; set; }
 }
 
 public sealed class NullTradingRealtimePublisher : ITradingRealtimePublisher

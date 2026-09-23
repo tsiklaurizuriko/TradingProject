@@ -28,6 +28,42 @@ public sealed class ContextualPriceActionTests
     }
 
     [Fact]
+    public void Last_closed_bar_matches_the_book_and_ignores_a_later_bar()
+    {
+        var entry = SweepSeries();
+        var close = entry[^1].CloseTime;
+        var caches = new Dictionary<string, CausalIndicatorCache>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["5m"] = new(entry),
+            ["3m"] = new(Flat("3m", close, 3)),
+            ["1m"] = new(Flat("1m", close, 1)),
+            ["15m"] = new(Flat("15m", close, 15)),
+            ["1h"] = new(Flat("1h", close, 60))
+        };
+        var book = ContextualPriceActionSignals.BuildAll(caches).Single(row => row.CandidateId == "CPA-SWEEP|STRICT|5m");
+        var last = ContextualPriceActionSignals.AtLastClosed("CPA-SWEEP|STRICT|5m", caches, out var reason);
+        last.Should().Be(book.Signals[^1]);
+        reason.Should().Contain("CPA-SWEEP|STRICT|5m");
+
+        var future = entry.ToList();
+        future.Add(new MarketCandle
+        {
+            Open = 1m,
+            High = 2m,
+            Low = 0.5m,
+            Close = 2m,
+            Volume = 1m,
+            IsClosed = true,
+            OpenTime = close,
+            CloseTime = close.AddMinutes(5)
+        });
+        var withFuture = new Dictionary<string, CausalIndicatorCache>(caches, StringComparer.OrdinalIgnoreCase);
+        withFuture["5m"] = new CausalIndicatorCache(future);
+        var shifted = ContextualPriceActionSignals.BuildAll(withFuture).Single(row => row.CandidateId == "CPA-SWEEP|STRICT|5m");
+        shifted.Signals[^2].Should().Be(book.Signals[^1]);
+    }
+
+    [Fact]
     public void Sweep_baseline_fires_and_opposite_context_blocks_it()
     {
         var entry = SweepSeries();
@@ -57,7 +93,7 @@ public sealed class ContextualPriceActionTests
         var close = entry[index].CloseTime;
         var higher = Downtrend("1h", close, 60);
         var withFutureEntry = entry.ToList();
-        withFutureEntry.Add(Bar(entry.Count, 5, 1m, 50m));
+        withFutureEntry.Add(Bar(entry.Count, 5, 50m, 50m, 51m, 49m));
         var futureHigher = higher.ToList();
         futureHigher.Add(new MarketCandle
         {

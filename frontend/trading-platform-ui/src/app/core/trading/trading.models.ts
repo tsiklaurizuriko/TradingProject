@@ -148,6 +148,36 @@ export interface StrategyDto {
   adxPeriod?: number;
   minimumAdx?: number;
   family?: string;
+  nearMiss?: boolean;
+  paperEnabled?: boolean;
+  liveEnabled?: boolean;
+  hypothesisId?: string;
+}
+
+export interface PriceActionCandidateArmDto {
+  templateKey: string;
+  name: string;
+  hypothesisId: string;
+  failure: string;
+  candidateEnabled: boolean;
+  strategyEnabled: boolean;
+  strategyId?: string | null;
+}
+
+export interface PriceActionArmDto {
+  enabled: boolean;
+  paperEnabled: boolean;
+  liveEnabled: boolean;
+  globalLive: boolean;
+  candidates: PriceActionCandidateArmDto[];
+}
+
+export interface SetPriceActionArmRequest {
+  enabled?: boolean;
+  paperEnabled?: boolean;
+  liveEnabled?: boolean;
+  templateKey?: string;
+  candidateEnabled?: boolean;
 }
 
 export interface SaveStrategyRequest {

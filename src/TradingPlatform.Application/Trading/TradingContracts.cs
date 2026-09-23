@@ -218,7 +218,11 @@ public sealed record StrategyDto(
     decimal SupertrendMultiplier = 3m,
     int AdxPeriod = 14,
     decimal MinimumAdx = 20m,
-    string Family = "TREND");
+    string Family = "TREND",
+    bool NearMiss = false,
+    bool PaperEnabled = false,
+    bool LiveEnabled = false,
+    string HypothesisId = "");
 
 public sealed record SaveStrategyRequest(
     string Name,
@@ -492,7 +496,32 @@ public interface IBotLifecycleService
     Task<BotDto> StopAsync(Guid botId, CancellationToken cancellationToken = default);
     Task<DeleteBotsResult> DeleteBotsAsync(IReadOnlyList<Guid> ids, TradingMode? requiredMode, CancellationToken cancellationToken = default);
     Task EmergencyStopAsync(CancellationToken cancellationToken = default);
+    Task<PriceActionArmDto> GetPriceActionArmAsync(CancellationToken cancellationToken = default);
+    Task<PriceActionArmDto> SetPriceActionArmAsync(SetPriceActionArmRequest request, CancellationToken cancellationToken = default);
 }
+
+public sealed record SetPriceActionArmRequest(
+    bool? Enabled,
+    bool? PaperEnabled,
+    bool? LiveEnabled,
+    string? TemplateKey,
+    bool? CandidateEnabled);
+
+public sealed record PriceActionArmDto(
+    bool Enabled,
+    bool PaperEnabled,
+    bool LiveEnabled,
+    bool GlobalLive,
+    IReadOnlyList<PriceActionCandidateArmDto> Candidates);
+
+public sealed record PriceActionCandidateArmDto(
+    string TemplateKey,
+    string Name,
+    string HypothesisId,
+    string Failure,
+    bool CandidateEnabled,
+    bool StrategyEnabled,
+    Guid? StrategyId);
 
 public interface IExchangeAccountService
 {

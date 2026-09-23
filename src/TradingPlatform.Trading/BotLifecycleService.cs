@@ -140,6 +140,7 @@ public sealed class BotLifecycleService : IBotLifecycleService
         }
 
         EnsureHistoricallyFittedLiveOff(mode, strategyVersion.Strategy);
+        EnsureNearMissAllowed(mode, strategyVersion.Strategy);
         EnsureStrategyEnabled(strategyVersion.Strategy);
         if (!SymbolScope.Allows(strategyVersion.Strategy.AppliesToAllSymbols, strategyVersion.Strategy.AllowedSymbolsCsv, name))
         {
@@ -256,6 +257,7 @@ public sealed class BotLifecycleService : IBotLifecycleService
         var strategyVersion = await _store.GetLatestStrategyVersionAsync(strategyId, cancellationToken)
             ?? throw new DomainException(ErrorCodes.StrategyInvalid, "Strategy was not found.");
         EnsureHistoricallyFittedLiveOff(mode, strategyVersion.Strategy);
+        EnsureNearMissAllowed(mode, strategyVersion.Strategy);
         EnsureStrategyEnabled(strategyVersion.Strategy);
         var risk = await ResolveRiskAsync(riskProfileId, cancellationToken);
         RiskLiveGuard.EnsureAllowed(mode, risk);
@@ -372,12 +374,15 @@ public sealed class BotLifecycleService : IBotLifecycleService
             }
 
             EnsureHistoricallyFittedLiveOff(bot);
+            EnsureNearMissAllowed(bot);
             RiskLiveGuard.EnsureAllowed(bot.Mode, bot.RiskProfile ?? await _store.GetConservativeRiskAsync(cancellationToken));
         }
         else if (bot.Mode != TradingMode.Paper)
         {
             throw new DomainException(ErrorCodes.LiveTradingDisabled, "Only paper or live bots can be started.");
         }
+
+        EnsureNearMissAllowed(bot);
 
         if (bot.Status == BotStatus.Running)
         {
@@ -439,6 +444,7 @@ public sealed class BotLifecycleService : IBotLifecycleService
             try
             {
                 EnsureHistoricallyFittedLiveOff(bot);
+                EnsureNearMissAllowed(bot);
                 await AttachLatestStrategyAsync(bot, cancellationToken);
                 await MarkRunningAsync(bot, cancellationToken);
                 started++;
@@ -721,6 +727,135 @@ public sealed class BotLifecycleService : IBotLifecycleService
         throw new DomainException(
             ErrorCodes.LiveTradingDisabled,
             $"{strategy.Name} is a historically fitted BTC 15m candidate. LIVE is off. Switch the header to Paper to observe.");
+    }
+
+    private void EnsureNearMissAllowed(Bot bot) =>
+        EnsureNearMissAllowed(bot.Mode, bot.StrategyVersion.Strategy);
+
+    private void EnsureNearMissAllowed(TradingMode mode, Strategy strategy)
+    {
+        var key = strategy.TemplateKey;
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            var latest = strategy.Versions.OrderByDescending(row => row.VersionNumber).FirstOrDefault();
+            key = latest is null ? string.Empty : StrategyTemplates.Read(latest.DefinitionJson).TemplateKey;
+        }
+
+        var block = NearMissGate.BlockReason(_options, key, mode);
+        if (block is not null)
+        {
+            throw new DomainException(ErrorCodes.LiveTradingDisabled, block);
+        }
+    }
+
+    public async Task<PriceActionArmDto> GetPriceActionArmAsync(CancellationToken cancellationToken = default)
+    {
+        await ReloadPriceActionArmAsync(cancellationToken);
+        return MapArm(await _store.ListStrategiesAsync(cancellationToken));
+    }
+
+    public async Task<PriceActionArmDto> SetPriceActionArmAsync(
+        SetPriceActionArmRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        await ReloadPriceActionArmAsync(cancellationToken);
+        var block = PriceActionArm.RejectLive(_options.LiveTradingEnabled, request.LiveEnabled);
+        if (block is not null)
+        {
+            throw new DomainException(ErrorCodes.LiveTradingDisabled, block);
+        }
+
+        var price = _options.PriceAction;
+        if (request.Enabled is bool enabled)
+        {
+            price.Enabled = enabled;
+            await SaveArmAsync(PriceActionArm.EnabledKey, enabled, "Operator Price Action master. Default off. Does not start bots.", cancellationToken);
+        }
+
+        if (request.PaperEnabled is bool paper)
+        {
+            price.PaperEnabled = paper;
+            await SaveArmAsync(PriceActionArm.PaperKey, paper, "Operator Price Action paper. Default off. Does not start bots.", cancellationToken);
+        }
+
+        if (request.LiveEnabled is bool live)
+        {
+            price.LiveEnabled = live;
+            await SaveArmAsync(PriceActionArm.LiveKey, live, "Operator Price Action LIVE. Default off. Does not start bots.", cancellationToken);
+        }
+
+        var strategies = await _store.ListStrategiesAsync(cancellationToken);
+        if (!string.IsNullOrWhiteSpace(request.TemplateKey))
+        {
+            var key = StrategyTemplateKeys.Normalize(request.TemplateKey);
+            if (!StrategyTemplateKeys.IsNearMiss(key))
+            {
+                throw new DomainException(ErrorCodes.ValidationFailed, "Only a near-miss strategy can be armed here.");
+            }
+
+            var on = request.CandidateEnabled == true;
+            price.Candidates ??= new Dictionary<string, NearMissCandidateOptions>(StringComparer.OrdinalIgnoreCase);
+            price.Candidates[key] = new NearMissCandidateOptions { Enabled = on };
+            if (on && !price.Enabled)
+            {
+                price.Enabled = true;
+                await SaveArmAsync(PriceActionArm.EnabledKey, true, "Operator Price Action master. Default off. Does not start bots.", cancellationToken);
+            }
+
+            await SaveArmAsync(
+                PriceActionArm.CandidateKey(key),
+                on,
+                "Operator near-miss candidate. Default off. Does not start a bot.",
+                cancellationToken);
+            var strategy = strategies.FirstOrDefault(row =>
+                string.Equals(row.TemplateKey, key, StringComparison.OrdinalIgnoreCase));
+            if (strategy is not null)
+            {
+                strategy.IsEnabled = on;
+            }
+        }
+
+        await _store.SaveChangesAsync(cancellationToken);
+        return MapArm(strategies);
+    }
+
+    private async Task ReloadPriceActionArmAsync(CancellationToken cancellationToken)
+    {
+        var settings = await _store.GetSettingsAsync("Trading.PriceAction.", cancellationToken);
+        PriceActionArm.Apply(_options.PriceAction, settings);
+    }
+
+    private Task SaveArmAsync(string key, bool value, string description, CancellationToken cancellationToken) =>
+        _store.SetSettingAsync(key, value ? "true" : "false", description, cancellationToken);
+
+    private PriceActionArmDto MapArm(IReadOnlyList<Strategy> strategies)
+    {
+        var price = _options.PriceAction;
+        var candidates = StrategyTemplateKeys.NearMiss.Select(key =>
+        {
+            var hypothesis = StrategyTemplateKeys.NearMissHypothesisId(key);
+            var failure = NearMissAudit.SelectedRows
+                .Where(row => string.Equals(row.HypothesisId, hypothesis, StringComparison.Ordinal))
+                .Select(NearMissAudit.StrictFailure)
+                .FirstOrDefault() ?? "";
+            var strategy = strategies.FirstOrDefault(row =>
+                string.Equals(row.TemplateKey, key, StringComparison.OrdinalIgnoreCase));
+            return new PriceActionCandidateArmDto(
+                key,
+                StrategyTemplates.DisplayName(key),
+                hypothesis,
+                failure,
+                NearMissGate.CandidateEnabled(price, key),
+                strategy?.IsEnabled ?? false,
+                strategy?.Id);
+        }).ToArray();
+
+        return new PriceActionArmDto(
+            price.Enabled,
+            price.PaperEnabled,
+            price.LiveEnabled,
+            _options.LiveTradingEnabled,
+            candidates);
     }
 
     private static void EnsureStrategyEnabled(Strategy strategy)
@@ -1423,8 +1558,8 @@ public sealed class TradingQueryService : ITradingQueryService
     {
         _ = mode;
         return (await _store.ListStrategiesAsync(cancellationToken))
-            .Where(IsOperatorStrategy)
-            .Select(MapStrategy)
+            .Where(row => IsOperatorStrategy(row) || IsNearMissStrategy(row))
+            .Select(row => MapStrategy(row, _options))
             .ToList();
     }
 
@@ -1513,7 +1648,7 @@ public sealed class TradingQueryService : ITradingQueryService
             ?? throw new DomainException(ErrorCodes.StrategyInvalid, "Strategy was not found.");
         ApplyStrategyScope(strategy, appliesToAll, symbols);
         await _store.SaveChangesAsync(cancellationToken);
-        return MapStrategy(strategy);
+        return MapStrategy(strategy, _options);
     }
 
     public async Task<RiskProfileDto> UpdateRiskScopeAsync(
@@ -1571,7 +1706,7 @@ public sealed class TradingQueryService : ITradingQueryService
         });
         await _store.AddStrategyAsync(strategy, cancellationToken);
         await _store.SaveChangesAsync(cancellationToken);
-        return MapStrategy(strategy);
+        return MapStrategy(strategy, _options);
     }
 
     public async Task<StrategyDto> UpdateStrategyAsync(
@@ -1622,7 +1757,7 @@ public sealed class TradingQueryService : ITradingQueryService
         }
 
         await _store.SaveChangesAsync(cancellationToken);
-        return MapStrategy(strategy);
+        return MapStrategy(strategy, _options);
     }
 
     public async Task<StrategyDto> SetStrategyEnabledAsync(
@@ -1632,13 +1767,13 @@ public sealed class TradingQueryService : ITradingQueryService
     {
         var strategy = await _store.GetStrategyAsync(strategyId, cancellationToken)
             ?? throw new DomainException(ErrorCodes.StrategyInvalid, "Strategy was not found.");
-        if (enabled && (strategy.IsArchived || !IsOperatorStrategy(strategy)))
+        if (enabled && (strategy.IsArchived || (!IsOperatorStrategy(strategy) && !IsNearMissStrategy(strategy))))
         {
             throw new DomainException(ErrorCodes.StrategyInvalid, $"{strategy.Name} is retired from the operator catalog.");
         }
         strategy.IsEnabled = enabled;
         await _store.SaveChangesAsync(cancellationToken);
-        return MapStrategy(strategy);
+        return MapStrategy(strategy, _options);
     }
 
     public async Task<RiskProfileDto> CreateRiskProfileAsync(
@@ -1880,7 +2015,19 @@ public sealed class TradingQueryService : ITradingQueryService
         return StrategyTemplateKeys.IsOperatorCatalog(key);
     }
 
-    private static StrategyDto MapStrategy(Strategy strategy)
+    private static bool IsNearMissStrategy(Strategy strategy)
+    {
+        var key = strategy.TemplateKey;
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            var latest = strategy.Versions.OrderByDescending(row => row.VersionNumber).FirstOrDefault();
+            key = latest is null ? string.Empty : StrategyTemplates.Read(latest.DefinitionJson).TemplateKey;
+        }
+
+        return StrategyTemplateKeys.IsNearMiss(key);
+    }
+
+    private static StrategyDto MapStrategy(Strategy strategy, TradingOptions? options = null)
     {
         var latest = strategy.Versions.OrderByDescending(v => v.VersionNumber).FirstOrDefault();
         var parsed = StrategyTemplates.Read(latest?.DefinitionJson);
@@ -1944,7 +2091,18 @@ public sealed class TradingQueryService : ITradingQueryService
             parsed.SupertrendMultiplier,
             parsed.AdxPeriod,
             parsed.MinimumAdx,
-            StrategyTemplateKeys.Family(template));
+            StrategyTemplateKeys.Family(template),
+            StrategyTemplateKeys.IsNearMiss(template),
+            StrategyTemplateKeys.IsNearMiss(template)
+                && options?.PriceAction.Enabled == true
+                && options.PriceAction.PaperEnabled
+                && NearMissGate.CandidateEnabled(options.PriceAction, template),
+            StrategyTemplateKeys.IsNearMiss(template)
+                && options?.LiveTradingEnabled == true
+                && options.PriceAction.Enabled
+                && options.PriceAction.LiveEnabled
+                && NearMissGate.CandidateEnabled(options.PriceAction, template),
+            StrategyTemplateKeys.NearMissHypothesisId(template));
     }
 
     private static RiskProfileDto MapRisk(RiskProfile risk) =>

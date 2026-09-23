@@ -10,6 +10,7 @@ public static class StrategyValidationStatuses
     public const string ValidatedForPaper = "VALIDATED_FOR_PAPER";
     public const string RejectedByTests = "REJECTED_BY_TESTS";
     public const string Researching = "RESEARCHING";
+    public const string NearMiss = "NEAR_MISS";
     public const string DataUnavailable = "DATA_UNAVAILABLE";
     public const string HistoricallyFittedCandidate = "HISTORICALLY_FITTED_CANDIDATE";
 }

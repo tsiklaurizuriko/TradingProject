@@ -33,6 +33,17 @@
   color: #36a3ff;
 }
 
+.near-miss-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.near-miss-masters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
 .strategies-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));

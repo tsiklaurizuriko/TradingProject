@@ -6,6 +6,7 @@ using TradingPlatform.Domain.Bots;
 using TradingPlatform.Domain.Exchanges;
 using TradingPlatform.Domain.Identity;
 using TradingPlatform.Domain.Market;
+using TradingPlatform.Domain.Operations;
 using TradingPlatform.Domain.Orders;
 using TradingPlatform.Domain.Positions;
 using TradingPlatform.Domain.Risk;
@@ -615,6 +616,37 @@ public sealed class TradingStore : ITradingStore
             bot.StoppedAt = now;
             bot.DeletedAt = now;
             bot.LastError = "Removed from the market-cap universe.";
+        }
+    }
+
+    public async Task<IReadOnlyDictionary<string, string>> GetSettingsAsync(string keyPrefix, CancellationToken cancellationToken = default)
+    {
+        var prefix = keyPrefix ?? "";
+        var rows = await _db.SystemSettings
+            .Where(row => row.Key.StartsWith(prefix))
+            .ToListAsync(cancellationToken);
+        return rows.ToDictionary(row => row.Key, row => row.Value, StringComparer.OrdinalIgnoreCase);
+    }
+
+    public async Task SetSettingAsync(string key, string value, string? description, CancellationToken cancellationToken = default)
+    {
+        var row = await _db.SystemSettings.FirstOrDefaultAsync(item => item.Key == key, cancellationToken);
+        if (row is null)
+        {
+            _db.SystemSettings.Add(new SystemSetting
+            {
+                Key = key,
+                Value = value,
+                Description = description
+            });
+            return;
+        }
+
+        row.Value = value;
+        row.UpdatedAt = DateTimeOffset.UtcNow;
+        if (description is not null)
+        {
+            row.Description = description;
         }
     }
 

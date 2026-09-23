@@ -1,9 +1,11 @@
 import { Component, computed, effect, inject, signal } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { RouterLink } from '@angular/router';
 import { TradingService } from '../../core/trading/trading.service';
 import {
   BacktestResultDto,
+  PriceActionArmDto,
   SaveStrategyRequest,
   StrategyDto,
   StrategyPreviewDto,
@@ -23,6 +25,7 @@ import {
   starSlots,
   verdictLabel,
   isOperatorCatalog,
+  isNearMiss,
 } from '../../core/trading/strategy-ratings';
 
 interface StrategyDraft {
@@ -250,7 +253,7 @@ function depsFor(key: string): string {
 
 @Component({
   selector: 'app-strategies-page',
-  imports: [FormsModule, NgTemplateOutlet, SortBtnComponent, IconComponent],
+  imports: [FormsModule, NgTemplateOutlet, SortBtnComponent, IconComponent, RouterLink],
   styleUrl: './strategies.page.scss',
   template: `
     <div class="strategies-page">
@@ -327,6 +330,63 @@ function depsFor(key: string): string {
         </div>
       </header>
 
+      <section class="panel near-miss-panel">
+        <div class="section-head">
+          <h2>მართვა · NEAR-MISS</h2>
+        </div>
+        <p class="tiny">ვალიდაცია ვერ გაიარა. აქედან შეგიძლია მაინც ჩართო. ჩართვა ბოტს არ სტარტავს და ორდერს არ აგზავნის. ბოტი იქმნება <a routerLink="/bots">Bots</a> გვერდზე, მას შემდეგ რაც Price Action და Paper ან Live ჩართულია.</p>
+        @if (arm(); as state) {
+          <div class="near-miss-masters">
+            <label class="settings-check">
+              <input type="checkbox" [checked]="state.enabled" [disabled]="armBusy()" (change)="setMaster({ enabled: checked($event) })" />
+              Price Action
+            </label>
+            <label class="settings-check">
+              <input type="checkbox" [checked]="state.paperEnabled" [disabled]="armBusy()" (change)="setMaster({ paperEnabled: checked($event) })" />
+              Paper
+            </label>
+            <label class="settings-check">
+              <input type="checkbox" [checked]="state.liveEnabled" [disabled]="armBusy() || !state.globalLive" (change)="setMaster({ liveEnabled: checked($event) })" />
+              Live
+            </label>
+          </div>
+          <p class="tiny">
+            Paper ბოტი: {{ state.enabled && state.paperEnabled ? 'დასაშვებია ჩართულ სტრატეგიებზე' : 'დაბლოკილია' }}
+            · Live ბოტი: {{ state.enabled && state.liveEnabled && state.globalLive ? 'დასაშვებია ჩართულ სტრატეგიებზე' : 'დაბლოკილია' }}
+            @if (!state.globalLive) {
+              · გლობალური LIVE გამორთულია, ამიტომ აქედან Live ვერ ჩაირთვება.
+            }
+          </p>
+          <div class="strategies-grid">
+            @for (row of state.candidates; track row.templateKey) {
+              <article class="card strategy-card">
+                <div class="strategy-card-head">
+                  <div>
+                    <strong>{{ row.name }}</strong>
+                    <p class="tiny" style="margin:4px 0 0">{{ row.hypothesisId }}</p>
+                  </div>
+                  <label class="settings-check">
+                    <input type="checkbox" [checked]="row.candidateEnabled" [disabled]="armBusy()" (change)="setCandidate(row.templateKey, checked($event))" />
+                    გაშვებადი
+                  </label>
+                </div>
+                <div class="strategy-pills">
+                  <span class="badge badge-stopped">NEAR-MISS · არ არის დადასტურებული</span>
+                  <span class="badge" [class.badge-running]="row.candidateEnabled && state.enabled && state.paperEnabled" [class.badge-paused]="!(row.candidateEnabled && state.enabled && state.paperEnabled)">Paper {{ row.candidateEnabled && state.enabled && state.paperEnabled ? 'დასაშვებია' : 'გამორთული' }}</span>
+                  <span class="badge" [class.badge-running]="row.candidateEnabled && state.enabled && state.liveEnabled && state.globalLive" [class.badge-paused]="!(row.candidateEnabled && state.enabled && state.liveEnabled && state.globalLive)">Live {{ row.candidateEnabled && state.enabled && state.liveEnabled && state.globalLive ? 'დასაშვებია' : 'გამორთული' }}</span>
+                </div>
+                <p class="strategy-blurb">{{ ratingFor(row.templateKey).note }}</p>
+                @if (!row.strategyId) {
+                  <p class="tiny">სტრატეგიის რიგი ჯერ არ არის. API-ის რესტარტის შემდეგ გამოჩნდება.</p>
+                }
+              </article>
+            }
+          </div>
+        } @else {
+          <p class="tiny">{{ armError() || 'მართვის მდგომარეობა იტვირთება.' }}</p>
+        }
+      </section>
+
       @if (creating(); as form) {
         <section class="panel">
           <div class="section-head">
@@ -351,7 +411,7 @@ function depsFor(key: string): string {
                           <app-icon name="star" [size]="14" [filled]="n <= rate.stars" [class.is-on]="n <= rate.stars" />
                         }
                       </span>
-                      <span class="strategy-verdict" [class.is-paper]="rate.verdict === 'paper'" [class.is-weak]="rate.verdict === 'weak'" [class.is-avoid]="rate.verdict === 'avoid'" [class.is-blocked]="rate.verdict === 'blocked'">{{ verdictLabel(row.templateKey) }}</span>
+                      <span class="strategy-verdict" [class.is-paper]="rate.verdict === 'paper'" [class.is-weak]="rate.verdict === 'weak'" [class.is-avoid]="rate.verdict === 'avoid'" [class.is-blocked]="rate.verdict === 'blocked'" [class.is-near-miss]="rate.verdict === 'near-miss'">{{ verdictLabel(row.templateKey) }}</span>
                     </div>
                   }
                 </div>
@@ -375,7 +435,11 @@ function depsFor(key: string): string {
                     {{ row.isEnabled === false ? 'Disabled' : 'Enabled' }}
                   </span>
                   <span class="badge badge-paused">{{ familyFor(row.templateKey, row.family) }}</span>
-                  @if (isResearchOnly(row.templateKey)) {
+                  @if (isNearMiss(row.templateKey)) {
+                    <span class="badge badge-stopped">NEAR-MISS · not validated</span>
+                    <span class="badge badge-paused">Paper {{ row.paperEnabled ? 'on' : 'off' }}</span>
+                    <span class="badge badge-paused">Live {{ row.liveEnabled ? 'on' : 'off' }}</span>
+                  } @else if (isResearchOnly(row.templateKey)) {
                     <span class="badge badge-stopped">RESEARCH ONLY</span>
                   }
                   <span class="badge badge-paused">{{ row.validationStatus || 'VALIDATION_PENDING' }}</span>
@@ -625,6 +689,10 @@ export class StrategiesPage {
   readonly verdictLabel = verdictLabel;
   readonly depsFor = depsFor;
   readonly isResearchOnly = isResearchOnly;
+  readonly isNearMiss = isNearMiss;
+  readonly arm = signal<PriceActionArmDto | null>(null);
+  readonly armError = signal<string | null>(null);
+  readonly armBusy = signal(false);
   readonly familyFor = familyFor;
   readonly familyFilter = signal('');
   readonly useFilter = signal('');
@@ -706,6 +774,42 @@ export class StrategiesPage {
   constructor() {
     void this.trading.refreshCatalog();
     void this.trading.refreshMarkets();
+    void this.loadArm();
+  }
+
+  checked(event: Event): boolean {
+    return (event.target as HTMLInputElement).checked;
+  }
+
+  async setMaster(patch: { enabled?: boolean; paperEnabled?: boolean; liveEnabled?: boolean }): Promise<void> {
+    await this.saveArm(patch);
+  }
+
+  async setCandidate(templateKey: string, candidateEnabled: boolean): Promise<void> {
+    await this.saveArm({ templateKey, candidateEnabled });
+  }
+
+  private async loadArm(): Promise<void> {
+    try {
+      this.arm.set(await this.trading.priceActionArm());
+      this.armError.set(null);
+    } catch {
+      this.armError.set('მართვის პანელი ვერ ჩაიტვირთა. API უნდა იყოს გაშვებული ამ ცვლილების შემდეგ.');
+    }
+  }
+
+  private async saveArm(patch: { enabled?: boolean; paperEnabled?: boolean; liveEnabled?: boolean; templateKey?: string; candidateEnabled?: boolean }): Promise<void> {
+    this.armBusy.set(true);
+    try {
+      this.arm.set(await this.trading.setPriceActionArm(patch));
+      await this.trading.refreshCatalog();
+      this.toast.show('NEAR-MISS', 'ჩართვა შენახულია. ბოტი არ გაშვებულა.', 'success');
+    } catch (error) {
+      await this.loadArm();
+      this.toast.show('Arm blocked', armMessage(error), 'error');
+    } finally {
+      this.armBusy.set(false);
+    }
   }
 
   qualityOn(row: StrategyDto): boolean {
@@ -811,6 +915,19 @@ export class StrategiesPage {
       this.busy = false;
     }
   }
+}
+
+function armMessage(error: unknown): string {
+  if (error && typeof error === 'object' && 'error' in error) {
+    const body = (error as { error?: { message?: string } | string }).error;
+    if (typeof body === 'string' && body.trim()) {
+      return body;
+    }
+    if (body && typeof body === 'object' && body.message) {
+      return body.message;
+    }
+  }
+  return 'ჩართვა ვერ შეინახა.';
 }
 
 function blankStrategy(): StrategyDraft {

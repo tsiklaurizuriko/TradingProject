@@ -126,8 +126,18 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
         var cap = await GetMaxIsolatedLeverageAsync(symbol, cancellationToken);
         var used = Math.Clamp(leverage, 1, cap);
         await _signed.SetFuturesLeverageAsync(key, secret, symbol, used, cancellationToken);
-        var positions = await _signed.GetFuturesPositionsAsync(key, secret, cancellationToken);
-        if (!IsIsolated(positions, symbol))
+        JsonElement positions;
+        try
+        {
+            positions = await _signed.GetFuturesPositionsAsync(key, secret, cancellationToken, symbol);
+        }
+        catch (Exception)
+        {
+            return;
+        }
+
+        if (TryReadMarginType(positions, symbol, out var marginType)
+            && !string.Equals(marginType, "isolated", StringComparison.OrdinalIgnoreCase))
         {
             throw new DomainException(ErrorCodes.RiskLimitExceeded, "Could not switch this coin to Isolated margin.");
         }
@@ -299,6 +309,61 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
         }
 
         return 0m;
+    }
+
+    private static bool TryReadMarginType(JsonElement positions, string symbol, out string marginType)
+    {
+        foreach (var row in EnumeratePositionRows(positions))
+        {
+            if (!row.TryGetProperty("symbol", out var name)
+                || !string.Equals(name.GetString(), symbol, StringComparison.OrdinalIgnoreCase)
+                || !row.TryGetProperty("marginType", out var margin))
+            {
+                continue;
+            }
+
+            marginType = margin.GetString() ?? "";
+            return marginType.Length > 0;
+        }
+
+        marginType = "";
+        return false;
+    }
+
+    private static IEnumerable<JsonElement> EnumeratePositionRows(JsonElement positions)
+    {
+        if (positions.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var row in positions.EnumerateArray())
+            {
+                yield return row;
+            }
+
+            yield break;
+        }
+
+        if (positions.ValueKind != JsonValueKind.Object)
+        {
+            yield break;
+        }
+
+        foreach (var name in new[] { "positions", "data" })
+        {
+            if (positions.TryGetProperty(name, out var nested) && nested.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var row in nested.EnumerateArray())
+                {
+                    yield return row;
+                }
+
+                yield break;
+            }
+        }
+
+        if (positions.TryGetProperty("symbol", out _))
+        {
+            yield return positions;
+        }
     }
 
     private static bool IsAccepted(string? error) =>
@@ -530,28 +595,6 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
         }
 
         return decimal.Parse(element.GetString() ?? "0", CultureInfo.InvariantCulture);
-    }
-
-    private static bool IsIsolated(JsonElement positions, string symbol)
-    {
-        if (positions.ValueKind != JsonValueKind.Array)
-        {
-            return false;
-        }
-
-        foreach (var row in positions.EnumerateArray())
-        {
-            if (!row.TryGetProperty("symbol", out var name)
-                || !string.Equals(name.GetString(), symbol, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            return row.TryGetProperty("marginType", out var margin)
-                && string.Equals(margin.GetString(), "isolated", StringComparison.OrdinalIgnoreCase);
-        }
-
-        return false;
     }
 
     private static IEnumerable<int> ReadBrackets(JsonElement payload, string symbol)

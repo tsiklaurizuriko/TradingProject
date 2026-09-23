@@ -188,7 +188,13 @@ internal static class StrategyTemplateEvaluator
         int i,
         StrategyContext context,
         CausalIndicatorCache cache) =>
-        StrategyTemplateKeys.IsResearch(p.TemplateKey)
+        StrategyTemplateKeys.IsNearMiss(p.TemplateKey)
+            ? new StrategySignalDetail(
+                SignalType.NoAction,
+                "NEAR_MISS uses the frozen contextual book on the last closed 5m bar. This preview path does not invent an EMA signal.",
+                candles[i].CloseTime,
+                Status: NearMissAudit.Status)
+            : StrategyTemplateKeys.IsResearch(p.TemplateKey)
             ? AdvancedStrategyEvaluator.Evaluate(p, candles, i, context, cache)
             : Wrap(p.TemplateKey switch
             {

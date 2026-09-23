@@ -1,5 +1,5 @@
 /** Operator guidance only. None are profitable. None are LIVE. Never 5 stars. */
-export type StrategyUseVerdict = 'paper' | 'weak' | 'avoid' | 'blocked';
+export type StrategyUseVerdict = 'paper' | 'weak' | 'avoid' | 'blocked' | 'near-miss';
 
 export interface StrategyRating {
   stars: number;
@@ -15,9 +15,10 @@ export const verdictLabels: Record<StrategyUseVerdict, string> = {
   weak: 'სუსტი',
   avoid: 'არ გამოიყენო',
   blocked: 'ვერ გაეშვება',
+  'near-miss': 'NEAR-MISS · არ არის დადასტურებული',
 };
 
-const starSlots = [1, 2, 3, 4, 5] as const;
+export const starSlots = [1, 2, 3, 4, 5] as const;
 
 /** Frozen five: 528 coins × 3 TF Model B, equal-book return. Research: 10×3 90d unless noted. */
 const ratings: Record<string, StrategyRating> = {
@@ -317,7 +318,25 @@ const ratings: Record<string, StrategyRating> = {
     bookReturnPct: 11.26,
     sample: 'BTCUSDT 15m fitted 2y',
   },
+  cpa_near_miss_sweep_contextual_5m: nearMiss('VAL 88 ტრეიდი, PF 1.15, net +44. IS PF 0.36-ზე ჩავარდა. არ არის validated.'),
+  cpa_near_miss_sweep_strict_5m: nearMiss('OOS 78 ტრეიდი, PF 1.07, net +19. Walk-forward 2 ტრეიდი. არ არის validated.'),
+  cpa_near_miss_pullback_contextual_5m: nearMiss('VAL 52 ტრეიდი, PF 1.11, net +21. IS ნიმუში 30-ზე ნაკლებია. არ არის validated.'),
+  cpa_near_miss_wm_contextual_5m: nearMiss('VAL 514 ტრეიდი, PF 1.04, net +80. IS PF 0.61. არ არის validated.'),
+  cpa_near_miss_wm_strict_5m: nearMiss('VAL 115 ტრეიდი, PF 1.02, net +6. IS PF 0.71. არ არის validated.'),
+  cpa_near_miss_compression_continuation_5m: nearMiss('OOS 50 ტრეიდი, PF 1.08, net +14. ბეისლაინია, walk-forward 2. არ არის validated.'),
+  cpa_near_miss_mtf_strict_5m: nearMiss('VAL 76 ტრეიდი, PF 1.03, net +9. IS PF 0.62. არ არის validated.'),
 };
+
+function nearMiss(note: string): StrategyRating {
+  return {
+    stars: 1,
+    verdict: 'near-miss',
+    note,
+    pf: null,
+    bookReturnPct: null,
+    sample: 'Phase 8 NEAR_MISS',
+  };
+}
 
 const unrated: StrategyRating = {
   stars: 0,
@@ -333,6 +352,10 @@ export function isOperatorCatalog(templateKey: string | undefined): boolean {
   return verdict === 'paper' || verdict === 'weak';
 }
 
+export function isNearMiss(templateKey: string | undefined): boolean {
+  return !!templateKey && templateKey.startsWith('cpa_near_miss_');
+}
+
 export function ratingFor(templateKey: string | undefined): StrategyRating {
   if (!templateKey) {
     return unrated;
@@ -346,7 +369,7 @@ export function verdictLabel(templateKey: string | undefined): string {
 
 export function ratingSortValue(templateKey: string | undefined): number {
   const rate = ratingFor(templateKey);
-  const bucket = rate.verdict === 'paper' ? 400 : rate.verdict === 'weak' ? 300 : rate.verdict === 'avoid' ? 100 : 0;
+  const bucket = rate.verdict === 'paper' ? 400 : rate.verdict === 'weak' ? 300 : rate.verdict === 'near-miss' ? 50 : rate.verdict === 'avoid' ? 100 : 0;
   return bucket + rate.stars * 10 + (rate.pf ?? -1);
 }
 
@@ -369,5 +392,3 @@ export function ratingMeta(rate: StrategyRating): string {
   const book = rate.bookReturnPct == null ? '' : ` · წიგნი ${formatBookReturn(rate.bookReturnPct)}`;
   return `${pf}${book} · ${rate.sample} · არ არის LIVE`;
 }
-
-export { starSlots };

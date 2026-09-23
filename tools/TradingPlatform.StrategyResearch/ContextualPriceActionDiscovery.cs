@@ -144,7 +144,7 @@ internal static class ContextualPriceActionDiscovery
 
             var series = await LoadSymbolSeries(cacheDir, root, symbol);
             var caches = BuildCaches(series);
-            var signals = ContextualPriceActionSignals.BuildAll(caches);
+            var signals = ContextualPriceActionSignals.BuildAll(ByTimeframe(caches));
             RecordConcurrency(concurrency, symbol, series, signals);
             WriteJson(concurrencyPath, concurrency);
             var precomputed = Precomputed(symbol, signals);
@@ -234,7 +234,7 @@ internal static class ContextualPriceActionDiscovery
             {
                 var series = await LoadSymbolSeries(cacheDir, root, symbol);
                 var caches = BuildCaches(series);
-                var signals = ContextualPriceActionSignals.BuildAll(caches);
+                var signals = ContextualPriceActionSignals.BuildAll(ByTimeframe(caches));
                 var precomputed = Precomputed(symbol, signals);
                 foreach (var request in FinalRequests(symbol, survivorCandidates, series, caches, precomputed, finalDone, maxParallel))
                 {
@@ -361,6 +361,10 @@ internal static class ContextualPriceActionDiscovery
 
         return map;
     }
+
+    private static Dictionary<string, CausalIndicatorCache> ByTimeframe(
+        IReadOnlyDictionary<(string Symbol, string Timeframe), CausalIndicatorCache> caches) =>
+        caches.ToDictionary(x => x.Key.Timeframe, x => x.Value, StringComparer.OrdinalIgnoreCase);
 
     private static Dictionary<(string Symbol, string Timeframe), CausalIndicatorCache> BuildCaches(
         IReadOnlyDictionary<(string Symbol, string Timeframe), IReadOnlyList<MarketCandle>> series)
@@ -832,7 +836,9 @@ internal static class ContextualPriceActionDiscovery
         && row.OosExpectancy > 0m
         && row.LongTrades >= 15
         && row.ShortTrades >= 15
-        && row.TopBlockAbsoluteNetShare < 0.80m;
+        && row.TopBlockAbsoluteNetShare < 0.80m
+        && row.WalkForwardTrades >= 15
+        && row.WalkForwardNet > 0m;
 
     private static (int MaxCoins, int Collisions) ConcurrencyStats(ContextualConcurrency concurrency)
     {

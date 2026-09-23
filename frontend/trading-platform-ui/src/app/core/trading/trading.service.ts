@@ -33,6 +33,8 @@ import {
   ScalpingResearchRunDto,
   PriceActionResearchSummaryDto,
   PriceActionOccurrenceDto,
+  PriceActionArmDto,
+  SetPriceActionArmRequest,
 } from './trading.models';
 
 @Injectable({ providedIn: 'root' })
@@ -332,6 +334,14 @@ export class TradingService {
 
   updateStrategy(id: string, body: SaveStrategyRequest): Promise<StrategyDto> {
     return firstValueFrom(this.http.put<StrategyDto>(`${environment.apiBaseUrl}/trading/strategies/${id}`, body));
+  }
+
+  priceActionArm(): Promise<PriceActionArmDto> {
+    return firstValueFrom(this.http.get<PriceActionArmDto>(`${environment.apiBaseUrl}/trading/price-action/arm`));
+  }
+
+  setPriceActionArm(body: SetPriceActionArmRequest): Promise<PriceActionArmDto> {
+    return firstValueFrom(this.http.put<PriceActionArmDto>(`${environment.apiBaseUrl}/trading/price-action/arm`, body));
   }
 
   setStrategyEnabled(id: string, enabled: boolean): Promise<StrategyDto> {

@@ -16,8 +16,10 @@ using TradingPlatform.Domain.Risk;
 using TradingPlatform.Domain.Signals;
 using TradingPlatform.Domain.Trades;
 using TradingPlatform.Domain.Trading;
+using TradingPlatform.Research;
 using TradingPlatform.Risk;
 using TradingPlatform.Strategies.Engine;
+using TradingPlatform.Strategies.Indicators;
 using ExecutionFill = TradingPlatform.Domain.Orders.Execution;
 using PaperFillModel = TradingPlatform.Execution.PaperFillModel;
 using PaperOrderStateMachine = TradingPlatform.Execution.OrderStateMachine;
@@ -360,15 +362,16 @@ public sealed class BotEngine : IBotEngine
         string symbol,
         Timeframe timeframe,
         Dictionary<string, IReadOnlyList<MarketCandle>> cycleKlines,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int? limit = null)
     {
-        var key = CycleKlineKey(symbol, timeframe);
+        var key = limit is null ? CycleKlineKey(symbol, timeframe) : $"{CycleKlineKey(symbol, timeframe)}|{limit}";
         if (cycleKlines.TryGetValue(key, out var hit))
         {
             return hit;
         }
 
-        var candles = await _market.GetClosedKlinesAsync(symbol, timeframe, _options.KlineLimit, cancellationToken);
+        var candles = await _market.GetClosedKlinesAsync(symbol, timeframe, limit ?? _options.KlineLimit, cancellationToken);
         cycleKlines[key] = candles;
         return candles;
     }
@@ -528,7 +531,18 @@ public sealed class BotEngine : IBotEngine
         if (position is not null)
         {
             position.CurrentPrice = lastPrice;
-            position.UnrealizedPnL = (lastPrice - position.AverageEntryPrice) * position.Quantity;
+            var direction = position.Side == PositionSide.Short ? -1m : 1m;
+            var openPnl = direction * (lastPrice - position.AverageEntryPrice) * position.Quantity;
+            position.UnrealizedPnL = openPnl;
+            if (openPnl > position.MaxFavorableExcursion)
+            {
+                position.MaxFavorableExcursion = openPnl;
+            }
+
+            if (-openPnl > position.MaxAdverseExcursion)
+            {
+                position.MaxAdverseExcursion = -openPnl;
+            }
         }
 
         var book = await _store.GetOpenPositionsForModeAsync(bot.Mode, cancellationToken);
@@ -613,17 +627,38 @@ public sealed class BotEngine : IBotEngine
         }
 
         var definition = _validator.Parse(bot.StrategyVersion.DefinitionJson);
-        var signalType = _strategy.Evaluate(
-            definition,
-            new StrategyContext
+        var nearMiss = StrategyTemplateKeys.IsNearMiss(definition.Template);
+        SignalType signalType;
+        string reason;
+        if (nearMiss)
+        {
+            var block = NearMissGate.BlockReason(_options, definition.Template, bot.Mode);
+            if (block is not null)
             {
-                ClosedCandles = candles,
-                CurrentPrice = lastPrice,
-                HasOpenPosition = position is not null,
-                AverageEntryPrice = position?.AverageEntryPrice,
-                PositionSide = position?.Side ?? PositionSide.Long
-            },
-            out var reason);
+                bot.LastError = block;
+                return;
+            }
+
+            var books = await LoadNearMissBooksAsync(bot, cycleKlines, cancellationToken);
+            signalType = ContextualPriceActionSignals.AtLastClosed(
+                StrategyTemplateKeys.NearMissHypothesisId(definition.Template),
+                books,
+                out reason);
+        }
+        else
+        {
+            signalType = _strategy.Evaluate(
+                definition,
+                new StrategyContext
+                {
+                    ClosedCandles = candles,
+                    CurrentPrice = lastPrice,
+                    HasOpenPosition = position is not null,
+                    AverageEntryPrice = position?.AverageEntryPrice,
+                    PositionSide = position?.Side ?? PositionSide.Long
+                },
+                out reason);
+        }
 
         var lastCandle = candles[^1];
         var candleKey = lastCandle.OpenTime.ToUnixTimeSeconds().ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -656,6 +691,7 @@ public sealed class BotEngine : IBotEngine
             Price = lastPrice,
             Timestamp = lastCandle.CloseTime,
             Reason = reason,
+            MetadataJson = nearMiss ? NearMissMetadata(definition.Template ?? "", lastCandle.CloseTime) : null,
             CorrelationId = correlationId
         }, cancellationToken);
 
@@ -820,7 +856,9 @@ public sealed class BotEngine : IBotEngine
 
         if (!claimed.Add(claimKey))
         {
-            bot.LastError = $"Isolated {bot.Symbol} is already occupied. This bot will not enter.";
+            bot.LastError = nearMiss
+                ? $"RejectedSameSymbol Isolated {bot.Symbol} is already occupied. This bot will not enter."
+                : $"Isolated {bot.Symbol} is already occupied. This bot will not enter.";
             return;
         }
 
@@ -828,9 +866,8 @@ public sealed class BotEngine : IBotEngine
         var risk = _risk.Evaluate(signalType, profile, snapshot, now);
         if (risk.Decision != RiskDecision.Approved)
         {
-            bot.LastError = risk.HaltAccount
-                ? $"Risk Lock. {risk.Reason}"
-                : risk.Reason;
+            var detail = risk.HaltAccount ? $"Risk Lock. {risk.Reason}" : risk.Reason;
+            bot.LastError = nearMiss ? $"{NearMissGate.RejectLabel(risk.Reason)} {detail}" : detail;
             return;
         }
 
@@ -1102,7 +1139,10 @@ public sealed class BotEngine : IBotEngine
                 EntryPrice = fillPrice,
                 Fees = fee,
                 OpenedAt = _clock.UtcNow,
-                CorrelationId = correlationId
+                CorrelationId = correlationId,
+                HypothesisId = NearMissHypothesis(bot),
+                StrategyFamily = NearMissFamily(bot),
+                SignalAt = opened.OpenedAt
             }, cancellationToken);
             await _store.SaveChangesAsync(cancellationToken);
 
@@ -1238,6 +1278,8 @@ public sealed class BotEngine : IBotEngine
             openTrade.PnLPercent = pnlPercent;
             openTrade.Fees += fee;
             openTrade.ClosedAt = _clock.UtcNow;
+            openTrade.MaxFavorableExcursion = position.MaxFavorableExcursion;
+            openTrade.MaxAdverseExcursion = position.MaxAdverseExcursion;
             return;
         }
 
@@ -1257,8 +1299,61 @@ public sealed class BotEngine : IBotEngine
             Fees = fee,
             OpenedAt = position.OpenedAt,
             ClosedAt = _clock.UtcNow,
-            CorrelationId = correlationId
+            CorrelationId = correlationId,
+            HypothesisId = NearMissHypothesis(bot),
+            StrategyFamily = NearMissFamily(bot),
+            SignalAt = position.OpenedAt,
+            MaxFavorableExcursion = position.MaxFavorableExcursion,
+            MaxAdverseExcursion = position.MaxAdverseExcursion
         }, cancellationToken);
+    }
+
+    private async Task<Dictionary<string, CausalIndicatorCache>> LoadNearMissBooksAsync(
+        Bot bot,
+        Dictionary<string, IReadOnlyList<MarketCandle>> cycleKlines,
+        CancellationToken cancellationToken)
+    {
+        var books = new Dictionary<string, CausalIndicatorCache>(StringComparer.OrdinalIgnoreCase);
+        foreach (var timeframe in new[]
+        {
+            Timeframe.OneMinute,
+            Timeframe.ThreeMinutes,
+            Timeframe.FiveMinutes,
+            Timeframe.FifteenMinutes,
+            Timeframe.OneHour
+        })
+        {
+            var rows = await GetCycleKlinesAsync(bot.Symbol, timeframe, cycleKlines, cancellationToken, limit: 500);
+            books[timeframe.ToBinanceInterval()] = new CausalIndicatorCache(rows);
+        }
+
+        return books;
+    }
+
+    private static string? NearMissHypothesis(Bot bot) => BlankToNull(StrategyTemplateKeys.NearMissHypothesisId(TemplateKey(bot)));
+
+    private static string? NearMissFamily(Bot bot) => BlankToNull(StrategyTemplateKeys.NearMissFamily(TemplateKey(bot)));
+
+    private static string TemplateKey(Bot bot)
+    {
+        var key = bot.StrategyVersion?.Strategy?.TemplateKey;
+        if (!string.IsNullOrWhiteSpace(key))
+        {
+            return key;
+        }
+
+        return bot.StrategyVersion?.DefinitionJson is { Length: > 0 } json
+            ? StrategyTemplates.Read(json).TemplateKey
+            : "";
+    }
+
+    private static string? BlankToNull(string value) => string.IsNullOrWhiteSpace(value) ? null : value;
+
+    private static string NearMissMetadata(string template, DateTimeOffset signalTime)
+    {
+        var hypothesis = StrategyTemplateKeys.NearMissHypothesisId(template);
+        var family = StrategyTemplateKeys.NearMissFamily(template);
+        return $"{{\"status\":\"NEAR_MISS\",\"hypothesisId\":\"{hypothesis}\",\"strategyFamily\":\"{family}\",\"signalTime\":\"{signalTime:O}\"}}";
     }
 
     private readonly record struct OverlayProtectResult(Position? Position, bool Handled);

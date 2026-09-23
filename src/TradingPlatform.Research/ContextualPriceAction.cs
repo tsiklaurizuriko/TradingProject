@@ -164,6 +164,35 @@ public static class ContextualPriceActionSignals
         return rows;
     }
 
+    public static SignalType AtLastClosed(
+        string candidateId,
+        IReadOnlyDictionary<string, CausalIndicatorCache> caches,
+        out string reason)
+    {
+        var hypothesis = ContextualPriceActionCatalog.Hypotheses.FirstOrDefault(row =>
+            string.Equals(row.CandidateId, candidateId, StringComparison.OrdinalIgnoreCase));
+        if (hypothesis is null)
+        {
+            reason = "Unknown contextual hypothesis.";
+            return SignalType.NoAction;
+        }
+
+        if (Missing(caches, hypothesis)
+            || !caches.TryGetValue(ContextualPriceActionCatalog.EntryTimeframe, out var entry)
+            || entry.Candles.Count == 0)
+        {
+            reason = $"{hypothesis.CandidateId} is missing a required closed series. Nothing was fabricated.";
+            return SignalType.NoAction;
+        }
+
+        var state = new EntryState(entry);
+        var signal = SignalAt(hypothesis, state, caches, state.Count - 1);
+        reason = signal is SignalType.Buy or SignalType.Sell
+            ? $"{hypothesis.CandidateId} {hypothesis.Family} on the last closed 5m bar."
+            : $"{hypothesis.CandidateId} has no entry on the last closed 5m bar.";
+        return signal;
+    }
+
     public static bool TrendAligned(StructureBar bar, bool longSide) =>
         longSide ? bar.Bias > 0 && bar.Hh && bar.Hl : bar.Bias < 0 && bar.Lh && bar.Ll;
 
@@ -344,10 +373,10 @@ public static class ContextualPriceActionSignals
             return false;
         }
 
-        var bos = side > 0 ? bar.Value.BosBull : bar.Value.BosBear;
+        var bos = side > 0 ? bar.BosBull : bar.BosBear;
         if (hypothesis.Family == "FAILED_BREAKOUT")
         {
-            var choch = side > 0 ? bar.Value.ChochBull : bar.Value.ChochBear;
+            var choch = side > 0 ? bar.ChochBull : bar.ChochBear;
             return bos || choch;
         }
 
@@ -371,7 +400,7 @@ public static class ContextualPriceActionSignals
             if (hypothesis.Variant == "STRICT")
             {
                 var longSide = side > 0;
-                if (longSide ? range.Value.Bias <= 0 : range.Value.Bias >= 0)
+                if (longSide ? range.Bias <= 0 : range.Bias >= 0)
                 {
                     return false;
                 }
@@ -381,7 +410,7 @@ public static class ContextualPriceActionSignals
         if (!string.IsNullOrWhiteSpace(hypothesis.ContextTimeframe))
         {
             var context = ClosedStructure(caches, hypothesis.ContextTimeframe, close);
-            if (context is null || !TrendAligned(context.Value, side > 0))
+            if (context is null || !TrendAligned(context, side > 0))
             {
                 return false;
             }
@@ -397,8 +426,8 @@ public static class ContextualPriceActionSignals
 
             var longSide = side > 0;
             var aligned = hypothesis.Family is "PULLBACK" or "BREAKOUT_RETEST" or "FLAG" or "MTF"
-                ? TrendAligned(structure.Value, longSide)
-                : longSide ? structure.Value.Bias > 0 : structure.Value.Bias < 0;
+                ? TrendAligned(structure, longSide)
+                : longSide ? structure.Bias > 0 : structure.Bias < 0;
             if (!aligned)
             {
                 return false;

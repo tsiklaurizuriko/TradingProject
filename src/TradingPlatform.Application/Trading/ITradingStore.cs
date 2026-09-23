@@ -99,5 +99,7 @@ public interface ITradingStore
     Task StopAllRunningBotsAsync(string reason, CancellationToken cancellationToken = default);
     Task SoftDeletePaperBotsNotInAsync(Guid userId, IReadOnlyCollection<string> keepSymbols, CancellationToken cancellationToken = default);
     Task AddBacktestAsync(Backtest backtest, CancellationToken cancellationToken = default);
+    Task<IReadOnlyDictionary<string, string>> GetSettingsAsync(string keyPrefix, CancellationToken cancellationToken = default);
+    Task SetSettingAsync(string key, string value, string? description, CancellationToken cancellationToken = default);
     Task SaveChangesAsync(CancellationToken cancellationToken = default);
 }

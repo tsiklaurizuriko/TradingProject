@@ -22,6 +22,7 @@ public static class DependencyInjection
         services.AddScoped<IBotEngine, BotEngine>();
         services.AddScoped<IBotLifecycleService, BotLifecycleService>();
         services.AddScoped<ITradingQueryService, TradingQueryService>();
+        services.AddHostedService<PriceActionArmLoader>();
 
         if (configuration.GetValue("Trading:HostBotEngine", true))
         {

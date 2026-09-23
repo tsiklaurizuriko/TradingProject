@@ -73,6 +73,11 @@ if (args.Any(a => string.Equals(a, "--contextual-pa-freeze", StringComparison.Or
     return ContextualPriceActionDiscovery.Freeze(root);
 }
 
+if (args.Any(a => string.Equals(a, "--final-five", StringComparison.OrdinalIgnoreCase)))
+{
+    return await FinalFiveDiscovery.RunAsync(root, candleCacheDir, args);
+}
+
 if (args.Any(a => string.Equals(a, "--contextual-pa-discover", StringComparison.OrdinalIgnoreCase)))
 {
     return await ContextualPriceActionDiscovery.RunAsync(root, candleCacheDir, args);

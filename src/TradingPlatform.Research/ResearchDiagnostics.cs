@@ -88,7 +88,8 @@ public static class ResearchDiagnostics
             Return3 = Mean(r3),
             Return5 = Mean(r5),
             Return10 = Mean(r10),
-            Notes = WithHoldNote(seed, holds)
+            Notes = WithHoldNote(seed, holds),
+            MaximumDrawdown = replay.MaximumDrawdown
         };
     }
 

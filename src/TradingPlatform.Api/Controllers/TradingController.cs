@@ -309,6 +309,14 @@ public sealed class TradingController : ControllerBase
     public Task<BacktestResultDto> RunBacktest([FromBody] RunBacktestRequest request, CancellationToken cancellationToken) =>
         _backtests.RunAsync(UserId(), request, cancellationToken);
 
+    [HttpGet("price-action/arm")]
+    public Task<PriceActionArmDto> PriceActionArm(CancellationToken cancellationToken) =>
+        _lifecycle.GetPriceActionArmAsync(cancellationToken);
+
+    [HttpPut("price-action/arm")]
+    public Task<PriceActionArmDto> SetPriceActionArm([FromBody] SetPriceActionArmRequest request, CancellationToken cancellationToken) =>
+        _lifecycle.SetPriceActionArmAsync(request, cancellationToken);
+
     [HttpGet("research/scalping")]
     public Task<ScalpingResearchSummaryDto> ScalpingResearch(CancellationToken cancellationToken) =>
         _scalping.GetSummaryAsync(cancellationToken);

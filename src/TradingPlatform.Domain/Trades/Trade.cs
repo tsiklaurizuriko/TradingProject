@@ -24,6 +24,11 @@ public sealed class Trade : Entity
     public decimal PnL { get; set; }
     public decimal PnLPercent { get; set; }
     public decimal Fees { get; set; }
+    public string? HypothesisId { get; set; }
+    public string? StrategyFamily { get; set; }
+    public DateTimeOffset? SignalAt { get; set; }
+    public decimal MaxFavorableExcursion { get; set; }
+    public decimal MaxAdverseExcursion { get; set; }
     public DateTimeOffset OpenedAt { get; set; }
     public DateTimeOffset? ClosedAt { get; set; }
     public TimeSpan? Duration => ClosedAt is null ? null : ClosedAt - OpenedAt;
