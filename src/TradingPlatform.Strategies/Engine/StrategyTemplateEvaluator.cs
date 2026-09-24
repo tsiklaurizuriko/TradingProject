@@ -160,7 +160,9 @@ internal static class StrategyTemplateEvaluator
         }
 
         var raw = EvaluateTemplate(parsed, candles, index, context, cache);
-        if (raw.Signal is SignalType.Buy or SignalType.Sell && !PassesQuality(parsed.Quality, candles, index, cache))
+        if (raw.Signal is SignalType.Buy or SignalType.Sell
+            && !StrategyTemplateKeys.IsFlatRange(parsed.TemplateKey)
+            && !PassesQuality(parsed.Quality, candles, index, cache))
         {
             return new StrategySignalDetail(SignalType.NoAction, "Quality filter skipped this bar (volume or ATR%).");
         }
@@ -188,7 +190,9 @@ internal static class StrategyTemplateEvaluator
         int i,
         StrategyContext context,
         CausalIndicatorCache cache) =>
-        StrategyTemplateKeys.IsCrossSectionalReversal(p.TemplateKey)
+        StrategyTemplateKeys.IsFlatRange(p.TemplateKey)
+            ? FlatRangeStrategy.Evaluate(candles, i, context.HasOpenPosition, p.AllowedSide, context.PositionOpenedAt)
+            : StrategyTemplateKeys.IsCrossSectionalReversal(p.TemplateKey)
             ? new StrategySignalDetail(
                 SignalType.NoAction,
                 "Cross-sectional reversal ranks the contemporaneous universe. A single-symbol preview does not emit an order.",

@@ -139,10 +139,6 @@ public sealed class BotLifecycleService : IBotLifecycleService
             throw new DomainException(ErrorCodes.StrategyInvalid, "Strategy was not found.");
         }
 
-        EnsureHistoricallyFittedLiveOff(mode, strategyVersion.Strategy);
-        EnsureNearMissAllowed(mode, strategyVersion.Strategy);
-        EnsureCrossSectionBlocked(mode, strategyVersion.Strategy);
-        EnsureScalpingStaysOff(strategyVersion.Strategy);
         EnsureStrategyEnabled(strategyVersion.Strategy);
         if (!SymbolScope.Allows(strategyVersion.Strategy.AppliesToAllSymbols, strategyVersion.Strategy.AllowedSymbolsCsv, name))
         {
@@ -258,10 +254,6 @@ public sealed class BotLifecycleService : IBotLifecycleService
 
         var strategyVersion = await _store.GetLatestStrategyVersionAsync(strategyId, cancellationToken)
             ?? throw new DomainException(ErrorCodes.StrategyInvalid, "Strategy was not found.");
-        EnsureHistoricallyFittedLiveOff(mode, strategyVersion.Strategy);
-        EnsureNearMissAllowed(mode, strategyVersion.Strategy);
-        EnsureCrossSectionBlocked(mode, strategyVersion.Strategy);
-        EnsureScalpingStaysOff(strategyVersion.Strategy);
         EnsureStrategyEnabled(strategyVersion.Strategy);
         var risk = await ResolveRiskAsync(riskProfileId, cancellationToken);
         RiskLiveGuard.EnsureAllowed(mode, risk);
@@ -377,20 +369,12 @@ public sealed class BotLifecycleService : IBotLifecycleService
                 throw new DomainException(ErrorCodes.LiveTradingDisabled, "Save a Binance API key on Exchanges before starting a live bot.");
             }
 
-            EnsureHistoricallyFittedLiveOff(bot);
-            EnsureNearMissAllowed(bot);
-            EnsureCrossSectionBlocked(bot);
-            EnsureScalpingStaysOff(bot);
             RiskLiveGuard.EnsureAllowed(bot.Mode, bot.RiskProfile ?? await _store.GetConservativeRiskAsync(cancellationToken));
         }
         else if (bot.Mode != TradingMode.Paper)
         {
             throw new DomainException(ErrorCodes.LiveTradingDisabled, "Only paper or live bots can be started.");
         }
-
-        EnsureNearMissAllowed(bot);
-        EnsureCrossSectionBlocked(bot);
-        EnsureScalpingStaysOff(bot);
 
         if (bot.Status == BotStatus.Running)
         {
@@ -451,10 +435,6 @@ public sealed class BotLifecycleService : IBotLifecycleService
         {
             try
             {
-                EnsureHistoricallyFittedLiveOff(bot);
-                EnsureNearMissAllowed(bot);
-                EnsureCrossSectionBlocked(bot);
-                EnsureScalpingStaysOff(bot);
                 await AttachLatestStrategyAsync(bot, cancellationToken);
                 await MarkRunningAsync(bot, cancellationToken);
                 started++;
@@ -710,89 +690,6 @@ public sealed class BotLifecycleService : IBotLifecycleService
         }
 
         return await _store.GetConservativeRiskAsync(cancellationToken);
-    }
-
-    private static void EnsureHistoricallyFittedLiveOff(Bot bot) =>
-        EnsureHistoricallyFittedLiveOff(bot.Mode, bot.StrategyVersion.Strategy);
-
-    private static void EnsureHistoricallyFittedLiveOff(TradingMode mode, Strategy strategy)
-    {
-        if (mode != TradingMode.Live)
-        {
-            return;
-        }
-
-        var key = strategy.TemplateKey;
-        if (string.IsNullOrWhiteSpace(key))
-        {
-            var latest = strategy.Versions.OrderByDescending(row => row.VersionNumber).FirstOrDefault();
-            key = latest is null ? string.Empty : StrategyTemplates.Read(latest.DefinitionJson).TemplateKey;
-        }
-
-        if (!StrategyTemplateKeys.IsHistoricallyFitted(key))
-        {
-            return;
-        }
-
-        throw new DomainException(
-            ErrorCodes.LiveTradingDisabled,
-            $"{strategy.Name} is a historically fitted BTC 15m candidate. LIVE is off. Switch the header to Paper to observe.");
-    }
-
-    private void EnsureNearMissAllowed(Bot bot) =>
-        EnsureNearMissAllowed(bot.Mode, bot.StrategyVersion.Strategy);
-
-    private void EnsureCrossSectionBlocked(Bot bot) =>
-        EnsureCrossSectionBlocked(bot.Mode, bot.StrategyVersion.Strategy);
-
-    private void EnsureCrossSectionBlocked(TradingMode mode, Strategy strategy)
-    {
-        var key = strategy.TemplateKey;
-        if (string.IsNullOrWhiteSpace(key))
-        {
-            var latest = strategy.Versions.OrderByDescending(row => row.VersionNumber).FirstOrDefault();
-            key = latest is null ? string.Empty : StrategyTemplates.Read(latest.DefinitionJson).TemplateKey;
-        }
-
-        CrossSectionalReversalGate.EnsureBlocked(_options, key, mode);
-    }
-
-    private static void EnsureScalpingStaysOff(Bot bot) =>
-        EnsureScalpingStaysOff(bot.StrategyVersion.Strategy);
-
-    private static void EnsureScalpingStaysOff(Strategy strategy)
-    {
-        var key = strategy.TemplateKey;
-        if (string.IsNullOrWhiteSpace(key))
-        {
-            var latest = strategy.Versions.OrderByDescending(row => row.VersionNumber).FirstOrDefault();
-            key = latest is null ? string.Empty : StrategyTemplates.Read(latest.DefinitionJson).TemplateKey;
-        }
-
-        if (!StrategyTemplateKeys.IsScalping(key))
-        {
-            return;
-        }
-
-        throw new DomainException(
-            ErrorCodes.StrategyInvalid,
-            $"{strategy.Name} is on the strategy list for research. It does not start a bot.");
-    }
-
-    private void EnsureNearMissAllowed(TradingMode mode, Strategy strategy)
-    {
-        var key = strategy.TemplateKey;
-        if (string.IsNullOrWhiteSpace(key))
-        {
-            var latest = strategy.Versions.OrderByDescending(row => row.VersionNumber).FirstOrDefault();
-            key = latest is null ? string.Empty : StrategyTemplates.Read(latest.DefinitionJson).TemplateKey;
-        }
-
-        var block = NearMissGate.BlockReason(_options, key, mode);
-        if (block is not null)
-        {
-            throw new DomainException(ErrorCodes.LiveTradingDisabled, block);
-        }
     }
 
     public async Task<PriceActionArmDto> GetPriceActionArmAsync(CancellationToken cancellationToken = default)
@@ -1818,9 +1715,9 @@ public sealed class TradingQueryService : ITradingQueryService
     {
         var strategy = await _store.GetStrategyAsync(strategyId, cancellationToken)
             ?? throw new DomainException(ErrorCodes.StrategyInvalid, "Strategy was not found.");
-        if (enabled && (strategy.IsArchived || (!IsOperatorStrategy(strategy) && !IsNearMissStrategy(strategy) && !IsCrossSectionStrategy(strategy) && !IsScalpingStrategy(strategy))))
+        if (enabled && strategy.IsArchived)
         {
-            throw new DomainException(ErrorCodes.StrategyInvalid, $"{strategy.Name} is retired from the operator catalog.");
+            throw new DomainException(ErrorCodes.StrategyInvalid, $"{strategy.Name} is archived.");
         }
         strategy.IsEnabled = enabled;
         await _store.SaveChangesAsync(cancellationToken);
@@ -2147,10 +2044,14 @@ public sealed class TradingQueryService : ITradingQueryService
                 : strategy.ValidationStatus,
             StrategyTemplateKeys.IsScalping(template)
                 ? StrategyTemplateKeys.ScalpingTimeframes
-                : StrategyTemplateKeys.IsCrossSectionalReversal(template)
-                    ? ["15m"]
-                    : StrategyTemplateKeys.SupportedTimeframes,
-            StrategyTemplateKeys.SupportedDirections,
+                : template == StrategyTemplateKeys.BtcEma20Ema50Long
+                    ? ["30m"]
+                    : StrategyTemplateKeys.IsCrossSectionalReversal(template)
+                        ? ["15m"]
+                        : StrategyTemplateKeys.SupportedTimeframes,
+            template == StrategyTemplateKeys.BtcEma20Ema50Long
+                ? ["LONG"]
+                : StrategyTemplateKeys.SupportedDirections,
             StrategyTemplates.DataDependencies(template),
             parsed.EntryLookback,
             parsed.ExitLookback,

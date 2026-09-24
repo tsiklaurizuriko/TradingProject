@@ -1,4 +1,4 @@
-/** Operator guidance only. None are profitable. None are LIVE. Never 5 stars. */
+/** Closeness to a cost-inclusive profit. None are profitable. None are LIVE. Never 5 stars. */
 export type StrategyUseVerdict = 'paper' | 'weak' | 'avoid' | 'blocked' | 'near-miss';
 
 export interface StrategyRating {
@@ -22,26 +22,50 @@ export const starSlots = [1, 2, 3, 4, 5] as const;
 
 /** Frozen five: 528 coins × 3 TF Model B, equal-book return. Research: 10×3 90d unless noted. */
 const ratings: Record<string, StrategyRating> = {
-  rsi_pullback: {
+  flat_range: {
     stars: 4,
-    verdict: 'paper',
-    note: '528 წიგნზე ყველაზე ნაკლები ზიანი. PF მაინც < 1. PAPER-ზე ამით დაიწყე.',
+    verdict: 'weak',
+    note: 'ყველაზე ახლოს. OOS 67556 ტრეიდი, საშუალო +0.08% 0.12% ხარჯის შემდეგ. 1.5× ხარჯზე საშუალო 0ა, 2×-ზე უარყოფითი. გარიგებების 89% სტოპზე იხურება. ორდერის საფუძველი არაა.',
+    pf: null,
+    bookReturnPct: null,
+    sample: '527×1h OOS',
+  },
+  btc_ema20_ema50_long: {
+    stars: 3,
+    verdict: 'weak',
+    note: '22 მონეტა, სრული 2 წელი, თანაბარი წილი +16%, PF 1.06. 17 მოგებაშია, 5 ზარალში. ეს იგივე ფანჯარაა, OOS არ არის. ვარდნა ≈ 49%. LIVE არა.',
+    pf: 1.06,
+    bookReturnPct: 15.97,
+    sample: '22×30m full window',
+  },
+  market_structure_trend: {
+    stars: 3,
+    verdict: 'weak',
+    note: 'მცირე ნიმუშზე PF ≈ 1.12, მაინც OOS_FAILED. SHORT კლავს. ფულს ნუ ენდობი.',
+    pf: 1.12478747,
+    bookReturnPct: null,
+    sample: '10×3 90d',
+  },
+  rsi_pullback: {
+    stars: 2,
+    verdict: 'weak',
+    note: '528 წიგნზე ყველაზე ნაკლები ზიანი (−1.18%), მაგრამ PF 0.61. წიგნი თითქმის ბრტყელია, მოგებული ტრეიდი ზარალს ვერ ფარავს.',
     pf: 0.61471419,
     bookReturnPct: -1.18,
     sample: '528×3 Model B',
   },
   bollinger_reversion: {
-    stars: 3,
-    verdict: 'paper',
-    note: 'მეორე ყველაზე ნაკლებად მავნე frozen. PAPER-ზე შეგიძლია. არ არის მომგებიანი.',
+    stars: 1,
+    verdict: 'avoid',
+    note: '528 წიგნზე ≈ −14%, PF 0.59. მოგებასთან ახლოს არაა.',
     pf: 0.58519221,
     bookReturnPct: -14.33,
     sample: '528×3 Model B',
   },
   ema_rsi_trend: {
-    stars: 2,
-    verdict: 'paper',
-    note: 'Frozen, გაშვებადი. 528 წიგნზე ≈ −40%. PAPER მხოლოდ თუ RSI/Bollinger არ გინდა.',
+    stars: 1,
+    verdict: 'avoid',
+    note: '528 წიგნზე ≈ −40%. არ გაუშვა.',
     pf: 0.75374781,
     bookReturnPct: -39.57,
     sample: '528×3 Model B',
@@ -110,14 +134,6 @@ const ratings: Record<string, StrategyRating> = {
     bookReturnPct: null,
     sample: 'DATA_UNAVAILABLE',
   },
-  market_structure_trend: {
-    stars: 2,
-    verdict: 'weak',
-    note: '10 ქოინზე PF ≈ 1.12, მაგრამ OOS_FAILED და SHORT კლავს. ფულს ნუ ენდობი.',
-    pf: 1.12478747,
-    bookReturnPct: null,
-    sample: '10×3 90d',
-  },
   liq_sweep_continuation: {
     stars: 2,
     verdict: 'weak',
@@ -183,9 +199,9 @@ const ratings: Record<string, StrategyRating> = {
     sample: '10×3 90d',
   },
   atr_normalized_momentum: {
-    stars: 1,
-    verdict: 'avoid',
-    note: 'OOS_FAILED. არ გაუშვა.',
+    stars: 2,
+    verdict: 'weak',
+    note: 'PF 0.91. 1-თან ახლოსაა და მაინც ზარალია. OOS_FAILED.',
     pf: 0.914046,
     bookReturnPct: null,
     sample: '10×3 90d',
@@ -207,25 +223,25 @@ const ratings: Record<string, StrategyRating> = {
     sample: '10×3 90d',
   },
   funding_basis_rv: {
-    stars: 1,
-    verdict: 'avoid',
-    note: 'Phase 3 კარგად ჩანდა; 2 წელზე OOS_FAILED (PF 0.90). არ გაუშვა.',
+    stars: 2,
+    verdict: 'weak',
+    note: '2 წელზე PF 0.90. 1-თან ახლოსაა და მაინც ზარალია. OOS_FAILED.',
     pf: 0.89629023,
     bookReturnPct: null,
     sample: 'Phase 4 ~2y',
   },
   funding_extreme_momentum_exhaustion: {
-    stars: 1,
-    verdict: 'avoid',
-    note: 'Phase 3 კარგად ჩანდა; 2 წელზე OOS_FAILED (PF 0.94). არ გაუშვა.',
+    stars: 2,
+    verdict: 'weak',
+    note: '2 წელზე PF 0.94. 1-თან ახლოსაა და მაინც ზარალია. OOS_FAILED.',
     pf: 0.93616736,
     bookReturnPct: null,
     sample: 'Phase 4 ~2y',
   },
   funding_price_momentum: {
-    stars: 1,
-    verdict: 'avoid',
-    note: 'Phase 3 PF ≈ 1.00, SHORT კლავს, 3 კვირა. არ გაუშვა.',
+    stars: 2,
+    verdict: 'weak',
+    note: 'PF ≈ 1.01 მოკლე ფანჯარაზე. SHORT კლავს. დაახლოებით ნულია, არა მოგება.',
     pf: 1.00875788,
     bookReturnPct: null,
     sample: 'Phase 3 10×3 ~90d',
@@ -303,17 +319,17 @@ const ratings: Record<string, StrategyRating> = {
     sample: 'RESEARCHING n=0',
   },
   vol_spike_ema_trend: {
-    stars: 1,
+    stars: 2,
     verdict: 'weak',
-    note: 'ისტორიულად მორგებული BTC 15m. 476 ტრეიდი / +$138 IS. არ არის validated. PAPER-ზე მხოლოდ დასაკვირვებლად. LIVE არა.',
+    note: 'BTC 15m-ზე ისტორიას მოერგო: +14% იმავე ფანჯარაზე. OOS არ აქვს. LIVE არა.',
     pf: null,
     bookReturnPct: 13.82,
     sample: 'BTCUSDT 15m fitted 2y',
   },
   bb20_2_break: {
-    stars: 1,
+    stars: 2,
     verdict: 'weak',
-    note: 'ისტორიულად მორგებული BTC 15m. 408 ტრეიდი / +$112 IS. არ არის validated. PAPER-ზე მხოლოდ დასაკვირვებლად. LIVE არა.',
+    note: 'BTC 15m-ზე ისტორიას მოერგო: +11% იმავე ფანჯარაზე. OOS არ აქვს. LIVE არა.',
     pf: null,
     bookReturnPct: 11.26,
     sample: 'BTCUSDT 15m fitted 2y',
@@ -357,12 +373,21 @@ const scalpRating: StrategyRating = {
 };
 
 const reversalRating: StrategyRating = {
-  stars: 2,
-  verdict: 'weak',
-  note: 'ზედა 10% short, ქვედა 10% long. საკუთარი რისკი 0.25%, long 5, short 5, 3x. გლობალური Live სანამ გამორთულია, ორდერი არ გავა.',
+  stars: 1,
+  verdict: 'avoid',
+  note: 'გაზომილი წიგნი OOS-ზე ხარჯამდეც უარყოფითია. 24სთ რევერსალი VAL-ზე PF 0.75, OOS-ზე 1.56 — არასტაბილურია. არ გაუშვა.',
+  pf: 1.0271,
+  bookReturnPct: null,
+  sample: '521×1h 24h book',
+};
+
+const priceActionRating: StrategyRating = {
+  stars: 1,
+  verdict: 'avoid',
+  note: 'ფასის მოქმედების წიგნები ხარჯის შემდეგ ზარალიანია. NEAR-MISS რიგები ცალკეა და ისინიც ვერ გავიდა.',
   pf: null,
   bookReturnPct: null,
-  sample: 'BTC 15m clock',
+  sample: 'price action research',
 };
 
 export function isOperatorCatalog(templateKey: string | undefined): boolean {
@@ -384,6 +409,9 @@ export function ratingFor(templateKey: string | undefined): StrategyRating {
   if (templateKey.startsWith('cross_sectional_reversal')) {
     return reversalRating;
   }
+  if (templateKey.startsWith('pa_')) {
+    return priceActionRating;
+  }
   return ratings[templateKey] ?? unrated;
 }
 
@@ -393,8 +421,7 @@ export function verdictLabel(templateKey: string | undefined): string {
 
 export function ratingSortValue(templateKey: string | undefined): number {
   const rate = ratingFor(templateKey);
-  const bucket = rate.verdict === 'paper' ? 400 : rate.verdict === 'weak' ? 300 : rate.verdict === 'near-miss' ? 50 : rate.verdict === 'avoid' ? 100 : 0;
-  return bucket + rate.stars * 10 + (rate.pf ?? -1);
+  return rate.stars * 1000 + (rate.pf ?? 0) * 10 + (rate.bookReturnPct ?? 0);
 }
 
 export function starText(stars: number): string {

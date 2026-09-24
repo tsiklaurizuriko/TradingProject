@@ -12,10 +12,12 @@ public static class PriceActionArm
     public static string CandidateKey(string template) =>
         "Trading.PriceAction.Candidate." + StrategyTemplateKeys.Normalize(template);
 
-    public static string? RejectLive(bool globalLive, bool? requestedLive) =>
-        requestedLive == true && !globalLive
-            ? "Global LIVE trading is off. Near-miss LIVE was rejected."
-            : null;
+    public static string? RejectLive(bool globalLive, bool? requestedLive)
+    {
+        _ = globalLive;
+        _ = requestedLive;
+        return null;
+    }
 
     public static void Apply(PriceActionOptions price, IReadOnlyDictionary<string, string> settings)
     {

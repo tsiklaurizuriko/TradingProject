@@ -1217,12 +1217,33 @@ internal static class ExtremeMoveStudy
             list.Add(new Labeled { Row = rows[i], Label = "SEE_PRIMARY", BhReject = false });
         }
 
+        var provisional = new List<(int Index, string Label, bool Bh)>();
         for (var i = 0; i < primary.Count; i++)
         {
             var r = primary[i];
-            var label = Classify(r, reject[i]);
-            var idx = rows.IndexOf(r);
-            list[idx] = new Labeled { Row = r, Label = label, BhReject = reject[i] };
+            provisional.Add((rows.IndexOf(r), Classify(r, reject[i]), reject[i]));
+        }
+
+        foreach (var item in provisional)
+        {
+            var label = item.Label;
+            if (label == "REPEATABLE_PENDING_SIBLING")
+            {
+                var row = rows[item.Index];
+                var sibling = provisional.Any(o =>
+                {
+                    var other = rows[o.Index];
+                    return other.Feature == row.Feature
+                        && other.Event != row.Event
+                        && other.Direction == row.Direction
+                        && !other.Is.Missing
+                        && Math.Sign(other.Is.Effect) == Math.Sign(row.Is.Effect)
+                        && other.Is.Auc >= 0.52;
+                });
+                label = sibling ? "REPEATABLE" : "UNSTABLE";
+            }
+
+            list[item.Index] = new Labeled { Row = rows[item.Index], Label = label, BhReject = item.Bh };
         }
 
         return list;
@@ -1255,38 +1276,31 @@ internal static class ExtremeMoveStudy
             return "UNSTABLE";
         }
 
-        if (r.BlockSame < 3 || r.Symbols < 5 || r.SymbolsPos < 3)
+        var volDisagree = !r.VolLow.Missing && !r.VolHigh.Missing
+            && Math.Sign(r.VolLow.Effect) != 0
+            && Math.Sign(r.VolHigh.Effect) != 0
+            && Math.Sign(r.VolLow.Effect) != Math.Sign(r.VolHigh.Effect);
+        if (r.Symbols < 5)
         {
-            if (r.Symbols <= 2 && r.Symbols > 0)
-            {
-                return "SYMBOL_SPECIFIC";
-            }
+            return r.Symbols is > 0 and <= 2 ? "SYMBOL_SPECIFIC" : "UNSTABLE";
+        }
 
-            var volDisagree = !r.VolLow.Missing && !r.VolHigh.Missing
-                && Math.Sign(r.VolLow.Effect) != 0
-                && Math.Sign(r.VolHigh.Effect) != 0
-                && Math.Sign(r.VolLow.Effect) != Math.Sign(r.VolHigh.Effect);
-            if (volDisagree)
-            {
-                return "REGIME_SPECIFIC";
-            }
+        if (volDisagree)
+        {
+            return "REGIME_SPECIFIC";
+        }
 
+        if (r.BlockSame < 3 || r.SymbolsPos < 3)
+        {
             return "UNSTABLE";
         }
 
-        var familyOnly = r.Feature.StartsWith("pa_", StringComparison.Ordinal) && r.SymbolsPos < r.Symbols * 0.6;
         if (!bh)
         {
-            return familyOnly ? "FAMILY_SPECIFIC" : "UNSTABLE";
-        }
-
-        var siblings = KeyThresholds.Count(name => name != r.Event && name.StartsWith(r.Direction == "UP" ? "UP" : "DOWN", StringComparison.Ordinal));
-        if (siblings < 1)
-        {
             return "UNSTABLE";
         }
 
-        return "REPEATABLE";
+        return "REPEATABLE_PENDING_SIBLING";
     }
 
     private static ModelReport FitModels(List<Episode> events, List<Episode> controls)
@@ -2024,7 +2038,7 @@ internal static class ExtremeMoveStudy
             return "INSUFFICIENT_DATA";
         }
 
-        return ctx.Costs.OosBase > 0 && ctx.Costs.Oos2x > 0 ? "OOS proxy positive at 2x" : "not cost-robust";
+        return "upper-bound proxy only; payoff uses the labeled excursion, not a fill";
     }
 
     private static string FamilyOf(string id)
@@ -2110,11 +2124,14 @@ internal static class ExtremeMoveStudy
         var scalp = trading.GetProperty("Scalping");
         var scalpOn = scalp.GetProperty("Enabled").GetBoolean();
         var scalpLive = scalp.GetProperty("AllowLive").GetBoolean();
-        var ok = !live && !csrLive && !csrPaper && !csrOn && !scalpOn && !scalpLive;
-        var line = ok
-            ? "LIVE = OFF. PAPER = OFF. VALIDATED_FOR_PAPER = NONE. LIVE_APPROVED = false. Trading:LiveTradingEnabled = false. Trading:CrossSectionalReversal:LiveEnabled = false. No Paper strategy was enabled. No strategy was promoted. No Binance order was submitted."
-            : "SAFETY CHECK FAILED. Flags were not modified by this study.";
-        return new Safety(ok, line);
+        var line =
+            $"Trading:LiveTradingEnabled={live}. Trading:CrossSectionalReversal Enabled={csrOn} PaperEnabled={csrPaper} LiveEnabled={csrLive}. Scalping Enabled={scalpOn} AllowLive={scalpLive}. " +
+            "This study did not change these flags, did not enable Paper, did not promote a strategy, and did not submit an order. " +
+            "VALIDATED_FOR_PAPER=NONE. LIVE_APPROVED=false. " +
+            (live || csrLive
+                ? "Cross-sectional LiveEnabled or global live is not false in appsettings. Those values were left untouched."
+                : "Global live and cross-sectional live are false.");
+        return new Safety(!live && !csrLive, line);
     }
 
     private static string ManifestText()
@@ -3454,16 +3471,14 @@ internal static class ExtremeMoveStudy
             var scores = events.Select(v => orient * (double)v).Concat(controls.Select(v => orient * (double)v)).ToArray();
             var y = Enumerable.Repeat(1, events.Count).Concat(Enumerable.Repeat(0, controls.Count)).ToArray();
             var auc = Auc(scores, y);
-            var orientedEvents = events.Select(v => orient * v).OrderBy(v => v).ToArray();
-            var cut = orientedEvents.Length == 0 ? 0 : orientedEvents[(int)(orientedEvents.Length * 0.9)];
-            var all = events.Select(v => (orient * v, 1)).Concat(controls.Select(v => (orient * v, 0))).ToList();
-            var top = all.Where(x => x.Item1 >= cut).ToList();
-            if (top.Count < 5)
-            {
-                top = all.OrderByDescending(x => x.Item1).Take(Math.Max(1, all.Count / 10)).ToList();
-            }
+            var pooled = events.Select(v => (S: orient * (double)v, Y: 1))
+                .Concat(controls.Select(v => (S: orient * (double)v, Y: 0)))
+                .OrderByDescending(x => x.S)
+                .ToList();
+            var take = Math.Max(1, pooled.Count / 10);
+            var top = pooled.Take(take).ToList();
 
-            var tp = top.Count(x => x.Item2 == 1);
+            var tp = top.Count(x => x.Y == 1);
             var fp = top.Count - tp;
             var precision = top.Count == 0 ? double.NaN : tp / (double)top.Count;
             var recall = events.Count == 0 ? double.NaN : tp / (double)events.Count;

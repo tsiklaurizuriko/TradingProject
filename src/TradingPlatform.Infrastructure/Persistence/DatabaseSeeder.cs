@@ -205,6 +205,7 @@ public sealed class DatabaseSeeder
         await UpsertSystemRiskAsync("HIGH", ["High Risk", "Aggressive"], HighBook(), cancellationToken);
         await UpsertSystemRiskAsync("BTC 15m Vol Spike", ["FITTED-VOL-SPIKE", "vol_spike_ema_trend"], FittedVolSpikeBook(), cancellationToken);
         await UpsertSystemRiskAsync("BTC 15m BB Break", ["FITTED-BB-BREAK", "bb20_2_break"], FittedBbBreakBook(), cancellationToken);
+        await UpsertSystemRiskAsync("30m EMA Cross", ["BTC 30m EMA Cross", "BTC-30M-EMA-CROSS", "btc_ema20_ema50_long"], FittedEmaCrossBook(), cancellationToken);
         await EnsureOneActiveAsync(cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
         await SeedStrategiesAsync(cancellationToken);
@@ -221,10 +222,12 @@ public sealed class DatabaseSeeder
         {
             var strategy = existing.FirstOrDefault(s => MatchesCatalog(s, row.Key, row.Name));
             var crossSection = StrategyTemplateKeys.IsCrossSectionalReversal(row.Key);
-            var parameters = StrategyTemplates.DefaultsFor(row.Key, qualityOn: !row.Research && !StrategyTemplateKeys.IsHistoricallyFitted(row.Key)) with
+            var emaCross = row.Key == StrategyTemplateKeys.BtcEma20Ema50Long;
+            var flat = row.Key == StrategyTemplateKeys.FlatRange;
+            var parameters = StrategyTemplates.DefaultsFor(row.Key, qualityOn: !row.Research && !flat && !StrategyTemplateKeys.IsHistoricallyFitted(row.Key)) with
             {
-                AllowedSide = StrategySides.Both,
-                Timeframe = StrategyTemplateKeys.IsHistoricallyFitted(row.Key) || crossSection ? "15m" : "5m"
+                AllowedSide = emaCross ? StrategySides.Long : StrategySides.Both,
+                Timeframe = emaCross ? "30m" : flat ? "1h" : StrategyTemplateKeys.IsHistoricallyFitted(row.Key) || crossSection ? "15m" : "5m"
             };
             if (strategy is null)
             {
@@ -235,11 +238,11 @@ public sealed class DatabaseSeeder
                     User = admin,
                     Name = row.Name,
                     Description = row.Description,
-                    AppliesToAllSymbols = !fitted,
-                    AllowedSymbolsCsv = fitted ? "BTCUSDT" : null,
+                    AppliesToAllSymbols = emaCross || !fitted,
+                    AllowedSymbolsCsv = emaCross || !fitted ? null : "BTCUSDT",
                     TemplateKey = row.Key,
-                    AllowedSide = StrategySides.Both,
-                    IsEnabled = crossSection || !row.Research,
+                    AllowedSide = emaCross ? StrategySides.Long : StrategySides.Both,
+                    IsEnabled = emaCross || crossSection || !row.Research,
                     ValidationStatus = row.Research
                         ? StrategyTemplates.ResearchStatus(row.Key)
                         : StrategyValidationStatuses.ValidationPending
@@ -250,7 +253,7 @@ public sealed class DatabaseSeeder
                     VersionNumber = 1,
                     DefinitionJson = StrategyTemplates.Build(strategy.Name, 1, parameters),
                     Symbol = "BTCUSDT",
-                    Timeframe = fitted || crossSection ? Timeframe.FifteenMinutes : Timeframe.FiveMinutes
+                    Timeframe = emaCross ? Timeframe.ThirtyMinutes : flat ? Timeframe.OneHour : fitted || crossSection ? Timeframe.FifteenMinutes : Timeframe.FiveMinutes
                 });
                 _db.Strategies.Add(strategy);
                 existing.Add(strategy);
@@ -331,6 +334,12 @@ public sealed class DatabaseSeeder
         (string Key, string Name, string Description, bool Research) row,
         StrategyTemplateParams parameters)
     {
+        if (row.Key == StrategyTemplateKeys.BtcEma20Ema50Long)
+        {
+            AlignEmaCross(strategy, row, parameters);
+            return;
+        }
+
         if (StrategyTemplateKeys.IsHistoricallyFitted(row.Key))
         {
             AlignFittedBtc15m(strategy, row, parameters);
@@ -518,6 +527,10 @@ public sealed class DatabaseSeeder
             "HISTORICALLY_FITTED_CANDIDATE. BTCUSDT 15m BOTH. RelVol spike > 1.5 with close vs EMA21. Use risk book BTC 15m Vol Spike (SL 2.50% / TP 5.00%). Not validated alpha. LIVE off.", true),
         (StrategyTemplateKeys.Bb202Break, "BTC 15m Bollinger Break",
             "HISTORICALLY_FITTED_CANDIDATE. BTCUSDT 15m BOTH. Close cross of Bollinger (20,2). Use risk book BTC 15m BB Break (SL 4.00% / TP 5.00%). Not validated alpha. LIVE off.", true),
+        (StrategyTemplateKeys.FlatRange, "Flat Range",
+            "ფლეტზე წინა 24 საათის ზედა და ქვედა ზღვარი იკეტება. ლონგი ქვედა 20%-ში, შორტი ზედა 20%-ში. სტოპი შესვლის ზღვარია, ტეიკ-პროფიტი მოპირდაპირე ზღვარი. პოზიციის ზომა ისე ითვლება, რომ სტოპმა დაგეგმილი რისკი წაიღოს. 24 საათში იხურება.", false),
+        (StrategyTemplateKeys.BtcEma20Ema50Long, "30m EMA Cross",
+            "HISTORICALLY_FITTED_CANDIDATE. All USD-M coins, 30m LONG only. EMA20 cross above EMA50; exit on the cross back below. Use risk book 30m EMA Cross (R 0.50% / SL 1.00% / TP 20% cap). Not validated alpha. LIVE off.", true),
         (StrategyTemplateKeys.ScalpEmaMomentum, "Scalp EMA Momentum",
             "RESEARCH_ONLY. Fast/slow EMA momentum on closed 1m–15m bars. Not in the operator catalog. LIVE off.", true),
         (StrategyTemplateKeys.ScalpVwapReclaim, "Scalp VWAP Reclaim",
@@ -774,6 +787,75 @@ public sealed class DatabaseSeeder
             RiskPerTradePercent = 0.5m,
             StopLossPercent = 4m,
             TakeProfitPercent = 5m,
+            MaxLeverage = 3m,
+            MaxDailyLossPercent = 3m,
+            MaxPortfolioRiskPercent = 4m,
+            MaxSimultaneousPositions = 1,
+            MaxConsecutiveLosses = 5,
+            CooldownMinutes = 30,
+            MinimumLiquidationSafetyBufferPercent = 1m,
+            AllowLive = false,
+            IsActive = false
+        };
+
+    private static void AlignEmaCross(
+        Strategy strategy,
+        (string Key, string Name, string Description, bool Research) row,
+        StrategyTemplateParams parameters)
+    {
+        strategy.TemplateKey = row.Key;
+        strategy.Name = row.Name;
+        strategy.AllowedSide = StrategySides.Long;
+        strategy.AppliesToAllSymbols = true;
+        strategy.AllowedSymbolsCsv = null;
+        strategy.IsEnabled = true;
+        strategy.ValidationStatus = StrategyValidationStatuses.HistoricallyFittedCandidate;
+        if (string.IsNullOrWhiteSpace(strategy.Description) || strategy.Description != row.Description)
+        {
+            strategy.Description = row.Description;
+        }
+
+        var latest = strategy.Versions.OrderByDescending(v => v.VersionNumber).FirstOrDefault();
+        var current = latest is null ? null : StrategyTemplates.Read(latest.DefinitionJson);
+        var mismatch = latest is null
+            || current is null
+            || current.TemplateKey != parameters.TemplateKey
+            || current.Timeframe != "30m"
+            || current.AllowedSide != StrategySides.Long
+            || current.EmaFast != 20
+            || current.EmaSlow != 50
+            || latest.Timeframe != Timeframe.ThirtyMinutes;
+        if (!mismatch)
+        {
+            return;
+        }
+
+        var json = StrategyTemplates.Build(strategy.Name, (latest?.VersionNumber ?? 0) + (latest is { IsImmutable: true } or null ? 1 : 0), parameters);
+        if (latest is null || latest.IsImmutable)
+        {
+            strategy.Versions.Add(new StrategyVersion
+            {
+                Strategy = strategy,
+                VersionNumber = (latest?.VersionNumber ?? 0) + 1,
+                DefinitionJson = json,
+                Symbol = "BTCUSDT",
+                Timeframe = Timeframe.ThirtyMinutes
+            });
+            return;
+        }
+
+        latest.DefinitionJson = StrategyTemplates.Build(strategy.Name, latest.VersionNumber, parameters);
+        latest.Timeframe = Timeframe.ThirtyMinutes;
+        latest.Symbol = "BTCUSDT";
+        latest.UpdatedAt = DateTimeOffset.UtcNow;
+    }
+
+    private static RiskProfile FittedEmaCrossBook() =>
+        new()
+        {
+            RiskPerTradePercent = 0.5m,
+            StopLossPercent = 1m,
+            TakeProfitPercent = 20m,
             MaxLeverage = 3m,
             MaxDailyLossPercent = 3m,
             MaxPortfolioRiskPercent = 4m,

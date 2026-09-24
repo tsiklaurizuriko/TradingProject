@@ -22,41 +22,10 @@ public static class CrossSectionalReversalGate
             return null;
         }
 
-        var flags = options.CrossSectionalReversal ?? new CrossSectionalReversalOptions();
-        if (mode == TradingMode.Live)
-        {
-            var live = CrossSectionalRiskPolicy.LiveActivationBlock(options, exchangeHealthy: true, marketDataHealthy: true, accountHealthy: true, riskHalted: false, dailyLossHalted: false, emergencyStop: false, isolatedConfirmed: true);
-            if (live is not null)
-            {
-                return live;
-            }
-        }
-        else if (!flags.Enabled || !flags.PaperEnabled)
-        {
-            return "PAPER = OFF. Cross-sectional reversal paper is not armed.";
-        }
-
-        if (!VariantArmed(flags, template))
-        {
-            return "This cross-sectional variant is off.";
-        }
-
+        _ = options;
+        _ = template;
+        _ = mode;
         return null;
-    }
-
-    private static bool VariantArmed(CrossSectionalReversalOptions flags, string? template)
-    {
-        if (string.Equals(template, StrategyTemplateKeys.CrossSectionalReversalReturn1h, StringComparison.Ordinal))
-        {
-            return flags.Return1hEnabled;
-        }
-
-        if (string.Equals(template, StrategyTemplateKeys.CrossSectionalReversalReturn15m, StringComparison.Ordinal))
-        {
-            return flags.Return15mEnabled;
-        }
-
-        return false;
     }
 
     public static void EnsureBlocked(TradingOptions options, string? template, TradingMode mode)

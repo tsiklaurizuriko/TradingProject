@@ -112,7 +112,9 @@ public sealed class BacktestService : IBacktestService
                 book.MaxSimultaneousPositions,
                 book.MaxConsecutiveLosses,
                 book.CooldownMinutes,
-                book.MinimumLiquidationSafetyBufferPercent));
+                book.MinimumLiquidationSafetyBufferPercent,
+                HonorSuggestedStops: StrategyTemplateKeys.IsFlatRange(definition.Template),
+                MaxHoldBars: StrategyTemplateKeys.IsFlatRange(definition.Template) ? FlatRangeStrategy.MaxHoldHours : 0));
 
         var user = await _store.GetUserAsync(userId, cancellationToken)
             ?? await _store.GetFirstAdminAsync(cancellationToken);

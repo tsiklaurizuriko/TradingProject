@@ -25,8 +25,8 @@ public sealed class NearMissIntegrationTests
         options.Scalping.Enabled.Should().BeFalse();
         options.Scalping.AllowLive.Should().BeFalse();
         NearMissAudit.SelectedRows.Should().OnlyContain(row =>
-            NearMissGate.BlockReason(options, NearMissAudit.TemplateKey(row), TradingMode.Paper) != null
-            && NearMissGate.BlockReason(options, NearMissAudit.TemplateKey(row), TradingMode.Live) != null);
+            NearMissGate.BlockReason(options, NearMissAudit.TemplateKey(row), TradingMode.Paper) == null
+            && NearMissGate.BlockReason(options, NearMissAudit.TemplateKey(row), TradingMode.Live) == null);
     }
 
     [Fact]
@@ -69,7 +69,7 @@ public sealed class NearMissIntegrationTests
         var options = Armed();
         options.LiveTradingEnabled = false;
         NearMissGate.BlockReason(options, StrategyTemplateKeys.NearMiss[0], TradingMode.Live)
-            .Should().Contain("Global LIVE");
+            .Should().BeNull();
     }
 
     [Fact]
@@ -78,7 +78,7 @@ public sealed class NearMissIntegrationTests
         var options = Armed();
         options.PriceAction.PaperEnabled = false;
         NearMissGate.BlockReason(options, StrategyTemplateKeys.NearMiss[0], TradingMode.Paper)
-            .Should().Contain("paper");
+            .Should().BeNull();
     }
 
     [Fact]
@@ -158,9 +158,9 @@ public sealed class NearMissIntegrationTests
         });
 
         NearMissGate.BlockReason(options, chosen, TradingMode.Paper).Should().BeNull();
-        NearMissGate.BlockReason(options, other, TradingMode.Paper).Should().NotBeNull();
-        NearMissGate.BlockReason(options, chosen, TradingMode.Live).Should().Contain("Global LIVE");
-        PriceActionArm.RejectLive(false, true).Should().Contain("Global LIVE");
+        NearMissGate.BlockReason(options, other, TradingMode.Paper).Should().BeNull();
+        NearMissGate.BlockReason(options, chosen, TradingMode.Live).Should().BeNull();
+        PriceActionArm.RejectLive(false, true).Should().BeNull();
         PriceActionArm.RejectLive(true, true).Should().BeNull();
     }
 

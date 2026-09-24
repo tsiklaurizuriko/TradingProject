@@ -24,6 +24,7 @@ public static class AdvancedStrategyEvaluator
             StrategyTemplateKeys.FundingOiRegime => FundingRegime(p, candles, i, context, cache),
             StrategyTemplateKeys.VolSpikeEmaTrend => VolSpikeEma(p, candles, i, context, cache),
             StrategyTemplateKeys.Bb202Break => BbBreak(p, candles, i, context, cache),
+            StrategyTemplateKeys.BtcEma20Ema50Long => EmaCrossLong(p, candles, i, context, cache),
             var pa when StrategyTemplateKeys.IsPriceAction(pa) =>
                 PriceActionStrategyEvaluator.Evaluate(p, candles, i, context, cache),
             var scalp when StrategyTemplateKeys.IsScalping(scalp) => ScalpingStrategyEvaluator.Evaluate(p, candles, i, context, cache),
@@ -626,6 +627,33 @@ public static class AdvancedStrategyEvaluator
         }
 
         return Detail(SignalType.NoAction, "No Bollinger (20,2) break.", candles, i);
+    }
+
+    private static StrategySignalDetail EmaCrossLong(
+        StrategyTemplateParams p,
+        IReadOnlyList<MarketCandle> candles,
+        int i,
+        StrategyContext context,
+        CausalIndicatorCache cache)
+    {
+        var fast = cache.Ema(p.EmaFast);
+        var slow = cache.Ema(p.EmaSlow);
+        if (context.HasOpenPosition)
+        {
+            if (IsLong(context) && CrossesBelow(fast, slow, i))
+            {
+                return Detail(SignalType.Exit, "EMA20 crossed below EMA50.", candles, i, status: "HISTORICALLY_FITTED_CANDIDATE");
+            }
+
+            return Detail(SignalType.Hold, "Position open; EMA20 is still above EMA50.", candles, i, status: "HISTORICALLY_FITTED_CANDIDATE");
+        }
+
+        if (CrossesAbove(fast, slow, i))
+        {
+            return Detail(SignalType.Buy, "EMA20 crossed above EMA50. Long only.", candles, i, status: "HISTORICALLY_FITTED_CANDIDATE");
+        }
+
+        return Detail(SignalType.NoAction, "No EMA20 cross above EMA50.", candles, i, status: "HISTORICALLY_FITTED_CANDIDATE");
     }
 
     private static StrategySignalDetail Detail(

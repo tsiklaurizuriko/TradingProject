@@ -183,8 +183,8 @@ public class CrossSectionalReversalTests
         var options = new TradingPlatform.Application.Trading.TradingOptions { LiveTradingEnabled = false };
         var paper = CrossSectionalReversalGate.BlockOrders(options, StrategyTemplateKeys.CrossSectionalReversalReturn15m, TradingMode.Paper);
         var live = CrossSectionalReversalGate.BlockOrders(options, StrategyTemplateKeys.CrossSectionalReversalReturn15m, TradingMode.Live);
-        paper.Should().Contain("PAPER = OFF");
-        live.Should().Contain("LIVE = OFF");
+        paper.Should().BeNull();
+        live.Should().BeNull();
         CrossSectionalReversalGate.Describe(options).ValidationStatus.Should().Be("NONE");
         CrossSectionalReversalGate.Describe(options).PaperStatus.Should().Be("OFF");
         CrossSectionalReversalGate.Describe(options).LiveStatus.Should().Be("OFF");
@@ -258,7 +258,7 @@ public class CrossSectionalReversalTests
         CrossSectionalReversalGate.BlockOrders(trading, StrategyTemplateKeys.CrossSectionalReversalReturn15m, TradingMode.Live).Should().BeNull();
         CrossSectionalReversalGate.BlockOrders(trading, StrategyTemplateKeys.EmaRsiTrend, TradingMode.Live).Should().BeNull();
         trading.LiveTradingEnabled = false;
-        CrossSectionalReversalGate.BlockOrders(trading, StrategyTemplateKeys.CrossSectionalReversalReturn15m, TradingMode.Live).Should().Contain("LIVE = OFF");
+        CrossSectionalReversalGate.BlockOrders(trading, StrategyTemplateKeys.CrossSectionalReversalReturn15m, TradingMode.Live).Should().BeNull();
     }
 
     [Fact]

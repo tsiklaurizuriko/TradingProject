@@ -45,6 +45,7 @@ public static class StrategyTemplateKeys
     public const string OiBreakoutConfirmation = "oi_breakout_confirmation";
     public const string VolSpikeEmaTrend = "vol_spike_ema_trend";
     public const string Bb202Break = "bb20_2_break";
+    public const string BtcEma20Ema50Long = "btc_ema20_ema50_long";
     public const string ScalpEmaMomentum = "scalp_ema_momentum";
     public const string ScalpVwapReclaim = "scalp_vwap_reclaim";
     public const string ScalpVwapReversion = "scalp_vwap_reversion";
@@ -87,6 +88,7 @@ public static class StrategyTemplateKeys
     public const string PaFailedBreakout = "pa_failed_breakout";
     public const string CrossSectionalReversalReturn15m = "cross_sectional_reversal_return_15m";
     public const string CrossSectionalReversalReturn1h = "cross_sectional_reversal_return_1h";
+    public const string FlatRange = "flat_range";
 
     public static readonly string[] Frozen =
     [
@@ -138,7 +140,8 @@ public static class StrategyTemplateKeys
     public static readonly string[] HistoricallyFitted =
     [
         VolSpikeEmaTrend,
-        Bb202Break
+        Bb202Break,
+        BtcEma20Ema50Long
     ];
 
     public static readonly string[] Scalping =
@@ -199,7 +202,9 @@ public static class StrategyTemplateKeys
 
     public static readonly string[] NearMiss = NearMissAudit.SelectedRows.Select(NearMissAudit.TemplateKey).ToArray();
 
-    public static readonly string[] All = [.. Frozen, .. Research, .. NearMiss, .. CrossSectionalReversal];
+    public static readonly string[] Range = [FlatRange];
+
+    public static readonly string[] All = [.. Frozen, .. Research, .. NearMiss, .. CrossSectionalReversal, .. Range];
 
     /// <summary>
     /// Operator catalog: PAPER or weak guidance only. Avoid/blocked templates stay in the engine
@@ -216,7 +221,9 @@ public static class StrategyTemplateKeys
         VwapBreakoutVolume,
         MarketStructureTrend,
         VolSpikeEmaTrend,
-        Bb202Break
+        Bb202Break,
+        BtcEma20Ema50Long,
+        FlatRange
     ];
 
     public static readonly string[] SupportedTimeframes = ["5m", "15m", "1h"];
@@ -278,6 +285,9 @@ public static class StrategyTemplateKeys
     public static bool IsCrossSectionalReversal(string? key) =>
         CrossSectionalReversal.Contains(Normalize(key), StringComparer.OrdinalIgnoreCase);
 
+    public static bool IsFlatRange(string? key) =>
+        string.Equals(Normalize(key), FlatRange, StringComparison.Ordinal);
+
     public static bool IsResearchOnlyFamily(string? key) => IsScalping(key) || IsPriceAction(key) || IsCrossSectionalReversal(key);
 
     public static bool IsResearch(string? key) =>
@@ -310,10 +320,10 @@ public static class StrategyTemplateKeys
             or FundingPriceMomentum or FundingExtremeMomentumExhaustion or BasisMeanReversion or FundingBasisVwap
             or OiBreakoutConfirmation => "FUTURES / FLOW",
         RegimeStrategyRouter => "ROUTER",
-        BollingerReversion => "MEAN REVERSION",
+        BollingerReversion or FlatRange => "MEAN REVERSION",
         DonchianBreakout => "BREAKOUT / TREND",
         Bb202Break => "BREAKOUT / TREND",
-        VolSpikeEmaTrend => "TREND",
+        VolSpikeEmaTrend or BtcEma20Ema50Long => "TREND",
         var scalp when IsScalping(scalp) => "SCALPING",
         var pa when IsPriceAction(pa) => "SCALPING_PRICE_ACTION",
         var near when IsNearMiss(near) => "NEAR_MISS",
@@ -525,6 +535,21 @@ public static class StrategyTemplates
                 AllowedSide = StrategySides.Both,
                 BbPeriod = 20,
                 BbStdDev = 2m,
+                VolumeFilterEnabled = false
+            },
+            StrategyTemplateKeys.BtcEma20Ema50Long => core with
+            {
+                Timeframe = "30m",
+                AllowedSide = StrategySides.Long,
+                EmaFast = 20,
+                EmaSlow = 50,
+                VolumeFilterEnabled = false
+            },
+            StrategyTemplateKeys.FlatRange => core with
+            {
+                Timeframe = "1h",
+                AllowedSide = StrategySides.Both,
+                EntryLookback = FlatRangeStrategy.Lookback,
                 VolumeFilterEnabled = false
             },
             var pa when StrategyTemplateKeys.IsPriceAction(pa) => core with
@@ -838,6 +863,7 @@ public static class StrategyTemplates
         StrategyTemplateKeys.OiBreakoutConfirmation => "OI Breakout Confirmation",
         StrategyTemplateKeys.VolSpikeEmaTrend => "BTC 15m Volume Spike EMA",
         StrategyTemplateKeys.Bb202Break => "BTC 15m Bollinger Break",
+        StrategyTemplateKeys.BtcEma20Ema50Long => "30m EMA Cross",
         StrategyTemplateKeys.ScalpEmaMomentum => "Scalp EMA Momentum",
         StrategyTemplateKeys.ScalpVwapReclaim => "Scalp VWAP Reclaim",
         StrategyTemplateKeys.ScalpVwapReversion => "Scalp VWAP Reversion",
@@ -881,6 +907,7 @@ public static class StrategyTemplates
         var near when StrategyTemplateKeys.IsNearMiss(near) => NearMissTitle(near),
         StrategyTemplateKeys.CrossSectionalReversalReturn15m => "Return 15m Reversal",
         StrategyTemplateKeys.CrossSectionalReversalReturn1h => "Return 1h Reversal",
+        StrategyTemplateKeys.FlatRange => "Flat Range",
         _ => "EMA RSI Trend"
     };
 
@@ -922,6 +949,7 @@ public static class StrategyTemplates
         StrategyTemplateKeys.OiBreakoutConfirmation => "Research whether OI expansion adds incremental information to a volume-confirmed breakout. OI_SAMPLE_LIMITED.",
         StrategyTemplateKeys.VolSpikeEmaTrend => "ისტორიულად მორგებული BTCUSDT 15m კანდიდატი: volume spike + EMA21. არ არის validated alpha. SL 2.50% / TP 5.00% / 192 bar.",
         StrategyTemplateKeys.Bb202Break => "ისტორიულად მორგებული BTCUSDT 15m კანდიდატი: Bollinger (20,2) break. არ არის validated alpha. SL 4.00% / TP 5.00% / 192 bar.",
+        StrategyTemplateKeys.BtcEma20Ema50Long => "ყველა მონეტა, 30 წუთი, მხოლოდ ყიდვა. EMA(20) დახურულ ბარზე კვეთს EMA(50)-ს ზემოთ. გასვლა უკუ გადაკვეთაზე. სტოპი 1%. Take profit 20% შორი ჭერია, რადგან რისკის წიგნს მიზანი სჭირდება. არ არის validated.",
         StrategyTemplateKeys.ScalpEmaMomentum => "RESEARCH_ONLY scalping hypothesis: fast/slow EMA momentum on closed 1m–15m bars. Not a profit claim.",
         StrategyTemplateKeys.ScalpVwapReclaim => "RESEARCH_ONLY scalping hypothesis: session VWAP reclaim after a dip. Isolated book owns SL/TP.",
         StrategyTemplateKeys.ScalpVwapReversion => "RESEARCH_ONLY scalping hypothesis: ATR-scaled VWAP deviation fade. Isolated book owns SL/TP.",
@@ -950,6 +978,8 @@ public static class StrategyTemplates
             "NEAR_MISS. Not validated and not a profit claim. Frozen Phase 8 definition. Paper and LIVE stay off until you arm them. Same Isolated risk and execution path.",
         var csr when StrategyTemplateKeys.IsCrossSectionalReversal(csr) =>
             "Repeatable cross-sectional reversal factor — not validated for trading.",
+        StrategyTemplateKeys.FlatRange =>
+            "ფლეტზე ზედა და ქვედა ზღვარი იკეტება. ლონგი ქვედა მეხუთედში, შორტი ზედა მეხუთედში. სტოპი შესვლის ზღვარია, ტეიკ-პროფიტი მოპირდაპირე ზღვარი. ზომა ისე ითვლება, რომ სტოპმა დაგეგმილი რისკი წაიღოს. 24 საათში იხურება. არ არის validated.",
         _ => "ახალ ტრენდს იწყებს: სწრაფი EMA ნელს კვეთს, RSI ადასტურებს. მიზანი — მიმართულების ცვლილება, სუსტი გადაკვეთების გარეშე."
     };
 
@@ -994,6 +1024,7 @@ public static class StrategyTemplates
         StrategyTemplateKeys.XsRelativeStrength => "DATA_UNAVAILABLE",
         StrategyTemplateKeys.VolSpikeEmaTrend => StrategyValidationStatuses.HistoricallyFittedCandidate,
         StrategyTemplateKeys.Bb202Break => StrategyValidationStatuses.HistoricallyFittedCandidate,
+        StrategyTemplateKeys.BtcEma20Ema50Long => StrategyValidationStatuses.HistoricallyFittedCandidate,
         var near when StrategyTemplateKeys.IsNearMiss(near) => StrategyValidationStatuses.NearMiss,
         var csr when StrategyTemplateKeys.IsCrossSectionalReversal(csr) => StrategyValidationStatuses.Researching,
         var key when StrategyTemplateKeys.IsResearch(key) => "RESEARCHING",

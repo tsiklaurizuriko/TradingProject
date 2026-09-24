@@ -24,7 +24,6 @@ import {
   ratingSortValue,
   starSlots,
   verdictLabel,
-  isOperatorCatalog,
   isNearMiss,
 } from '../../core/trading/strategy-ratings';
 
@@ -85,6 +84,8 @@ const templateOptions = [
   { key: 'market_structure_trend', label: 'Market Structure Trend Continuation' },
   { key: 'vol_spike_ema_trend', label: 'BTC 15m Volume Spike EMA' },
   { key: 'bb20_2_break', label: 'BTC 15m Bollinger Break' },
+  { key: 'btc_ema20_ema50_long', label: '30m EMA Cross' },
+  { key: 'flat_range', label: 'Flat Range' },
   { key: 'cross_sectional_reversal_return_15m', label: 'Return 15m Reversal' },
   { key: 'cross_sectional_reversal_return_1h', label: 'Return 1h Reversal' },
 ] as const;
@@ -168,6 +169,10 @@ const templateLogic: Record<string, string> = {
     'ისტორიულად მორგებული BTCUSDT 15m: volume spike + EMA21. არ არის validated alpha. SL 2.50% / TP 5.00% / 192 bar. LIVE არა.',
   bb20_2_break:
     'ისტორიულად მორგებული BTCUSDT 15m: Bollinger (20,2) break. არ არის validated alpha. SL 4.00% / TP 5.00% / 192 bar. LIVE არა.',
+  btc_ema20_ema50_long:
+    'ყველა მონეტა, 30 წუთი, მხოლოდ ყიდვა. EMA(20) კვეთს EMA(50)-ს ზემოთ. გასვლა უკუ გადაკვეთაზე. სტოპი 1%. TP 20% შორი ჭერია. არ არის validated. LIVE არა.',
+  flat_range:
+    'ფლეტზე წინა 24 საათის ზედა და ქვედა ზღვარი იკეტება. ლონგი ქვედა 20%-ში, შორტი ზედა 20%-ში. სტოპი შესვლის ზღვარია, ტეიკ-პროფიტი მოპირდაპირე ზღვარი. ზომა დაგეგმილ რისკს სტოპამდე მანძილზე ანაწილებს. 24 საათში იხურება.',
 };
 
 const dataDependencies: Record<string, string> = {
@@ -224,6 +229,7 @@ function familyFor(key: string | undefined, fallback?: string): string {
     case 'zscore_mean_reversion':
     case 'crypto_pairs_arb':
     case 'bollinger_reversion':
+    case 'flat_range':
       return 'MEAN REVERSION';
     case 'liq_sweep_reversal':
     case 'failed_breakout_reversal':
@@ -278,8 +284,11 @@ function depsFor(key: string): string {
           <label class="field">Use
             <select [ngModel]="useFilter()" (ngModelChange)="useFilter.set($event)">
               <option value="">All</option>
-              <option value="paper">გამოიყენე PAPER-ზე</option>
               <option value="weak">სუსტი</option>
+              <option value="near-miss">NEAR-MISS</option>
+              <option value="avoid">არ გამოიყენო</option>
+              <option value="blocked">ვერ გაეშვება</option>
+              <option value="paper">გამოიყენე PAPER-ზე</option>
             </select>
           </label>
           <label class="field">Family
@@ -740,9 +749,6 @@ export class StrategiesPage {
       },
     );
     return rows.filter((row) => {
-      if (!isOperatorCatalog(row.templateKey) && !isCrossSection(row.templateKey) && !isScalping(row.templateKey)) {
-        return false;
-      }
       if (family && familyFor(row.templateKey, row.family) !== family) {
         return false;
       }

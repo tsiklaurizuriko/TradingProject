@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { TradingService } from '../../core/trading/trading.service';
 import { BotDto, botStatus, modeBadge, signedMoney } from '../../core/trading/trading.models';
-import { ratingFor, ratingSortValue, starText, verdictLabel, isOperatorCatalog, isNearMiss } from '../../core/trading/strategy-ratings';
+import { ratingFor, ratingSortValue, starText, verdictLabel } from '../../core/trading/strategy-ratings';
 import { ToastService } from '../../core/ui/toast.service';
 import { UiStateService } from '../../core/ui/ui-state.service';
 import { IconComponent } from '../../shared/icon/icon';
@@ -74,9 +74,7 @@ export class BotsPage {
     this.rankedStrategies().find((row) => row.id === this.strategyId()) ?? this.rankedStrategies()[0] ?? null,
   );
   readonly rankedStrategies = computed(() =>
-    [...this.trading.strategies()]
-      .filter((row) => isOperatorCatalog(row.templateKey) || isNearMiss(row.templateKey))
-      .sort((a, b) => ratingSortValue(b.templateKey) - ratingSortValue(a.templateKey)),
+    [...this.trading.strategies()].sort((a, b) => ratingSortValue(b.templateKey) - ratingSortValue(a.templateKey)),
   );
   readonly ratingFor = ratingFor;
 
@@ -183,12 +181,8 @@ export class BotsPage {
         `${result.created} created, ${result.skipped} skipped. They stay stopped until you press Start.`,
         result.created ? 'success' : 'info',
       );
-    } catch {
-      this.toast.show(
-        'Create blocked',
-        this.ui.isLive() ? 'Save a Binance API key on Live Connection first.' : 'Could not create these paper bots.',
-        'error',
-      );
+    } catch (error) {
+      this.toast.show('Create blocked', apiMessage(error), 'error');
     } finally {
       this.busy = false;
     }
@@ -321,4 +315,15 @@ export class BotsPage {
     const wins = closed.filter((t) => t.pnL > 0).length;
     return `${((wins / closed.length) * 100).toFixed(0)}%`;
   }
+}
+
+function apiMessage(error: unknown): string {
+  const http = error as { error?: { message?: string } | string };
+  if (typeof http.error === 'string' && http.error.trim() && !http.error.trim().startsWith('<')) {
+    return http.error.trim();
+  }
+  if (http.error && typeof http.error === 'object' && http.error.message) {
+    return http.error.message;
+  }
+  return error instanceof Error ? error.message : 'Could not create these bots.';
 }

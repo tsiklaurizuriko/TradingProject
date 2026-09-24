@@ -58,10 +58,14 @@ internal static class ResearchKlineCache
         var tailCovered = strictCoverage
             ? merged.Count > 0 && merged[^1].CloseTime >= end
             : merged.Count > 0 && merged[^1].CloseTime >= end.AddMilliseconds(-interval * 2);
+        var windowGaps = strictCoverage
+            ? GapCount(Slice(merged, start, end).Where(c => c.IsClosed).OrderBy(c => c.OpenTime).ToList(), timeframe)
+            : 0;
         if (merged.Count >= 80
             && headCovered
             && tailCovered
-            && (!requireTaker || takerOk))
+            && (!requireTaker || takerOk)
+            && windowGaps == 0)
         {
             return (Slice(merged, start, end), true, 0);
         }
@@ -88,6 +92,41 @@ internal static class ResearchKlineCache
             var tail = await DownloadAsync(http, symbol, timeframe, merged[^1].CloseTime.AddMilliseconds(1), end, cancellationToken);
             downloaded += tail.Count;
             merged = Merge(merged, tail);
+        }
+
+        if (strictCoverage && merged.Count > 1)
+        {
+            for (var hole = 0; hole < 6; hole++)
+            {
+                merged = merged.OrderBy(c => c.OpenTime).ToList();
+                var found = false;
+                for (var i = 1; i < merged.Count; i++)
+                {
+                    var delta = merged[i].OpenTime.ToUnixTimeMilliseconds() - merged[i - 1].OpenTime.ToUnixTimeMilliseconds();
+                    if (delta <= interval + 1)
+                    {
+                        continue;
+                    }
+
+                    var holeStart = merged[i - 1].CloseTime.AddMilliseconds(1);
+                    var holeEnd = merged[i].OpenTime.AddMilliseconds(-1);
+                    if (holeEnd <= holeStart)
+                    {
+                        continue;
+                    }
+
+                    var patch = await DownloadAsync(http, symbol, timeframe, holeStart, holeEnd, cancellationToken);
+                    downloaded += patch.Count;
+                    merged = Merge(merged, patch);
+                    found = true;
+                    break;
+                }
+
+                if (!found)
+                {
+                    break;
+                }
+            }
         }
 
         var closed = ClosedUnique(merged, preferLast: requireTaker);
@@ -118,6 +157,9 @@ internal static class ResearchKlineCache
 
     private static List<MarketCandle> Slice(IReadOnlyList<MarketCandle> candles, DateTimeOffset start, DateTimeOffset end) =>
         candles.Where(c => c.CloseTime >= start && c.OpenTime <= end).ToList();
+
+    public static async Task<List<MarketCandle>> ReadClosedAsync(string path) =>
+        (await ReadAsync(path)).Select(ToCandle).ToList();
 
     private static async Task<List<CachedBar>> ReadAsync(string path)
     {
@@ -158,10 +200,11 @@ internal static class ResearchKlineCache
 
         var cap = timeframe switch
         {
-            "1m" => 300_000,
-            "3m" => 150_000,
-            "5m" => 220_000,
+            "1m" => 1_200_000,
+            "3m" => 400_000,
+            "5m" => 250_000,
             "15m" => 80_000,
+            "30m" => 50_000,
             _ => 20_000
         };
 
@@ -294,6 +337,7 @@ internal static class ResearchKlineCache
         "3m" => 3 * 60 * 1000,
         "5m" => 5 * 60 * 1000,
         "15m" => 15 * 60 * 1000,
+        "30m" => 30 * 60 * 1000,
         "1h" => 60 * 60 * 1000,
         _ => 60 * 60 * 1000
     };

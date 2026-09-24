@@ -121,6 +121,7 @@ public sealed class StrategyContext
     public decimal CurrentPrice { get; init; }
     public bool HasOpenPosition { get; init; }
     public PositionSide PositionSide { get; init; } = PositionSide.Long;
+    public DateTimeOffset? PositionOpenedAt { get; init; }
     /// <summary>Optional higher-timeframe cache. LIVE and frozen templates leave this null.</summary>
     public CausalIndicatorCache? HigherTimeframeCache { get; init; }
     /// <summary>Open interest aligned to ClosedCandles. Null means historical OI is unavailable.</summary>

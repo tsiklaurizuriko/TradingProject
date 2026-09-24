@@ -103,6 +103,61 @@ if (args.Any(a => string.Equals(a, "--extreme-move", StringComparison.OrdinalIgn
     return await ExtremeMoveStudy.RunAsync(root, candleCacheDir);
 }
 
+if (args.Any(a => string.Equals(a, "--extreme-move-signals", StringComparison.OrdinalIgnoreCase)))
+{
+    return await ExtremeMoveSignals.RunAsync(root, candleCacheDir);
+}
+
+if (args.Any(a => string.Equals(a, "--flat-range", StringComparison.OrdinalIgnoreCase)))
+{
+    return FlatRangeStudy.Run(root, candleCacheDir);
+}
+
+if (args.Any(a => string.Equals(a, "--flat-now", StringComparison.OrdinalIgnoreCase)))
+{
+    return await FlatRangeStudy.ScanNow(root, candleCacheDir);
+}
+
+if (args.Any(a => string.Equals(a, "--flat-risk", StringComparison.OrdinalIgnoreCase)))
+{
+    return FlatRangeStudy.RunRisk(root, candleCacheDir);
+}
+
+if (args.Any(a => string.Equals(a, "--combined-trader", StringComparison.OrdinalIgnoreCase)))
+{
+    return CombinedTrader.Run(root, candleCacheDir);
+}
+
+if (args.Any(a => string.Equals(a, "--liquid-reversal", StringComparison.OrdinalIgnoreCase)))
+{
+    return CombinedTrader.RunLiquid(root, candleCacheDir);
+}
+
+if (args.Any(a => string.Equals(a, "--fit-sweep", StringComparison.OrdinalIgnoreCase)))
+{
+    return FitSweep.Run(root, candleCacheDir);
+}
+
+if (args.Any(a => string.Equals(a, "--btc-hf", StringComparison.OrdinalIgnoreCase)))
+{
+    return await BtcHfSearch.RunAsync(root, candleCacheDir);
+}
+
+if (args.Any(a => string.Equals(a, "--btc-hedge", StringComparison.OrdinalIgnoreCase)))
+{
+    return await BtcHfSearch.RunHedgeAsync(root, candleCacheDir);
+}
+
+if (args.Any(a => string.Equals(a, "--ema-cross-top", StringComparison.OrdinalIgnoreCase)))
+{
+    return await BtcHfSearch.RunTopAsync(root, candleCacheDir);
+}
+
+if (args.Any(a => string.Equals(a, "--ema-cross-universe", StringComparison.OrdinalIgnoreCase)))
+{
+    return await BtcHfSearch.RunUniverseAsync(root, candleCacheDir);
+}
+
 if (args.Any(a => string.Equals(a, "--final-five", StringComparison.OrdinalIgnoreCase)))
 {
     return await FinalFiveDiscovery.RunAsync(root, candleCacheDir, args);

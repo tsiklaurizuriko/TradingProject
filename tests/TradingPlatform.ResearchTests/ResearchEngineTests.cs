@@ -28,7 +28,7 @@ public sealed class ResearchEngineTests
             + StrategyTemplateKeys.Research.Length
             + StrategyTemplateKeys.NearMiss.Length
             + StrategyTemplateKeys.CrossSectionalReversal.Length);
-        StrategyTemplateKeys.Research.Should().HaveCount(72);
+        StrategyTemplateKeys.Research.Should().HaveCount(73);
         StrategyTemplateKeys.AdvancedSix.Should().HaveCount(6);
         StrategyTemplateKeys.Alpha.Should().HaveCount(24);
     }

@@ -716,7 +716,8 @@ public sealed class BotEngine : IBotEngine
                     CurrentPrice = lastPrice,
                     HasOpenPosition = position is not null,
                     AverageEntryPrice = position?.AverageEntryPrice,
-                    PositionSide = position?.Side ?? PositionSide.Long
+                    PositionSide = position?.Side ?? PositionSide.Long,
+                    PositionOpenedAt = position?.OpenedAt
                 },
                 out reason);
         }
@@ -928,6 +929,28 @@ public sealed class BotEngine : IBotEngine
         }
 
         snapshot = snapshot with { Side = signalType == SignalType.Sell ? PositionSide.Short : PositionSide.Long };
+        if (StrategyTemplateKeys.IsFlatRange(definition.Template))
+        {
+            var quote = FlatRangeStrategy.Evaluate(candles, candles.Count - 1, false, StrategySides.Both, null);
+            if (quote.SuggestedStop is not decimal stop || quote.SuggestedTakeProfit is not decimal take || lastPrice <= 0m)
+            {
+                bot.LastError = "Flat range did not lock a stop and a take profit.";
+                return;
+            }
+
+            var stopPct = Math.Abs(lastPrice - stop) / lastPrice * 100m;
+            var takePct = Math.Abs(take - lastPrice) / lastPrice * 100m;
+            var longSide = signalType == SignalType.Buy;
+            var ordered = longSide ? stop < lastPrice && take > lastPrice : stop > lastPrice && take < lastPrice;
+            if (!ordered || stopPct < FlatRangeStrategy.MinStopPercent || takePct <= stopPct)
+            {
+                bot.LastError = "Flat range stop and take profit no longer sit on the right sides of price.";
+                return;
+            }
+
+            profile = FlatRangeRisk(profile, stopPct, takePct);
+        }
+
         var risk = _risk.Evaluate(signalType, profile, snapshot, now);
         if (risk.Decision != RiskDecision.Approved)
         {
@@ -1706,6 +1729,23 @@ public sealed class BotEngine : IBotEngine
         existing.Status = OrderStatus.Cancelled;
         existing.RemainingQuantity = 0m;
     }
+
+    private static RiskProfile FlatRangeRisk(RiskProfile source, decimal stopPercent, decimal takePercent) =>
+        new()
+        {
+            Name = source.Name,
+            RiskPerTradePercent = source.RiskPerTradePercent,
+            StopLossPercent = stopPercent,
+            TakeProfitPercent = takePercent,
+            MaxLeverage = source.MaxLeverage,
+            MaxDailyLossPercent = source.MaxDailyLossPercent,
+            MaxPortfolioRiskPercent = source.MaxPortfolioRiskPercent,
+            MaxSimultaneousPositions = source.MaxSimultaneousPositions,
+            MaxConsecutiveLosses = source.MaxConsecutiveLosses,
+            CooldownMinutes = source.CooldownMinutes,
+            MinimumLiquidationSafetyBufferPercent = source.MinimumLiquidationSafetyBufferPercent,
+            AllowLive = source.AllowLive
+        };
 
     private static decimal? PositivePrice(decimal? value) => value is > 0m ? value : null;
 

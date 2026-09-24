@@ -11,6 +11,62 @@ namespace TradingPlatform.UnitTests;
 public sealed class AdvancedStrategyTests
 {
     [Fact]
+    public void Ema_cross_long_buys_on_cross_up_exits_on_cross_down_and_does_not_short()
+    {
+        var candles = new List<MarketCandle>();
+        decimal price = 100m;
+        for (var i = 0; i < 80; i++)
+        {
+            price -= 0.35m;
+            candles.Add(Bar(candles.Count, price));
+        }
+
+        for (var i = 0; i < 50; i++)
+        {
+            price += 1.4m;
+            candles.Add(Bar(candles.Count, price));
+        }
+
+        var buyAt = -1;
+        for (var i = 55; i < candles.Count; i++)
+        {
+            var signal = EvalCross(candles.Take(i + 1).ToList(), open: false).Signal;
+            signal.Should().NotBe(SignalType.Sell);
+            if (signal == SignalType.Buy)
+            {
+                buyAt = i;
+                break;
+            }
+        }
+
+        buyAt.Should().BeGreaterThan(0);
+        for (var i = 0; i < 60; i++)
+        {
+            price -= 1.6m;
+            candles.Add(Bar(candles.Count, price));
+        }
+
+        var exited = false;
+        for (var i = buyAt + 1; i < candles.Count; i++)
+        {
+            var slice = candles.Take(i + 1).ToList();
+            var open = EvalCross(slice, open: true).Signal;
+            open.Should().NotBe(SignalType.Sell);
+            open.Should().NotBe(SignalType.Buy);
+            if (open != SignalType.Exit)
+            {
+                continue;
+            }
+
+            exited = true;
+            EvalCross(slice, open: false).Signal.Should().Be(SignalType.NoAction);
+            break;
+        }
+
+        exited.Should().BeTrue();
+    }
+
+    [Fact]
     public void Turtle_long_excludes_current_candle_from_breakout_range()
     {
         var candles = Range(40, 100m);
@@ -244,6 +300,21 @@ public sealed class AdvancedStrategyTests
         }
 
         return -1;
+    }
+
+    private static StrategySignalDetail EvalCross(IReadOnlyList<MarketCandle> candles, bool open)
+    {
+        var parsed = StrategyTemplates.Validate(StrategyTemplates.DefaultsFor(StrategyTemplateKeys.BtcEma20Ema50Long, false));
+        var cache = new CausalIndicatorCache(candles);
+        var i = candles.Count - 1;
+        var ctx = new StrategyContext
+        {
+            ClosedCandles = candles,
+            CurrentPrice = candles[^1].Close,
+            HasOpenPosition = open,
+            PositionSide = PositionSide.Long
+        };
+        return AdvancedStrategyEvaluator.Evaluate(parsed, candles, i, ctx, cache);
     }
 
     private static StrategySignalDetail Eval(string template, IReadOnlyList<MarketCandle> candles, bool volumeOff = false)

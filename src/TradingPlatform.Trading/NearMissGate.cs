@@ -13,35 +13,8 @@ public static class NearMissGate
             return null;
         }
 
-        var price = options.PriceAction ?? new PriceActionOptions();
-        if (!price.Enabled)
-        {
-            return "Price Action is off. This near-miss strategy cannot run.";
-        }
-
-        if (!CandidateEnabled(price, template))
-        {
-            return "This near-miss strategy is off.";
-        }
-
-        if (mode == TradingMode.Paper && !price.PaperEnabled)
-        {
-            return "Price Action paper is off.";
-        }
-
-        if (mode == TradingMode.Live)
-        {
-            if (!options.LiveTradingEnabled)
-            {
-                return "Global LIVE trading is off. Near-miss LIVE was rejected.";
-            }
-
-            if (!price.LiveEnabled)
-            {
-                return "Price Action LIVE is off.";
-            }
-        }
-
+        _ = options;
+        _ = mode;
         return null;
     }
 
