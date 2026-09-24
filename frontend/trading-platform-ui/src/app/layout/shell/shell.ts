@@ -53,7 +53,6 @@ export class Shell {
       label: 'Analysis',
       items: [
         { path: '/strategies', label: 'Strategies', icon: 'layers' },
-        { path: '/scalping', label: 'Scalping', icon: 'flask' },
         { path: '/risk', label: 'Risk Management', icon: 'shield' },
         { path: '/backtesting', label: 'Backtesting', icon: 'flask' },
         { path: '/performance', label: 'Performance', icon: 'chart' },

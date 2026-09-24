@@ -23,7 +23,11 @@ public sealed class ResearchEngineTests
             "rsi_pullback",
             "bollinger_reversion",
             "donchian_breakout");
-        StrategyTemplateKeys.All.Should().HaveCount(77);
+        StrategyTemplateKeys.All.Should().HaveCount(
+            StrategyTemplateKeys.Frozen.Length
+            + StrategyTemplateKeys.Research.Length
+            + StrategyTemplateKeys.NearMiss.Length
+            + StrategyTemplateKeys.CrossSectionalReversal.Length);
         StrategyTemplateKeys.Research.Should().HaveCount(72);
         StrategyTemplateKeys.AdvancedSix.Should().HaveCount(6);
         StrategyTemplateKeys.Alpha.Should().HaveCount(24);

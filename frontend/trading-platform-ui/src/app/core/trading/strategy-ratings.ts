@@ -347,6 +347,24 @@ const unrated: StrategyRating = {
   sample: 'unrated',
 };
 
+const scalpRating: StrategyRating = {
+  stars: 1,
+  verdict: 'blocked',
+  note: 'კვლევის სკალპია. სიაშია იმავე ბარათით. ბოტს არ სტარტავს.',
+  pf: null,
+  bookReturnPct: null,
+  sample: 'research',
+};
+
+const reversalRating: StrategyRating = {
+  stars: 2,
+  verdict: 'weak',
+  note: 'ზედა 10% short, ქვედა 10% long. საკუთარი რისკი 0.25%, long 5, short 5, 3x. გლობალური Live სანამ გამორთულია, ორდერი არ გავა.',
+  pf: null,
+  bookReturnPct: null,
+  sample: 'BTC 15m clock',
+};
+
 export function isOperatorCatalog(templateKey: string | undefined): boolean {
   const verdict = ratingFor(templateKey).verdict;
   return verdict === 'paper' || verdict === 'weak';
@@ -359,6 +377,12 @@ export function isNearMiss(templateKey: string | undefined): boolean {
 export function ratingFor(templateKey: string | undefined): StrategyRating {
   if (!templateKey) {
     return unrated;
+  }
+  if (templateKey.startsWith('scalp_')) {
+    return scalpRating;
+  }
+  if (templateKey.startsWith('cross_sectional_reversal')) {
+    return reversalRating;
   }
   return ratings[templateKey] ?? unrated;
 }

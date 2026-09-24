@@ -2,9 +2,11 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TradingPlatform.Application.Abstractions.MarketData;
+using Microsoft.Extensions.Options;
 using TradingPlatform.Application.Trading;
 using TradingPlatform.Domain.Errors;
 using TradingPlatform.Domain.Trading;
+using TradingPlatform.Trading;
 
 namespace TradingPlatform.Api.Controllers;
 
@@ -339,6 +341,78 @@ public sealed class TradingController : ControllerBase
     [HttpGet("research/scalping/price-action/occurrences")]
     public Task<IReadOnlyList<PriceActionOccurrenceDto>> PriceActionOccurrences(CancellationToken cancellationToken) =>
         _priceAction.GetOccurrencesAsync(cancellationToken);
+
+    [HttpGet("/api/strategies/cross-sectional-reversal")]
+    public CrossSectionalReversalStatusDto CrossSectionalReversal([FromServices] IOptions<TradingOptions> options) =>
+        CrossSectionalReversalGate.Describe(options.Value);
+
+    [HttpGet("/api/strategies/cross-sectional-reversal/{strategyId}/status")]
+    public ActionResult<CrossSectionalReversalStatusDto> CrossSectionalStatus(string strategyId, [FromServices] IOptions<TradingOptions> options) =>
+        KnownCrossSection(strategyId) ? CrossSectionalReversalGate.Describe(options.Value) : NotFound();
+
+    [HttpGet("/api/strategies/cross-sectional-reversal/{strategyId}/ranking")]
+    public ActionResult<object> CrossSectionalRanking(string strategyId) =>
+        KnownCrossSection(strategyId)
+            ? new { strategyId, candidates = Array.Empty<object>(), reason = "INSUFFICIENT_DATA", notice = "No live ranking snapshot. Forward returns are not used." }
+            : NotFound();
+
+    [HttpGet("/api/strategies/cross-sectional-reversal/{strategyId}/risk")]
+    public ActionResult<object> CrossSectionalRisk(string strategyId, [FromServices] IOptions<TradingOptions> options)
+    {
+        if (!KnownCrossSection(strategyId))
+        {
+            return NotFound();
+        }
+
+        var flags = options.Value.CrossSectionalReversal ?? new CrossSectionalReversalOptions();
+        return new
+        {
+            maxLongPositions = flags.MaxLongPositions,
+            maxShortPositions = flags.MaxShortPositions,
+            maxTotalPositions = flags.MaxTotalPositions,
+            maxCrossSectionalRiskPercent = flags.MaxCrossSectionalRiskPercent,
+            maxPerPositionRiskPercent = flags.MaxPerPositionRiskPercent,
+            maxLeverage = flags.MaxLeverage,
+            marginMode = "Isolated",
+            sizing = "EQUAL_RISK",
+            dailyLossOnIsolatedEntries = "NOT_APPLIED_BY_EXISTING_RISK_ENGINE"
+        };
+    }
+
+    [HttpGet("/api/strategies/cross-sectional-reversal/{strategyId}/rebalance")]
+    public ActionResult<object> CrossSectionalRebalance(string strategyId) =>
+        KnownCrossSection(strategyId)
+            ? new { strategyId, rebalance = (object?)null, reason = "INSUFFICIENT_DATA" }
+            : NotFound();
+
+    [HttpPost("/api/strategies/cross-sectional-reversal/{strategyId}/paper/enable")]
+    public ActionResult CrossSectionalPaperEnable(string strategyId) =>
+        KnownCrossSection(strategyId)
+            ? Conflict(new { paper = "OFF", reason = "PAPER = OFF. Production approval is INSUFFICIENT_EVIDENCE." })
+            : NotFound();
+
+    [HttpPost("/api/strategies/cross-sectional-reversal/{strategyId}/paper/disable")]
+    public ActionResult CrossSectionalPaperDisable(string strategyId, [FromServices] IOptions<TradingOptions> options) =>
+        KnownCrossSection(strategyId) ? Ok(CrossSectionalReversalGate.Describe(options.Value)) : NotFound();
+
+    [HttpPost("/api/strategies/cross-sectional-reversal/{strategyId}/live/enable")]
+    public ActionResult CrossSectionalLiveEnable(string strategyId, [FromServices] IOptions<TradingOptions> options)
+    {
+        if (!KnownCrossSection(strategyId))
+        {
+            return NotFound();
+        }
+
+        var block = CrossSectionalRiskPolicy.LiveActivationBlock(options.Value, true, true, true, false, false, false, true);
+        return Conflict(new { live = "OFF", reason = block ?? "LIVE = OFF." });
+    }
+
+    [HttpPost("/api/strategies/cross-sectional-reversal/{strategyId}/live/disable")]
+    public ActionResult CrossSectionalLiveDisable(string strategyId, [FromServices] IOptions<TradingOptions> options) =>
+        KnownCrossSection(strategyId) ? Ok(CrossSectionalReversalGate.Describe(options.Value)) : NotFound();
+
+    private static bool KnownCrossSection(string strategyId) =>
+        strategyId is "cross_sectional_reversal_return_15m" or "cross_sectional_reversal_return_1h" or "cross_sectional_reversal";
 
     [HttpGet("research/contextual-price-action")]
     public Task<ContextualPriceActionSummaryDto> ContextualPriceAction(CancellationToken cancellationToken) =>

@@ -9,6 +9,9 @@
     <ProjectReference Include="..\..\src\TradingPlatform.Backtesting\TradingPlatform.Backtesting.csproj" />
     <ProjectReference Include="..\..\src\TradingPlatform.Domain\TradingPlatform.Domain.csproj" />
     <ProjectReference Include="..\..\src\TradingPlatform.Strategies\TradingPlatform.Strategies.csproj" />
+    <ProjectReference Include="..\..\src\TradingPlatform.Trading\TradingPlatform.Trading.csproj" />
+    <ProjectReference Include="..\..\src\TradingPlatform.Risk\TradingPlatform.Risk.csproj" />
+    <ProjectReference Include="..\..\src\TradingPlatform.Application\TradingPlatform.Application.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />

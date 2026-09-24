@@ -17,14 +17,23 @@ public sealed class AlphaStrategyTests
         StrategyTemplateKeys.AdvancedSix.Should().HaveCount(6);
         StrategyTemplateKeys.Alpha.Should().HaveCount(24);
         StrategyTemplateKeys.Research.Should().HaveCount(72);
-        StrategyTemplateKeys.All.Should().HaveCount(77);
+        StrategyTemplateKeys.All.Should().HaveCount(
+            StrategyTemplateKeys.Frozen.Length
+            + StrategyTemplateKeys.Research.Length
+            + StrategyTemplateKeys.NearMiss.Length
+            + StrategyTemplateKeys.CrossSectionalReversal.Length);
         StrategyTemplateKeys.Scalping.Should().HaveCount(22);
         StrategyTemplateKeys.OperatorCatalog.Should().HaveCount(10);
         StrategyTemplateKeys.IsOperatorCatalog(StrategyTemplateKeys.RsiPullback).Should().BeTrue();
         StrategyTemplateKeys.IsOperatorCatalog(StrategyTemplateKeys.MacdTrend).Should().BeFalse();
         StrategyTemplateKeys.IsOperatorCatalog(StrategyTemplateKeys.ScalpEmaMomentum).Should().BeFalse();
         StrategyTemplateKeys.Family(StrategyTemplateKeys.ScalpEmaMomentum).Should().Be("SCALPING");
-        StrategyTemplateKeys.All.Should().Equal(StrategyTemplateKeys.Frozen.Concat(StrategyTemplateKeys.Research));
+        StrategyTemplateKeys.All.Should().Equal(
+            StrategyTemplateKeys.Frozen
+                .Concat(StrategyTemplateKeys.Research)
+                .Concat(StrategyTemplateKeys.NearMiss)
+                .Concat(StrategyTemplateKeys.CrossSectionalReversal));
+        StrategyTemplateKeys.IsOperatorCatalog(StrategyTemplateKeys.CrossSectionalReversalReturn15m).Should().BeFalse();
     }
 
     [Fact]

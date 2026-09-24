@@ -217,5 +217,6 @@ public sealed class NearMissIntegrationTests
         public void SetKlines(string symbol, Timeframe timeframe, IReadOnlyList<TradingPlatform.Domain.Market.MarketCandle> candles) { }
         public IReadOnlyList<TradingPlatform.Domain.Market.MarketCandle> GetKlines(string symbol, Timeframe timeframe) => [];
         public IReadOnlyList<TradingPlatform.Application.Abstractions.MarketData.CachedTicker> GetTickers() => [];
+        public IReadOnlyList<string> GetKlineSymbols(Timeframe timeframe) => [];
     }
 }

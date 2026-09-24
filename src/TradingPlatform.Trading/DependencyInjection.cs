@@ -23,6 +23,7 @@ public static class DependencyInjection
         services.AddScoped<IBotLifecycleService, BotLifecycleService>();
         services.AddScoped<ITradingQueryService, TradingQueryService>();
         services.AddHostedService<PriceActionArmLoader>();
+        services.AddHostedService<CrossSectionalUniverseWorker>();
 
         if (configuration.GetValue("Trading:HostBotEngine", true))
         {

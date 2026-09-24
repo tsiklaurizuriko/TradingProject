@@ -180,7 +180,11 @@ public sealed class AdvancedStrategyTests
             "rsi_pullback",
             "bollinger_reversion",
             "donchian_breakout");
-        StrategyTemplateKeys.All.Should().HaveCount(77);
+        StrategyTemplateKeys.All.Should().HaveCount(
+            StrategyTemplateKeys.Frozen.Length
+            + StrategyTemplateKeys.Research.Length
+            + StrategyTemplateKeys.NearMiss.Length
+            + StrategyTemplateKeys.CrossSectionalReversal.Length);
         StrategyTemplateKeys.AdvancedSix.Should().HaveCount(6);
         StrategyTemplateKeys.Scalping.Should().HaveCount(22);
         StrategyTemplateKeys.PriceAction.Should().HaveCount(18);
@@ -190,7 +194,10 @@ public sealed class AdvancedStrategyTests
     public void Registry_is_frozen_plus_research()
     {
         StrategyTemplateKeys.All.Should().Equal(
-            StrategyTemplateKeys.Frozen.Concat(StrategyTemplateKeys.Research));
+            StrategyTemplateKeys.Frozen
+                .Concat(StrategyTemplateKeys.Research)
+                .Concat(StrategyTemplateKeys.NearMiss)
+                .Concat(StrategyTemplateKeys.CrossSectionalReversal));
     }
 
     [Fact]

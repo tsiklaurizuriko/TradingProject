@@ -1146,6 +1146,43 @@ export interface PriceActionResearchSummaryDto {
   heatRejects: number;
 }
 
+export interface CrossSectionalReversalVariantDto {
+  key: string;
+  name: string;
+  feature: string;
+  status: string;
+  enabled: boolean;
+}
+
+export interface CrossSectionalReversalStatusDto {
+  strategyKey: string;
+  family: string;
+  variants: CrossSectionalReversalVariantDto[];
+  status: string;
+  enabled: boolean;
+  universe: string;
+  minimumUniverse: number;
+  historyBarsRequired: number;
+  rankingClock: string;
+  topDecilePercent: number;
+  bottomDecilePercent: number;
+  validationStatus: string;
+  paperStatus: string;
+  liveStatus: string;
+  notice: string;
+  manifestSha256: string;
+  rankingVersion: string;
+  productionApproval: string;
+  liveApproved: string;
+  globalLiveTradingEnabled: boolean;
+  maxLongPositions: number;
+  maxShortPositions: number;
+  maxTotalPositions: number;
+  maxCrossSectionalRiskPercent: number;
+  maxPerPositionRiskPercent: number;
+  maxLeverage: number;
+}
+
 export interface PatternOverlay {
   neckline?: number | null;
   detection?: string | null;

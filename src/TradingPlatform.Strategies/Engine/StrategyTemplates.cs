@@ -85,6 +85,8 @@ public static class StrategyTemplateKeys
     public const string PaCandleSequence = "pa_candle_sequence";
     public const string PaStructureBreak = "pa_structure_break";
     public const string PaFailedBreakout = "pa_failed_breakout";
+    public const string CrossSectionalReversalReturn15m = "cross_sectional_reversal_return_15m";
+    public const string CrossSectionalReversalReturn1h = "cross_sectional_reversal_return_1h";
 
     public static readonly string[] Frozen =
     [
@@ -187,11 +189,17 @@ public static class StrategyTemplateKeys
         PaFailedBreakout
     ];
 
+    public static readonly string[] CrossSectionalReversal =
+    [
+        CrossSectionalReversalReturn15m,
+        CrossSectionalReversalReturn1h
+    ];
+
     public static readonly string[] Research = [.. AdvancedSix, .. Alpha, .. HistoricallyFitted, .. Scalping, .. PriceAction];
 
     public static readonly string[] NearMiss = NearMissAudit.SelectedRows.Select(NearMissAudit.TemplateKey).ToArray();
 
-    public static readonly string[] All = [.. Frozen, .. Research, .. NearMiss];
+    public static readonly string[] All = [.. Frozen, .. Research, .. NearMiss, .. CrossSectionalReversal];
 
     /// <summary>
     /// Operator catalog: PAPER or weak guidance only. Avoid/blocked templates stay in the engine
@@ -267,7 +275,10 @@ public static class StrategyTemplateKeys
         return "";
     }
 
-    public static bool IsResearchOnlyFamily(string? key) => IsScalping(key) || IsPriceAction(key);
+    public static bool IsCrossSectionalReversal(string? key) =>
+        CrossSectionalReversal.Contains(Normalize(key), StringComparer.OrdinalIgnoreCase);
+
+    public static bool IsResearchOnlyFamily(string? key) => IsScalping(key) || IsPriceAction(key) || IsCrossSectionalReversal(key);
 
     public static bool IsResearch(string? key) =>
         Research.Contains(Normalize(key), StringComparer.OrdinalIgnoreCase);
@@ -284,7 +295,7 @@ public static class StrategyTemplateKeys
         FundingPriceMomentum or FundingExtremeMomentumExhaustion => ["OHLCV", "Funding"],
         BasisMeanReversion or ScalpBasis => ["OHLCV", "MarkPrice", "IndexPrice", "Basis"],
         CryptoPairsArb => ["OHLCV", "CausalPairUniverse"],
-        XsRelativeStrength => ["OHLCV", "CrossSectionUniverse"],
+        XsRelativeStrength or CrossSectionalReversalReturn15m or CrossSectionalReversalReturn1h => ["OHLCV", "CrossSectionUniverse"],
         MtfTrendStructure or ScalpMtf => ["OHLCV", "CompletedHtf"],
         _ => ["OHLCV"]
     };
@@ -306,6 +317,7 @@ public static class StrategyTemplateKeys
         var scalp when IsScalping(scalp) => "SCALPING",
         var pa when IsPriceAction(pa) => "SCALPING_PRICE_ACTION",
         var near when IsNearMiss(near) => "NEAR_MISS",
+        var csr when IsCrossSectionalReversal(csr) => "CROSS_SECTIONAL_REVERSAL",
         _ => "TREND"
     };
 
@@ -867,6 +879,8 @@ public static class StrategyTemplates
         StrategyTemplateKeys.PaStructureBreak => "PA Structure Break",
         StrategyTemplateKeys.PaFailedBreakout => "PA Failed Breakout",
         var near when StrategyTemplateKeys.IsNearMiss(near) => NearMissTitle(near),
+        StrategyTemplateKeys.CrossSectionalReversalReturn15m => "Return 15m Reversal",
+        StrategyTemplateKeys.CrossSectionalReversalReturn1h => "Return 1h Reversal",
         _ => "EMA RSI Trend"
     };
 
@@ -934,6 +948,8 @@ public static class StrategyTemplates
             "RESEARCH_ONLY price-action hypothesis. Causal confirmation only. Not a textbook LONG/SHORT. Isolated book owns SL/TP. LIVE off.",
         var near when StrategyTemplateKeys.IsNearMiss(near) =>
             "NEAR_MISS. Not validated and not a profit claim. Frozen Phase 8 definition. Paper and LIVE stay off until you arm them. Same Isolated risk and execution path.",
+        var csr when StrategyTemplateKeys.IsCrossSectionalReversal(csr) =>
+            "Repeatable cross-sectional reversal factor — not validated for trading.",
         _ => "ახალ ტრენდს იწყებს: სწრაფი EMA ნელს კვეთს, RSI ადასტურებს. მიზანი — მიმართულების ცვლილება, სუსტი გადაკვეთების გარეშე."
     };
 
@@ -948,6 +964,8 @@ public static class StrategyTemplates
         StrategyTemplateKeys.OiPriceVolumeRegime or StrategyTemplateKeys.ScalpPriceOi => "OHLCV + OpenInterest. OI_HISTORICAL_DATA_LIMITATION if window longer than public hist.",
         StrategyTemplateKeys.CryptoPairsArb => "Multi-symbol OHLCV with causal pair selection windows. Single-book replay = DATA_UNAVAILABLE.",
         StrategyTemplateKeys.XsRelativeStrength => "Universe snapshot at each timestamp. Single-book replay = DATA_UNAVAILABLE.",
+        var csr when StrategyTemplateKeys.IsCrossSectionalReversal(csr) =>
+            "Closed 15m OHLCV on the BTCUSDT clock. Rank only symbols present at that timestamp. No forward return.",
         StrategyTemplateKeys.VpVwapReversion => "OHLCV and volume. Volume profile reconstructed from typical-price × volume bins.",
         StrategyTemplateKeys.FundingPriceMomentum => "OHLCV + Funding. Settled fundingTime only.",
         StrategyTemplateKeys.FundingExtremeMomentumExhaustion => "OHLCV + Funding. Settled fundingTime only.",
@@ -977,6 +995,7 @@ public static class StrategyTemplates
         StrategyTemplateKeys.VolSpikeEmaTrend => StrategyValidationStatuses.HistoricallyFittedCandidate,
         StrategyTemplateKeys.Bb202Break => StrategyValidationStatuses.HistoricallyFittedCandidate,
         var near when StrategyTemplateKeys.IsNearMiss(near) => StrategyValidationStatuses.NearMiss,
+        var csr when StrategyTemplateKeys.IsCrossSectionalReversal(csr) => StrategyValidationStatuses.Researching,
         var key when StrategyTemplateKeys.IsResearch(key) => "RESEARCHING",
         _ => "VALIDATION_PENDING"
     };

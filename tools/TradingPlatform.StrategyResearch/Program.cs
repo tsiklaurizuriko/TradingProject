@@ -73,6 +73,36 @@ if (args.Any(a => string.Equals(a, "--contextual-pa-freeze", StringComparison.Or
     return ContextualPriceActionDiscovery.Freeze(root);
 }
 
+if (args.Any(a => string.Equals(a, "--cross-section", StringComparison.OrdinalIgnoreCase)))
+{
+    return await CrossSectionAudit.RunAsync(root, candleCacheDir);
+}
+
+if (args.Any(a => string.Equals(a, "--microstructure", StringComparison.OrdinalIgnoreCase)))
+{
+    return await MicrostructureAudit.RunAsync(root, candleCacheDir);
+}
+
+if (args.Any(a => string.Equals(a, "--signal-quality", StringComparison.OrdinalIgnoreCase)))
+{
+    return await SignalQualityAudit.RunAsync(root, candleCacheDir);
+}
+
+if (args.Any(a => string.Equals(a, "--trade-failure", StringComparison.OrdinalIgnoreCase)))
+{
+    return await TradeFailureAnalysis.RunAsync(root, candleCacheDir);
+}
+
+if (args.Any(a => string.Equals(a, "--edge-discovery", StringComparison.OrdinalIgnoreCase)))
+{
+    return await EdgeDiscovery.RunAsync(root, candleCacheDir);
+}
+
+if (args.Any(a => string.Equals(a, "--extreme-move", StringComparison.OrdinalIgnoreCase)))
+{
+    return await ExtremeMoveStudy.RunAsync(root, candleCacheDir);
+}
+
 if (args.Any(a => string.Equals(a, "--final-five", StringComparison.OrdinalIgnoreCase)))
 {
     return await FinalFiveDiscovery.RunAsync(root, candleCacheDir, args);

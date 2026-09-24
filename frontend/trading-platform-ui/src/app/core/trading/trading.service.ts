@@ -33,6 +33,7 @@ import {
   ScalpingResearchRunDto,
   PriceActionResearchSummaryDto,
   PriceActionOccurrenceDto,
+  CrossSectionalReversalStatusDto,
   PriceActionArmDto,
   SetPriceActionArmRequest,
 } from './trading.models';
@@ -307,6 +308,10 @@ export class TradingService {
     } catch {
       this.risk.set(null);
     }
+  }
+
+  crossSectionalReversal(): Promise<CrossSectionalReversalStatusDto> {
+    return firstValueFrom(this.http.get<CrossSectionalReversalStatusDto>(`${environment.apiBaseUrl}/strategies/cross-sectional-reversal`));
   }
 
   async refreshCatalog(): Promise<void> {

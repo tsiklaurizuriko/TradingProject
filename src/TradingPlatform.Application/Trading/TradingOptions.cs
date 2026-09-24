@@ -21,6 +21,42 @@ public sealed class TradingOptions
     public ScannerOptions Scanner { get; set; } = new();
     public ScalpingOptions Scalping { get; set; } = new();
     public PriceActionOptions PriceAction { get; set; } = new();
+    public CrossSectionalReversalOptions CrossSectionalReversal { get; set; } = new();
+}
+
+public sealed class CrossSectionalReversalOptions
+{
+    public bool Enabled { get; set; }
+    public bool PaperEnabled { get; set; }
+    public bool LiveEnabled { get; set; }
+    public bool Return15mEnabled { get; set; }
+    public bool Return1hEnabled { get; set; }
+    public int MaxLeverage { get; set; } = 3;
+    public int MaxTotalPositions { get; set; } = 10;
+    public int MaxLongPositions { get; set; } = 5;
+    public int MaxShortPositions { get; set; } = 5;
+    public decimal MaxCrossSectionalRiskPercent { get; set; } = 2.0m;
+    public decimal MaxPerPositionRiskPercent { get; set; } = 0.25m;
+    public int MinimumEligibleSymbols { get; set; } = 30;
+    public int HistoryBarsRequired { get; set; } = 96;
+    public int MinimumUniverseSize { get; set; } = 30;
+    public int RebalanceIntervalMinutes { get; set; } = 15;
+    public int MinimumPositionAgeMinutes { get; set; } = 15;
+    public int RebalanceCooldownMinutes { get; set; } = 15;
+    public int MaxClusterPositions { get; set; } = 3;
+    public decimal MaxClusterRiskPercent { get; set; } = 0.75m;
+    public decimal MaxDirectionalRiskPercent { get; set; } = 1.5m;
+    public decimal MaxHeat { get; set; } = 1.0m;
+    public bool FundingRiskEnabled { get; set; }
+    public bool VolatilitySafetyEnabled { get; set; }
+    public bool EqualRiskSizing { get; set; } = true;
+    public bool DynamicRiskWeighting { get; set; }
+    public int TopDecilePercent { get; set; } = 10;
+    public int BottomDecilePercent { get; set; } = 10;
+    public string RankingClock { get; set; } = "BTCUSDT_15M";
+    public bool AllowLong { get; set; } = true;
+    public bool AllowShort { get; set; } = true;
+    public string ProductionApproval { get; set; } = "INSUFFICIENT_EVIDENCE";
 }
 
 public sealed class ScalpingOptions

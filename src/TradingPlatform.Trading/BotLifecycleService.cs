@@ -141,6 +141,8 @@ public sealed class BotLifecycleService : IBotLifecycleService
 
         EnsureHistoricallyFittedLiveOff(mode, strategyVersion.Strategy);
         EnsureNearMissAllowed(mode, strategyVersion.Strategy);
+        EnsureCrossSectionBlocked(mode, strategyVersion.Strategy);
+        EnsureScalpingStaysOff(strategyVersion.Strategy);
         EnsureStrategyEnabled(strategyVersion.Strategy);
         if (!SymbolScope.Allows(strategyVersion.Strategy.AppliesToAllSymbols, strategyVersion.Strategy.AllowedSymbolsCsv, name))
         {
@@ -258,6 +260,8 @@ public sealed class BotLifecycleService : IBotLifecycleService
             ?? throw new DomainException(ErrorCodes.StrategyInvalid, "Strategy was not found.");
         EnsureHistoricallyFittedLiveOff(mode, strategyVersion.Strategy);
         EnsureNearMissAllowed(mode, strategyVersion.Strategy);
+        EnsureCrossSectionBlocked(mode, strategyVersion.Strategy);
+        EnsureScalpingStaysOff(strategyVersion.Strategy);
         EnsureStrategyEnabled(strategyVersion.Strategy);
         var risk = await ResolveRiskAsync(riskProfileId, cancellationToken);
         RiskLiveGuard.EnsureAllowed(mode, risk);
@@ -375,6 +379,8 @@ public sealed class BotLifecycleService : IBotLifecycleService
 
             EnsureHistoricallyFittedLiveOff(bot);
             EnsureNearMissAllowed(bot);
+            EnsureCrossSectionBlocked(bot);
+            EnsureScalpingStaysOff(bot);
             RiskLiveGuard.EnsureAllowed(bot.Mode, bot.RiskProfile ?? await _store.GetConservativeRiskAsync(cancellationToken));
         }
         else if (bot.Mode != TradingMode.Paper)
@@ -383,6 +389,8 @@ public sealed class BotLifecycleService : IBotLifecycleService
         }
 
         EnsureNearMissAllowed(bot);
+        EnsureCrossSectionBlocked(bot);
+        EnsureScalpingStaysOff(bot);
 
         if (bot.Status == BotStatus.Running)
         {
@@ -445,6 +453,8 @@ public sealed class BotLifecycleService : IBotLifecycleService
             {
                 EnsureHistoricallyFittedLiveOff(bot);
                 EnsureNearMissAllowed(bot);
+                EnsureCrossSectionBlocked(bot);
+                EnsureScalpingStaysOff(bot);
                 await AttachLatestStrategyAsync(bot, cancellationToken);
                 await MarkRunningAsync(bot, cancellationToken);
                 started++;
@@ -731,6 +741,43 @@ public sealed class BotLifecycleService : IBotLifecycleService
 
     private void EnsureNearMissAllowed(Bot bot) =>
         EnsureNearMissAllowed(bot.Mode, bot.StrategyVersion.Strategy);
+
+    private void EnsureCrossSectionBlocked(Bot bot) =>
+        EnsureCrossSectionBlocked(bot.Mode, bot.StrategyVersion.Strategy);
+
+    private void EnsureCrossSectionBlocked(TradingMode mode, Strategy strategy)
+    {
+        var key = strategy.TemplateKey;
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            var latest = strategy.Versions.OrderByDescending(row => row.VersionNumber).FirstOrDefault();
+            key = latest is null ? string.Empty : StrategyTemplates.Read(latest.DefinitionJson).TemplateKey;
+        }
+
+        CrossSectionalReversalGate.EnsureBlocked(_options, key, mode);
+    }
+
+    private static void EnsureScalpingStaysOff(Bot bot) =>
+        EnsureScalpingStaysOff(bot.StrategyVersion.Strategy);
+
+    private static void EnsureScalpingStaysOff(Strategy strategy)
+    {
+        var key = strategy.TemplateKey;
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            var latest = strategy.Versions.OrderByDescending(row => row.VersionNumber).FirstOrDefault();
+            key = latest is null ? string.Empty : StrategyTemplates.Read(latest.DefinitionJson).TemplateKey;
+        }
+
+        if (!StrategyTemplateKeys.IsScalping(key))
+        {
+            return;
+        }
+
+        throw new DomainException(
+            ErrorCodes.StrategyInvalid,
+            $"{strategy.Name} is on the strategy list for research. It does not start a bot.");
+    }
 
     private void EnsureNearMissAllowed(TradingMode mode, Strategy strategy)
     {
@@ -1558,7 +1605,7 @@ public sealed class TradingQueryService : ITradingQueryService
     {
         _ = mode;
         return (await _store.ListStrategiesAsync(cancellationToken))
-            .Where(row => IsOperatorStrategy(row) || IsNearMissStrategy(row))
+            .Where(row => IsOperatorStrategy(row) || IsNearMissStrategy(row) || IsCrossSectionStrategy(row) || IsScalpingStrategy(row))
             .Select(row => MapStrategy(row, _options))
             .ToList();
     }
@@ -1679,7 +1726,8 @@ public sealed class TradingQueryService : ITradingQueryService
         }
 
         var parameters = StrategyTemplates.Validate(ToTemplateParams(request) with { Timeframe = timeframe.ToBinanceInterval() });
-        if (!StrategyTemplateKeys.IsOperatorCatalog(parameters.TemplateKey))
+        var crossSection = StrategyTemplateKeys.IsCrossSectionalReversal(parameters.TemplateKey);
+        if (!StrategyTemplateKeys.IsOperatorCatalog(parameters.TemplateKey) && !crossSection)
         {
             throw new DomainException(ErrorCodes.StrategyInvalid, "That template is retired from the operator catalog.");
         }
@@ -1693,7 +1741,9 @@ public sealed class TradingQueryService : ITradingQueryService
             TemplateKey = parameters.TemplateKey,
             AllowedSide = parameters.AllowedSide,
             IsEnabled = true,
-            ValidationStatus = StrategyValidationStatuses.ValidationPending
+            ValidationStatus = crossSection
+                ? StrategyValidationStatuses.Researching
+                : StrategyValidationStatuses.ValidationPending
         };
         ApplyStrategyScope(strategy, request.AppliesToAllSymbols, request.Symbols);
         strategy.Versions.Add(new StrategyVersion
@@ -1723,7 +1773,8 @@ public sealed class TradingQueryService : ITradingQueryService
         }
 
         var parameters = StrategyTemplates.Validate(ToTemplateParams(request) with { Timeframe = timeframe.ToBinanceInterval() });
-        if (!StrategyTemplateKeys.IsOperatorCatalog(parameters.TemplateKey))
+        if (!StrategyTemplateKeys.IsOperatorCatalog(parameters.TemplateKey)
+            && !StrategyTemplateKeys.IsCrossSectionalReversal(parameters.TemplateKey))
         {
             throw new DomainException(ErrorCodes.StrategyInvalid, "That template is retired from the operator catalog.");
         }
@@ -1767,7 +1818,7 @@ public sealed class TradingQueryService : ITradingQueryService
     {
         var strategy = await _store.GetStrategyAsync(strategyId, cancellationToken)
             ?? throw new DomainException(ErrorCodes.StrategyInvalid, "Strategy was not found.");
-        if (enabled && (strategy.IsArchived || (!IsOperatorStrategy(strategy) && !IsNearMissStrategy(strategy))))
+        if (enabled && (strategy.IsArchived || (!IsOperatorStrategy(strategy) && !IsNearMissStrategy(strategy) && !IsCrossSectionStrategy(strategy) && !IsScalpingStrategy(strategy))))
         {
             throw new DomainException(ErrorCodes.StrategyInvalid, $"{strategy.Name} is retired from the operator catalog.");
         }
@@ -2027,6 +2078,30 @@ public sealed class TradingQueryService : ITradingQueryService
         return StrategyTemplateKeys.IsNearMiss(key);
     }
 
+    private static bool IsCrossSectionStrategy(Strategy strategy)
+    {
+        var key = strategy.TemplateKey;
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            var latest = strategy.Versions.OrderByDescending(row => row.VersionNumber).FirstOrDefault();
+            key = latest is null ? string.Empty : StrategyTemplates.Read(latest.DefinitionJson).TemplateKey;
+        }
+
+        return StrategyTemplateKeys.IsCrossSectionalReversal(key);
+    }
+
+    private static bool IsScalpingStrategy(Strategy strategy)
+    {
+        var key = strategy.TemplateKey;
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            var latest = strategy.Versions.OrderByDescending(row => row.VersionNumber).FirstOrDefault();
+            key = latest is null ? string.Empty : StrategyTemplates.Read(latest.DefinitionJson).TemplateKey;
+        }
+
+        return StrategyTemplateKeys.IsScalping(key);
+    }
+
     private static StrategyDto MapStrategy(Strategy strategy, TradingOptions? options = null)
     {
         var latest = strategy.Versions.OrderByDescending(v => v.VersionNumber).FirstOrDefault();
@@ -2070,7 +2145,11 @@ public sealed class TradingQueryService : ITradingQueryService
             string.IsNullOrWhiteSpace(strategy.ValidationStatus)
                 ? StrategyValidationStatuses.ValidationPending
                 : strategy.ValidationStatus,
-            StrategyTemplateKeys.SupportedTimeframes,
+            StrategyTemplateKeys.IsScalping(template)
+                ? StrategyTemplateKeys.ScalpingTimeframes
+                : StrategyTemplateKeys.IsCrossSectionalReversal(template)
+                    ? ["15m"]
+                    : StrategyTemplateKeys.SupportedTimeframes,
             StrategyTemplateKeys.SupportedDirections,
             StrategyTemplates.DataDependencies(template),
             parsed.EntryLookback,

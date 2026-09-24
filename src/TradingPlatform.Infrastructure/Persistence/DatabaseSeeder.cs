@@ -220,10 +220,11 @@ public sealed class DatabaseSeeder
                      || StrategyTemplateKeys.IsNearMiss(item.Key)))
         {
             var strategy = existing.FirstOrDefault(s => MatchesCatalog(s, row.Key, row.Name));
+            var crossSection = StrategyTemplateKeys.IsCrossSectionalReversal(row.Key);
             var parameters = StrategyTemplates.DefaultsFor(row.Key, qualityOn: !row.Research && !StrategyTemplateKeys.IsHistoricallyFitted(row.Key)) with
             {
                 AllowedSide = StrategySides.Both,
-                Timeframe = StrategyTemplateKeys.IsHistoricallyFitted(row.Key) ? "15m" : "5m"
+                Timeframe = StrategyTemplateKeys.IsHistoricallyFitted(row.Key) || crossSection ? "15m" : "5m"
             };
             if (strategy is null)
             {
@@ -238,7 +239,7 @@ public sealed class DatabaseSeeder
                     AllowedSymbolsCsv = fitted ? "BTCUSDT" : null,
                     TemplateKey = row.Key,
                     AllowedSide = StrategySides.Both,
-                    IsEnabled = !row.Research,
+                    IsEnabled = crossSection || !row.Research,
                     ValidationStatus = row.Research
                         ? StrategyTemplates.ResearchStatus(row.Key)
                         : StrategyValidationStatuses.ValidationPending
@@ -249,7 +250,7 @@ public sealed class DatabaseSeeder
                     VersionNumber = 1,
                     DefinitionJson = StrategyTemplates.Build(strategy.Name, 1, parameters),
                     Symbol = "BTCUSDT",
-                    Timeframe = fitted ? Timeframe.FifteenMinutes : Timeframe.FiveMinutes
+                    Timeframe = fitted || crossSection ? Timeframe.FifteenMinutes : Timeframe.FiveMinutes
                 });
                 _db.Strategies.Add(strategy);
                 existing.Add(strategy);
@@ -283,7 +284,9 @@ public sealed class DatabaseSeeder
                 || StrategyTemplateKeys.IsResearchOnlyFamily(key)
                 || StrategyTemplateKeys.IsNearMiss(key))
             {
-                if (StrategyTemplateKeys.IsResearchOnlyFamily(key))
+                if (StrategyTemplateKeys.IsResearchOnlyFamily(key)
+                    && !StrategyTemplateKeys.IsCrossSectionalReversal(key)
+                    && !StrategyTemplateKeys.IsScalping(key))
                 {
                     strategy.IsEnabled = false;
                     strategy.IsArchived = false;
@@ -342,9 +345,20 @@ public sealed class DatabaseSeeder
             strategy.IsArchived = false;
             strategy.DeletedAt = null;
             strategy.ValidationStatus = StrategyTemplates.ResearchStatus(row.Key);
-            if (StrategyTemplateKeys.IsResearchOnlyFamily(row.Key))
+            if (StrategyTemplateKeys.IsResearchOnlyFamily(row.Key)
+                && !StrategyTemplateKeys.IsCrossSectionalReversal(row.Key)
+                && !StrategyTemplateKeys.IsScalping(row.Key))
             {
                 strategy.IsEnabled = false;
+            }
+
+            if (StrategyTemplateKeys.IsCrossSectionalReversal(row.Key))
+            {
+                var clock = strategy.Versions.OrderByDescending(version => version.VersionNumber).FirstOrDefault();
+                if (clock is not null && !clock.IsImmutable)
+                {
+                    clock.Timeframe = Timeframe.FifteenMinutes;
+                }
             }
 
             if (string.IsNullOrWhiteSpace(strategy.Description))
@@ -584,6 +598,10 @@ public sealed class DatabaseSeeder
             "RESEARCH_ONLY. Causal BOS of last confirmed swing. LIVE off.", true),
         (StrategyTemplateKeys.PaFailedBreakout, "PA Failed Breakout",
             "RESEARCH_ONLY. Close beyond a range then close back inside. LIVE off.", true),
+        (StrategyTemplateKeys.CrossSectionalReversalReturn15m, "Return 15m Reversal",
+            "Repeatable cross-sectional reversal factor — not validated for trading. RESEARCHING. PAPER off. LIVE off.", true),
+        (StrategyTemplateKeys.CrossSectionalReversalReturn1h, "Return 1h Reversal",
+            "Repeatable cross-sectional reversal factor — not validated for trading. RESEARCHING. PAPER off. LIVE off.", true),
         ..NearMissCatalog()
     ];
 

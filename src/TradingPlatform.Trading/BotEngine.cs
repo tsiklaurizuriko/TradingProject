@@ -645,6 +645,67 @@ public sealed class BotEngine : IBotEngine
                 books,
                 out reason);
         }
+        else if (StrategyTemplateKeys.IsCrossSectionalReversal(definition.Template))
+        {
+            var block = CrossSectionalReversalGate.BlockOrders(_options, definition.Template, bot.Mode);
+            if (block is not null)
+            {
+                bot.LastError = block;
+                return;
+            }
+
+            if (bot.Timeframe != Timeframe.FifteenMinutes)
+            {
+                bot.LastError = "Cross-sectional reversal ranks the BTC 15-minute clock.";
+                return;
+            }
+
+            var occupied = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var row in book)
+            {
+                if (row.Quantity > 0m && !string.IsNullOrWhiteSpace(row.Symbol))
+                {
+                    occupied.Add(row.Symbol);
+                }
+            }
+
+            if (liveBook is not null)
+            {
+                foreach (var row in liveBook)
+                {
+                    if (row.Quantity > 0m && !string.IsNullOrWhiteSpace(row.Symbol))
+                    {
+                        occupied.Add(row.Symbol);
+                    }
+                }
+            }
+
+            var universe = new List<(string Symbol, IReadOnlyList<MarketCandle> Candles)>();
+            foreach (var name in _cache.GetKlineSymbols(Timeframe.FifteenMinutes))
+            {
+                var series = _cache.GetKlines(name, Timeframe.FifteenMinutes);
+                if (series.Count > 0)
+                {
+                    universe.Add((name, series));
+                }
+            }
+
+            var decision = CrossSectionalLiveBook.Decide(
+                definition.Template,
+                bot.Symbol,
+                _options,
+                universe,
+                occupied,
+                position is not null);
+            if (decision.Signal is SignalType.NoAction)
+            {
+                bot.LastError = decision.Reason;
+                return;
+            }
+
+            signalType = decision.Signal;
+            reason = decision.Reason;
+        }
         else
         {
             signalType = _strategy.Evaluate(
@@ -745,6 +806,10 @@ public sealed class BotEngine : IBotEngine
         var dayStart = new DateTimeOffset(now.UtcDateTime.Date, TimeSpan.Zero);
         var profile = bot.RiskProfile
             ?? await _store.GetConservativeRiskAsync(cancellationToken);
+        if (StrategyTemplateKeys.IsCrossSectionalReversal(definition.Template))
+        {
+            profile = CrossSectionalRiskBook.Overlay(profile, _options.CrossSectionalReversal);
+        }
         var accountDaily = await _store.SumClosedPnLSinceForModeAsync(bot.Mode, dayStart, cancellationToken) + unrealized;
         var strategyId = bot.StrategyVersion.StrategyId;
         var strategyBotIds = running

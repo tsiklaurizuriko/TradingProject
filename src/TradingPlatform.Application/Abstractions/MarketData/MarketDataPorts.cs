@@ -56,6 +56,7 @@ public interface IMarketDataCache
     IReadOnlyList<CachedTicker> GetTickers();
     void SetKlines(string symbol, Timeframe timeframe, IReadOnlyList<MarketCandle> candles);
     IReadOnlyList<MarketCandle> GetKlines(string symbol, Timeframe timeframe);
+    IReadOnlyList<string> GetKlineSymbols(Timeframe timeframe);
 }
 
 public interface ITradingRealtimePublisher

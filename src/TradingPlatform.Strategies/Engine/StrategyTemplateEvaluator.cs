@@ -188,7 +188,13 @@ internal static class StrategyTemplateEvaluator
         int i,
         StrategyContext context,
         CausalIndicatorCache cache) =>
-        StrategyTemplateKeys.IsNearMiss(p.TemplateKey)
+        StrategyTemplateKeys.IsCrossSectionalReversal(p.TemplateKey)
+            ? new StrategySignalDetail(
+                SignalType.NoAction,
+                "Cross-sectional reversal ranks the contemporaneous universe. A single-symbol preview does not emit an order.",
+                candles[i].CloseTime,
+                Status: "RESEARCHING")
+            : StrategyTemplateKeys.IsNearMiss(p.TemplateKey)
             ? new StrategySignalDetail(
                 SignalType.NoAction,
                 "NEAR_MISS uses the frozen contextual book on the last closed 5m bar. This preview path does not invent an EMA signal.",

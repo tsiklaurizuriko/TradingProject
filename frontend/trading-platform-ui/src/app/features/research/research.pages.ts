@@ -85,6 +85,8 @@ const templateOptions = [
   { key: 'market_structure_trend', label: 'Market Structure Trend Continuation' },
   { key: 'vol_spike_ema_trend', label: 'BTC 15m Volume Spike EMA' },
   { key: 'bb20_2_break', label: 'BTC 15m Bollinger Break' },
+  { key: 'cross_sectional_reversal_return_15m', label: 'Return 15m Reversal' },
+  { key: 'cross_sectional_reversal_return_1h', label: 'Return 1h Reversal' },
 ] as const;
 const sideOptions = [
   { key: 'Long', label: 'Long' },
@@ -198,7 +200,21 @@ function isResearchOnly(key: string | undefined): boolean {
   return !!key && !frozenKeys.has(key);
 }
 
+function isCrossSection(key: string | undefined): boolean {
+  return !!key && key.startsWith('cross_sectional_reversal');
+}
+
+function isScalping(key: string | undefined): boolean {
+  return !!key && key.startsWith('scalp_');
+}
+
 function familyFor(key: string | undefined, fallback?: string): string {
+  if (isCrossSection(key)) {
+    return 'CROSS_SECTIONAL_REVERSAL';
+  }
+  if (isScalping(key)) {
+    return 'SCALPING';
+  }
   if (fallback) {
     return fallback;
   }
@@ -274,6 +290,7 @@ function depsFor(key: string): string {
               <option value="BREAKOUT / TREND">BREAKOUT / TREND</option>
               <option value="MEAN REVERSION">MEAN REVERSION</option>
               <option value="REVERSAL">REVERSAL</option>
+              <option value="CROSS_SECTIONAL_REVERSAL">CROSS_SECTIONAL_REVERSAL</option>
               <option value="FUTURES / FLOW">FUTURES / FLOW</option>
               <option value="SCALPING">SCALPING</option>
               <option value="ROUTER">ROUTER</option>
@@ -462,7 +479,7 @@ function depsFor(key: string): string {
             @if (editingId() === row.id && draft(); as form) {
               <ng-container [ngTemplateOutlet]="editor" [ngTemplateOutletContext]="{ $implicit: form }" />
             } @else {
-              <p class="strategy-blurb">{{ blurbFor(row.templateKey) }}</p>
+              <p class="strategy-blurb">{{ blurbFor(row.templateKey, row.description || row.blurb) }}</p>
               <p class="tiny">{{ row.dataDependencies || depsFor(row.templateKey) }} · TF {{ (row.supportedTimeframes || ['5m','15m','1h']).join(', ') }} · research, not LIVE</p>
               @if (previews()[row.id]; as snap) {
                 <div class="strategy-preview">
@@ -723,7 +740,7 @@ export class StrategiesPage {
       },
     );
     return rows.filter((row) => {
-      if (!isOperatorCatalog(row.templateKey)) {
+      if (!isOperatorCatalog(row.templateKey) && !isCrossSection(row.templateKey) && !isScalping(row.templateKey)) {
         return false;
       }
       if (family && familyFor(row.templateKey, row.family) !== family) {
@@ -831,9 +848,10 @@ export class StrategiesPage {
     }
   }
 
-  blurbFor(key: string): string {
+  blurbFor(key: string, stored?: string): string {
     return (
       templateLogic[key] ||
+      stored ||
       'Closed-candle signal only. Isolated size, stop loss, and take profit stay on Risk.'
     );
   }

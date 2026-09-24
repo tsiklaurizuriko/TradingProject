@@ -36,5 +36,15 @@ public sealed class MarketDataCache : IMarketDataCache
     public IReadOnlyList<MarketCandle> GetKlines(string symbol, Timeframe timeframe) =>
         _klines.TryGetValue(Key(symbol, timeframe), out var candles) ? candles : [];
 
+    public IReadOnlyList<string> GetKlineSymbols(Timeframe timeframe)
+    {
+        var suffix = ":" + timeframe;
+        return _klines.Keys
+            .Where(key => key.EndsWith(suffix, StringComparison.Ordinal))
+            .Select(key => key[..^suffix.Length])
+            .OrderBy(symbol => symbol, StringComparer.Ordinal)
+            .ToList();
+    }
+
     private static string Key(string symbol, Timeframe timeframe) => $"{symbol.ToUpperInvariant()}:{timeframe}";
 }
