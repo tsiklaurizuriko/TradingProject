@@ -25,6 +25,8 @@ public static class ImportedRuleEvaluator
             StrategyTemplateKeys.ClucMay72018 => ClucMay72018(candles, i, context, cache),
             StrategyTemplateKeys.CombinedBinHCluc => CombinedBinHCluc(candles, i, context, cache),
             StrategyTemplateKeys.Hlhb => Hlhb(candles, i, context, cache),
+            StrategyTemplateKeys.FAdxSma => FAdxSma(candles, i, context, cache),
+            StrategyTemplateKeys.TripleSupertrend => TripleSupertrend(candles, i, context, cache),
             _ => new StrategySignalDetail(SignalType.NoAction, "Unknown imported rule.", candles[i].CloseTime, Status: "IMPLEMENTATION_ERROR")
         };
 
@@ -420,6 +422,127 @@ public static class ImportedRuleEvaluator
         return crossedUp
             ? Detail(SignalType.Buy, "HLHB RSI and EMA crossed up with ADX above 25.", candles, i)
             : Detail(SignalType.NoAction, "HLHB entry is not matched.", candles, i);
+    }
+
+    /// <summary>freqtrade FAdxSmaStrategy. SMA(12) cross SMA(48) with ADX(14) above 30. Exit when ADX falls under 30. ROI 5%, stop 5%.</summary>
+    private static StrategySignalDetail FAdxSma(
+        IReadOnlyList<MarketCandle> candles,
+        int i,
+        StrategyContext context,
+        CausalIndicatorCache cache)
+    {
+        if (i < 48)
+        {
+            return Detail(SignalType.NoAction, "ADX SMA needs 48 bars.", candles, i);
+        }
+
+        var fast = Sma(candles, 12);
+        var slow = Sma(candles, 48);
+        var adx = cache.Adx(14);
+        if (fast[i] is not { } nowFast || fast[i - 1] is not { } prevFast
+            || slow[i] is not { } nowSlow || slow[i - 1] is not { } prevSlow
+            || adx[i] is not { } nowAdx)
+        {
+            return Detail(SignalType.NoAction, "ADX SMA indicators are not ready.", candles, i);
+        }
+
+        if (context.HasOpenPosition && nowAdx < 30m)
+        {
+            return Detail(SignalType.Exit, "ADX fell below 30.", candles, i);
+        }
+
+        if (context.HasOpenPosition)
+        {
+            return Detail(SignalType.Hold, "ADX SMA position stays open while ADX is at least 30.", candles, i);
+        }
+
+        var crossUp = prevFast <= prevSlow && nowFast > nowSlow && nowAdx > 30m;
+        var crossDown = prevFast >= prevSlow && nowFast < nowSlow && nowAdx > 30m;
+        if (crossUp)
+        {
+            return Detail(SignalType.Buy, "SMA(12) crossed above SMA(48) with ADX above 30.", candles, i);
+        }
+
+        if (crossDown)
+        {
+            return Detail(SignalType.Sell, "SMA(12) crossed below SMA(48) with ADX above 30.", candles, i);
+        }
+
+        return Detail(SignalType.NoAction, "ADX SMA entry is not matched.", candles, i);
+    }
+
+    /// <summary>
+    /// freqtrade FSupertrendStrategy buy_params. Long when 8/4, 9/7 and 8/1 are up.
+    /// Short when 16/1, 18/3 and 18/6 are down. Exit long on 18/3 down, exit short on 9/7 up.
+    /// </summary>
+    private static StrategySignalDetail TripleSupertrend(
+        IReadOnlyList<MarketCandle> candles,
+        int i,
+        StrategyContext context,
+        CausalIndicatorCache cache)
+    {
+        var longA = cache.SupertrendDirection(8, 4m);
+        var longB = cache.SupertrendDirection(9, 7m);
+        var longC = cache.SupertrendDirection(8, 1m);
+        var shortA = cache.SupertrendDirection(16, 1m);
+        var shortB = cache.SupertrendDirection(18, 3m);
+        var shortC = cache.SupertrendDirection(18, 6m);
+        if (longA[i] is not { } a || longB[i] is not { } b || longC[i] is not { } c
+            || shortA[i] is not { } d || shortB[i] is not { } e || shortC[i] is not { } f
+            || candles[i].Volume <= 0m)
+        {
+            return Detail(SignalType.NoAction, "Triple Supertrend is not ready.", candles, i);
+        }
+
+        var longUp = a > 0m && b > 0m && c > 0m;
+        var shortDown = d < 0m && e < 0m && f < 0m;
+        if (context.HasOpenPosition && context.PositionSide != PositionSide.Short && e < 0m)
+        {
+            return Detail(SignalType.Exit, "Supertrend 18/3 turned down.", candles, i);
+        }
+
+        if (context.HasOpenPosition && context.PositionSide == PositionSide.Short && b > 0m)
+        {
+            return Detail(SignalType.Exit, "Supertrend 9/7 turned up.", candles, i);
+        }
+
+        if (context.HasOpenPosition)
+        {
+            return Detail(SignalType.Hold, "Triple Supertrend position stays open.", candles, i);
+        }
+
+        if (longUp)
+        {
+            return Detail(SignalType.Buy, "Three long Supertrends are up.", candles, i);
+        }
+
+        if (shortDown)
+        {
+            return Detail(SignalType.Sell, "Three short Supertrends are down.", candles, i);
+        }
+
+        return Detail(SignalType.NoAction, "Triple Supertrend entry is not matched.", candles, i);
+    }
+
+    private static decimal?[] Sma(IReadOnlyList<MarketCandle> candles, int period)
+    {
+        var result = new decimal?[candles.Count];
+        decimal sum = 0m;
+        for (var i = 0; i < candles.Count; i++)
+        {
+            sum += candles[i].Close;
+            if (i >= period)
+            {
+                sum -= candles[i - period].Close;
+            }
+
+            if (i >= period - 1)
+            {
+                result[i] = sum / period;
+            }
+        }
+
+        return result;
     }
 
     private static decimal? StopForLong(decimal close, IReadOnlyList<decimal?> atr, int i, StrategyTemplateParams p) =>

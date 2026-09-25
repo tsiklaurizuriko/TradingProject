@@ -222,7 +222,15 @@ public sealed record StrategyDto(
     bool NearMiss = false,
     bool PaperEnabled = false,
     bool LiveEnabled = false,
-    string HypothesisId = "");
+    string HypothesisId = "",
+    Guid? RiskProfileId = null,
+    decimal StopLossPercent = 0m,
+    decimal TakeProfitPercent = 0m,
+    decimal RiskPerTradePercent = 0m,
+    decimal MaxLeverage = 0m,
+    int MaxSimultaneousPositions = 0,
+    int MaxConsecutiveLosses = 0,
+    int CooldownMinutes = 0);
 
 public sealed record SaveStrategyRequest(
     string Name,

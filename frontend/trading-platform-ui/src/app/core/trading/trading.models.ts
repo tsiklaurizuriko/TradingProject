@@ -152,6 +152,14 @@ export interface StrategyDto {
   paperEnabled?: boolean;
   liveEnabled?: boolean;
   hypothesisId?: string;
+  riskProfileId?: string | null;
+  stopLossPercent?: number;
+  takeProfitPercent?: number;
+  riskPerTradePercent?: number;
+  maxLeverage?: number;
+  maxSimultaneousPositions?: number;
+  maxConsecutiveLosses?: number;
+  cooldownMinutes?: number;
 }
 
 export interface PriceActionCandidateArmDto {
@@ -474,31 +482,39 @@ export interface StrategyOccupancyRow {
   plannedRiskUsdt: number;
   plannedRiskPercent: number;
   capPercent: number;
+  stopLossPercent: number | null;
+  takeProfitPercent: number | null;
+  riskPerTradePercent: number | null;
+  maxLeverage: number | null;
 }
 
 export function strategyOccupancy(
   bots: BotDto[],
   positions: PositionDto[],
-  risk: RiskProfileDto | null,
+  strategies: StrategyDto[],
   available: number,
 ): StrategyOccupancyRow[] {
-  const maxPositions = Math.max(1, risk?.maxSimultaneousPositions ?? 2);
-  const capPercent = risk?.maxPortfolioRiskPercent ?? 4;
+  const byId = new Map(strategies.map((row) => [row.id, row]));
   const map = new Map<string, StrategyOccupancyRow>();
-  const ensure = (key: string, name: string): StrategyOccupancyRow => {
+  const ensure = (key: string, name: string, strategyId?: string): StrategyOccupancyRow => {
     const existing = map.get(key);
     if (existing) {
       return existing;
     }
+    const strategy = (strategyId ? byId.get(strategyId) : undefined) ?? strategies.find((row) => row.name === name);
     const row: StrategyOccupancyRow = {
       key,
       name,
       runningBots: 0,
       openCoins: 0,
-      maxPositions,
+      maxPositions: Math.max(1, strategy?.maxSimultaneousPositions ?? 1),
       plannedRiskUsdt: 0,
       plannedRiskPercent: 0,
-      capPercent,
+      capPercent: 4,
+      stopLossPercent: strategy?.stopLossPercent ?? null,
+      takeProfitPercent: strategy?.takeProfitPercent ?? null,
+      riskPerTradePercent: strategy?.riskPerTradePercent ?? null,
+      maxLeverage: strategy?.maxLeverage ?? null,
     };
     map.set(key, row);
     return row;
@@ -510,14 +526,14 @@ export function strategyOccupancy(
     }
     const key = bot.strategyId || bot.strategyName || bot.id;
     const name = (bot.strategyName || '').trim() || 'Unassigned strategy';
-    ensure(key, name).runningBots += 1;
+    ensure(key, name, bot.strategyId).runningBots += 1;
   }
 
   for (const group of groupPositionsByStrategy(
     isolatedOwners(positions.filter((row) => (row.quantity ?? 0) > 0)),
     bots,
   )) {
-    const row = ensure(group.key, group.name);
+    const row = ensure(group.key, group.name, group.key);
     row.openCoins = uniqueOpenCoins(group.rows);
     row.plannedRiskUsdt = group.rows.reduce((sum, item) => sum + (item.initialRiskUsdt ?? 0), 0);
     row.plannedRiskPercent = available > 0 ? (row.plannedRiskUsdt / available) * 100 : 0;

@@ -220,6 +220,11 @@ public sealed class DatabaseSeeder
         var existing = await _db.Strategies.Include(s => s.Versions).ToListAsync(cancellationToken);
         foreach (var row in Catalog)
         {
+            if (!StrategyTemplateKeys.IsOperatorCatalog(row.Key))
+            {
+                continue;
+            }
+
             var strategy = existing.FirstOrDefault(s => MatchesCatalog(s, row.Key, row.Name));
             var crossSection = StrategyTemplateKeys.IsCrossSectionalReversal(row.Key);
             var emaCross = row.Key == StrategyTemplateKeys.BtcEma20Ema50Long;
@@ -230,12 +235,13 @@ public sealed class DatabaseSeeder
             var donchianV2 = row.Key == StrategyTemplateKeys.DonchianV2;
             var binhv = row.Key == StrategyTemplateKeys.BinHv45;
             var hlhb = row.Key == StrategyTemplateKeys.Hlhb;
+            var hour = row.Key is StrategyTemplateKeys.FAdxSma or StrategyTemplateKeys.TripleSupertrend;
             var freqtradeLong = binhv || hlhb || row.Key is StrategyTemplateKeys.ClucMay72018 or StrategyTemplateKeys.CombinedBinHCluc;
             var longOnly = emaCross || tsMomentum || freqtradeLong;
             var parameters = StrategyTemplates.DefaultsFor(row.Key, qualityOn: !row.Research && !flat && !flow && !StrategyTemplateKeys.IsHistoricallyFitted(row.Key)) with
             {
                 AllowedSide = longOnly ? StrategySides.Long : StrategySides.Both,
-                Timeframe = binhv ? "1m" : hlhb ? "4h" : donchianV2 ? "1d" : zigzag ? "30m" : tsMomentum ? "1d" : emaCross ? "30m" : flat || flow ? "1h" : StrategyTemplateKeys.IsHistoricallyFitted(row.Key) || crossSection ? "15m" : "5m"
+                Timeframe = binhv ? "1m" : hlhb ? "4h" : hour ? "1h" : donchianV2 ? "1d" : zigzag ? "30m" : tsMomentum ? "1d" : emaCross ? "30m" : flat || flow ? "1h" : StrategyTemplateKeys.IsHistoricallyFitted(row.Key) || crossSection ? "15m" : "5m"
             };
             if (strategy is null)
             {
@@ -261,7 +267,7 @@ public sealed class DatabaseSeeder
                     VersionNumber = 1,
                     DefinitionJson = StrategyTemplates.Build(strategy.Name, 1, parameters),
                     Symbol = "BTCUSDT",
-                    Timeframe = binhv ? Timeframe.OneMinute : hlhb ? Timeframe.FourHours : donchianV2 ? Timeframe.OneDay : zigzag ? Timeframe.ThirtyMinutes : tsMomentum ? Timeframe.OneDay : emaCross ? Timeframe.ThirtyMinutes : flat || flow ? Timeframe.OneHour : fitted || crossSection ? Timeframe.FifteenMinutes : Timeframe.FiveMinutes
+                    Timeframe = binhv ? Timeframe.OneMinute : hlhb ? Timeframe.FourHours : hour ? Timeframe.OneHour : donchianV2 ? Timeframe.OneDay : zigzag ? Timeframe.ThirtyMinutes : tsMomentum ? Timeframe.OneDay : emaCross ? Timeframe.ThirtyMinutes : flat || flow ? Timeframe.OneHour : fitted || crossSection ? Timeframe.FifteenMinutes : Timeframe.FiveMinutes
                 });
                 _db.Strategies.Add(strategy);
                 existing.Add(strategy);
@@ -272,6 +278,8 @@ public sealed class DatabaseSeeder
         }
 
         await RetireHiddenStrategiesAsync(existing, cancellationToken);
+        await AttachStrategyRiskAsync(cancellationToken);
+        await ApplyPublishedRiskAsync(cancellationToken);
     }
 
     private async Task RetireHiddenStrategiesAsync(List<Strategy> existing, CancellationToken cancellationToken)
@@ -289,6 +297,18 @@ public sealed class DatabaseSeeder
             {
                 var latest = strategy.Versions.OrderByDescending(row => row.VersionNumber).FirstOrDefault();
                 key = latest is null ? string.Empty : StrategyTemplates.Read(latest.DefinitionJson).TemplateKey;
+            }
+
+            if (StrategyTemplateKeys.IsKnown(key) && !StrategyTemplateKeys.IsOperatorCatalog(key))
+            {
+                strategy.IsEnabled = false;
+                strategy.IsArchived = true;
+                if (!used.Contains(strategy.Id) && strategy.DeletedAt is null)
+                {
+                    strategy.DeletedAt = now;
+                }
+
+                continue;
             }
 
             if (StrategyTemplateKeys.IsKnown(key))
@@ -573,11 +593,11 @@ public sealed class DatabaseSeeder
         (StrategyTemplateKeys.FlatRange, "Flat Range",
             "ფლეტზე წინა 24 საათის ზედა და ქვედა ზღვარი იკეტება. ლონგი ქვედა 20%-ში, შორტი ზედა 20%-ში. სტოპი შესვლის ზღვარია, ტეიკ-პროფიტი მოპირდაპირე ზღვარი. პოზიციის ზომა ისე ითვლება, რომ სტოპმა დაგეგმილი რისკი წაიღოს. 24 საათში იხურება.", false),
         (StrategyTemplateKeys.MacContrarian710, "Contrarian SMA 7/10",
-            "MAc(7,10,0.01) on 5m. Fast SMA above the slow band is short. Fast SMA below the slow band is long. No stop.", true),
+            "MAc(7,10,0.01) on 5m. Fast SMA above the slow band is short. Fast SMA below the slow band is long. Protective book is risk 0.5%, stop 5%, take 5%, leverage 3x.", true),
         (StrategyTemplateKeys.ZigZagFade, "ZigZag Fade",
-            "Fade a ZigZag swing break. Default is the BTC 30m published set: length 14, deviation 2%, ATR 1.5. ETH deviation 6%. SOL deviation 5%.", true),
+            "Fade a ZigZag swing break. BTC 30m: length 14, deviation 2%, ATR 1.5. ETH deviation 6%. SOL 5%. Order book is risk 0.5%, stop 4%, take 8%, leverage 3x.", true),
         (StrategyTemplateKeys.DonchianV2, "Donchian 55/5",
-            "Donchian v2 daily. Entry 55, exit 5, ATR stop 1.5. No take profit.", true),
+            "Donchian v2 daily. Entry 55, exit 5, ATR stop 1.5. Order book is risk 0.5%, stop 8%, take 100% so the 5-bar exit closes first, leverage 1x.", true),
         (StrategyTemplateKeys.BinHv45, "BinHV45",
             "Freqtrade BinHV45. 1m LONG. Close under the prior Bollinger(40, 2) lower band with a short lower wick. No exit signal. ROI 1.25%, stop 5%. Not measured on this futures book.", true),
         (StrategyTemplateKeys.ClucMay72018, "Cluc May 2018",
@@ -585,7 +605,11 @@ public sealed class DatabaseSeeder
         (StrategyTemplateKeys.CombinedBinHCluc, "Combined BinH Cluc",
             "Freqtrade CombinedBinHAndCluc. 5m LONG. BinHV45 or Cluc entry. Middle-band exit only while in profit. ROI 5%, stop 5%.", true),
         (StrategyTemplateKeys.Hlhb, "HLHB",
-            "Freqtrade hlhb. 4h LONG. RSI(10) of (open+close)/2 crosses 50 and EMA(5) crosses EMA(10) on the same bar, ADX above 25. Opposite cross exits. Hyperopt ROI and 32% stop are not copied.", true),
+            "Freqtrade hlhb. 4h LONG. RSI(10) of (open+close)/2 crosses 50 and EMA(5) crosses EMA(10) on the same bar, ADX above 25. Opposite cross exits. Published hyperopt: take 62%, stop 32%, leverage 1x.", true),
+        (StrategyTemplateKeys.FAdxSma, "ADX SMA Cross",
+            "Freqtrade FAdxSmaStrategy. 1h BOTH. SMA(12) crosses SMA(48) while ADX(14) is above 30. Exit when ADX falls below 30. ROI 5%, stop 5%.", true),
+        (StrategyTemplateKeys.TripleSupertrend, "Triple Supertrend",
+            "Freqtrade FSupertrendStrategy. 1h BOTH. Long when Supertrend 8/4, 9/7 and 8/1 are up. Short when 16/1, 18/3 and 18/6 are down. Exit long on 18/3 down, exit short on 9/7 up. Take 10%, stop 26.5%, leverage 1x.", true),
         (StrategyTemplateKeys.BtcEma20Ema50Long, "30m EMA Cross",
             "HISTORICALLY_FITTED_CANDIDATE. All USD-M coins, 30m LONG only. EMA20 cross above EMA50; exit on the cross back below. Use risk book 30m EMA Cross (R 0.50% / SL 1.00% / TP 20% cap). Not validated alpha. LIVE off.", true),
         (StrategyTemplateKeys.TsMomentum285, "1d Time-Series Momentum",
@@ -685,6 +709,121 @@ public sealed class DatabaseSeeder
             StrategyTemplates.DisplayName(NearMissAudit.TemplateKey(row)),
             $"{row.HypothesisId} is NEAR_MISS, not validated. {NearMissAudit.StrictFailure(row)} Paper and LIVE default off.",
             true));
+
+    private async Task AttachStrategyRiskAsync(CancellationToken cancellationToken)
+    {
+        var strategies = await _db.Strategies
+            .Include(s => s.Versions)
+            .Where(s => !s.IsArchived && s.DeletedAt == null)
+            .ToListAsync(cancellationToken);
+        var profiles = await _db.RiskProfiles.Where(r => r.DeletedAt == null).ToListAsync(cancellationToken);
+        var owned = strategies
+            .Where(s => s.RiskProfileId is not null)
+            .Select(s => s.RiskProfileId!.Value)
+            .ToHashSet();
+
+        foreach (var strategy in strategies)
+        {
+            if (strategy.RiskProfileId is { } existing && profiles.Any(p => p.Id == existing))
+            {
+                continue;
+            }
+
+            var alias = AliasRiskName(strategy.TemplateKey);
+            var match = alias is null
+                ? null
+                : profiles.FirstOrDefault(p => string.Equals(p.Name, alias, StringComparison.OrdinalIgnoreCase) && !owned.Contains(p.Id));
+            if (match is null)
+            {
+                match = LowBook();
+                match.Name = strategy.Name;
+                match.IsSystem = true;
+                match.IsActive = false;
+                match.AllowLive = true;
+                _db.RiskProfiles.Add(match);
+                profiles.Add(match);
+            }
+
+            strategy.RiskProfileId = match.Id;
+            owned.Add(match.Id);
+        }
+
+        await _db.SaveChangesAsync(cancellationToken);
+
+        var bots = await _db.Bots.Include(b => b.StrategyVersion).ThenInclude(v => v.Strategy).ToListAsync(cancellationToken);
+        foreach (var bot in bots)
+        {
+            var riskId = bot.StrategyVersion?.Strategy?.RiskProfileId;
+            if (riskId is { } id && bot.RiskProfileId != id)
+            {
+                bot.RiskProfileId = id;
+            }
+        }
+
+        await _db.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task ApplyPublishedRiskAsync(CancellationToken cancellationToken)
+    {
+        var strategies = await _db.Strategies
+            .Include(s => s.RiskProfile)
+            .Where(s => !s.IsArchived && s.DeletedAt == null && s.RiskProfileId != null)
+            .ToListAsync(cancellationToken);
+        foreach (var strategy in strategies)
+        {
+            if (strategy.RiskProfile is null || !PublishedRisk.TryGetValue(StrategyTemplateKeys.Normalize(strategy.TemplateKey), out var book))
+            {
+                continue;
+            }
+
+            strategy.RiskProfile.RiskPerTradePercent = book.Risk;
+            strategy.RiskProfile.StopLossPercent = book.Stop;
+            strategy.RiskProfile.TakeProfitPercent = book.Take;
+            strategy.RiskProfile.MaxLeverage = book.Leverage;
+            strategy.RiskProfile.MaxSimultaneousPositions = book.Positions;
+        }
+
+        await _db.SaveChangesAsync(cancellationToken);
+    }
+
+    private static readonly Dictionary<string, (decimal Risk, decimal Stop, decimal Take, decimal Leverage, int Positions)> PublishedRisk = new(StringComparer.OrdinalIgnoreCase)
+    {
+        [StrategyTemplateKeys.EmaRsiTrend] = (0.5m, 3m, 9m, 2m, 3),
+        [StrategyTemplateKeys.RsiPullback] = (0.5m, 2.5m, 5m, 2m, 3),
+        [StrategyTemplateKeys.BollingerReversion] = (0.5m, 2.5m, 2m, 2m, 3),
+        [StrategyTemplateKeys.SupertrendEmaTrend] = (0.5m, 3m, 9m, 2m, 3),
+        [StrategyTemplateKeys.LiqSweepContinuation] = (0.5m, 3.5m, 7m, 2m, 2),
+        [StrategyTemplateKeys.VolSqueezeStructure] = (0.5m, 3.5m, 7m, 2m, 2),
+        [StrategyTemplateKeys.VwapBreakoutVolume] = (0.5m, 3.5m, 7m, 2m, 2),
+        [StrategyTemplateKeys.MarketStructureTrend] = (0.5m, 3.5m, 7m, 2m, 2),
+        [StrategyTemplateKeys.VolSpikeEmaTrend] = (0.5m, 2.5m, 5m, 3m, 1),
+        [StrategyTemplateKeys.Bb202Break] = (0.5m, 4m, 5m, 3m, 1),
+        [StrategyTemplateKeys.BtcEma20Ema50Long] = (0.5m, 1m, 20m, 3m, 1),
+        [StrategyTemplateKeys.TsMomentum285] = (2m, 8m, 30m, 1m, 1),
+        [StrategyTemplateKeys.BtcDailyMax10] = (2m, 8m, 30m, 1m, 1),
+        [StrategyTemplateKeys.FlowZone] = (0.5m, 8m, 30m, 1m, 5),
+        [StrategyTemplateKeys.FlatRange] = (0.5m, 2m, 4m, 3m, 5),
+        [StrategyTemplateKeys.MacContrarian710] = (0.5m, 5m, 5m, 3m, 5),
+        [StrategyTemplateKeys.ZigZagFade] = (0.5m, 4m, 8m, 3m, 5),
+        [StrategyTemplateKeys.DonchianV2] = (0.5m, 8m, 100m, 1m, 1),
+        [StrategyTemplateKeys.BinHv45] = (0.5m, 5m, 1.25m, 3m, 5),
+        [StrategyTemplateKeys.ClucMay72018] = (0.5m, 5m, 1m, 3m, 5),
+        [StrategyTemplateKeys.CombinedBinHCluc] = (0.5m, 5m, 5m, 3m, 5),
+        [StrategyTemplateKeys.Hlhb] = (0.5m, 32m, 62m, 1m, 5),
+        [StrategyTemplateKeys.FAdxSma] = (0.5m, 5m, 5m, 3m, 5),
+        [StrategyTemplateKeys.TripleSupertrend] = (0.5m, 26.5m, 10m, 1m, 5),
+    };
+
+    private static string? AliasRiskName(string? templateKey) => StrategyTemplateKeys.Normalize(templateKey) switch
+    {
+        StrategyTemplateKeys.VolSpikeEmaTrend => "BTC 15m Vol Spike",
+        StrategyTemplateKeys.Bb202Break => "BTC 15m BB Break",
+        StrategyTemplateKeys.BtcEma20Ema50Long => "30m EMA Cross",
+        StrategyTemplateKeys.TsMomentum285 => "1d Time-Series Momentum",
+        StrategyTemplateKeys.BtcDailyMax10 => "1d BTC 10-day High",
+        StrategyTemplateKeys.FlowZone => "Flow Zone",
+        _ => null
+    };
 
     private async Task UpsertSystemRiskAsync(
         string name,

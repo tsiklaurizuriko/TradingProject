@@ -11,5 +11,8 @@ public sealed class StrategyTemplateKeyTests
     {
         StrategyTemplateKeys.All.Should().OnlyContain(key => key.Length <= 64);
         StrategyTemplateKeys.FundingExtremeMomentumExhaustion.Length.Should().BeGreaterThan(32);
+        StrategyTemplateKeys.IsOperatorCatalog(StrategyTemplateKeys.ScalpEmaMomentum).Should().BeFalse();
+        StrategyTemplateKeys.IsOperatorCatalog(StrategyTemplateKeys.EmaRsiTrend).Should().BeTrue();
+        StrategyTemplateKeys.OperatorCatalog.Should().NotContain(key => key.StartsWith("scalp_", StringComparison.Ordinal) || key.StartsWith("pa_", StringComparison.Ordinal));
     }
 }

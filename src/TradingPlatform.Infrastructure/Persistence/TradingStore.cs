@@ -135,12 +135,13 @@ public sealed class TradingStore : ITradingStore
     public async Task<IReadOnlyList<Strategy>> ListStrategiesAsync(CancellationToken cancellationToken = default) =>
         await _db.Strategies
             .Include(s => s.Versions)
+            .Include(s => s.RiskProfile)
             .Where(s => !s.IsArchived)
             .OrderBy(s => s.Name)
             .ToListAsync(cancellationToken);
 
     public Task<Strategy?> GetStrategyAsync(Guid strategyId, CancellationToken cancellationToken = default) =>
-        _db.Strategies.Include(s => s.Versions).FirstOrDefaultAsync(s => s.Id == strategyId, cancellationToken);
+        _db.Strategies.Include(s => s.Versions).Include(s => s.RiskProfile).FirstOrDefaultAsync(s => s.Id == strategyId, cancellationToken);
 
     public async Task AddStrategyAsync(Strategy strategy, CancellationToken cancellationToken = default) =>
         await _db.Strategies.AddAsync(strategy, cancellationToken);

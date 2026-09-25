@@ -1,4 +1,5 @@
 using TradingPlatform.Domain.Identity;
+using TradingPlatform.Domain.Risk;
 using TradingPlatform.Domain.Trading;
 
 namespace TradingPlatform.Domain.Strategies;
@@ -16,6 +17,8 @@ public sealed class Strategy : SoftDeletableEntity
     public string AllowedSide { get; set; } = "Long";
     public bool IsEnabled { get; set; } = true;
     public string ValidationStatus { get; set; } = StrategyValidationStatuses.ValidationPending;
+    public Guid? RiskProfileId { get; set; }
+    public RiskProfile? RiskProfile { get; set; }
     public ICollection<StrategyVersion> Versions { get; set; } = new List<StrategyVersion>();
 }
 

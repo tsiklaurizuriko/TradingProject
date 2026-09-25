@@ -147,7 +147,7 @@ public sealed class BotLifecycleService : IBotLifecycleService
                 $"{strategyVersion.Strategy.Name} is not assigned to {name}. Open Strategies and add this coin, or set the strategy to all coins.");
         }
 
-        var risk = await ResolveRiskAsync(riskProfileId, cancellationToken);
+        var risk = await ResolveRiskAsync(strategyVersion.Strategy.RiskProfileId ?? riskProfileId, cancellationToken);
         RiskLiveGuard.EnsureAllowed(mode, risk);
 
         Domain.Exchanges.ExchangeAccount account;
@@ -255,7 +255,7 @@ public sealed class BotLifecycleService : IBotLifecycleService
         var strategyVersion = await _store.GetLatestStrategyVersionAsync(strategyId, cancellationToken)
             ?? throw new DomainException(ErrorCodes.StrategyInvalid, "Strategy was not found.");
         EnsureStrategyEnabled(strategyVersion.Strategy);
-        var risk = await ResolveRiskAsync(riskProfileId, cancellationToken);
+        var risk = await ResolveRiskAsync(strategyVersion.Strategy.RiskProfileId ?? riskProfileId, cancellationToken);
         RiskLiveGuard.EnsureAllowed(mode, risk);
 
         Domain.Exchanges.ExchangeAccount account;
@@ -1728,6 +1728,26 @@ public sealed class TradingQueryService : ITradingQueryService
                 : StrategyValidationStatuses.ValidationPending
         };
         ApplyStrategyScope(strategy, request.AppliesToAllSymbols, request.Symbols);
+        var risk = new RiskProfile
+        {
+            Name = strategy.Name,
+            RiskPerTradePercent = 0.5m,
+            StopLossPercent = 2m,
+            TakeProfitPercent = 4m,
+            MaxLeverage = 3m,
+            MaxDailyLossPercent = 3m,
+            MaxPortfolioRiskPercent = 4m,
+            MaxSimultaneousPositions = 5,
+            MaxConsecutiveLosses = 5,
+            CooldownMinutes = 30,
+            MinimumLiquidationSafetyBufferPercent = 1m,
+            AllowLive = true,
+            IsActive = false,
+            IsSystem = true
+        };
+        strategy.RiskProfile = risk;
+        strategy.RiskProfileId = risk.Id;
+        await _store.AddRiskProfileAsync(risk, cancellationToken);
         strategy.Versions.Add(new StrategyVersion
         {
             Strategy = strategy,
@@ -2105,7 +2125,15 @@ public sealed class TradingQueryService : ITradingQueryService
                 && options?.PriceAction.Enabled == true
                 && options.PriceAction.LiveEnabled
                 && NearMissGate.CandidateEnabled(options.PriceAction, template),
-            StrategyTemplateKeys.NearMissHypothesisId(template));
+            StrategyTemplateKeys.NearMissHypothesisId(template),
+            strategy.RiskProfileId,
+            strategy.RiskProfile?.StopLossPercent ?? 0m,
+            strategy.RiskProfile?.TakeProfitPercent ?? 0m,
+            strategy.RiskProfile?.RiskPerTradePercent ?? 0m,
+            strategy.RiskProfile?.MaxLeverage ?? 0m,
+            strategy.RiskProfile?.MaxSimultaneousPositions ?? 0,
+            strategy.RiskProfile?.MaxConsecutiveLosses ?? 0,
+            strategy.RiskProfile?.CooldownMinutes ?? 0);
     }
 
     private static RiskProfileDto MapRisk(RiskProfile risk) =>

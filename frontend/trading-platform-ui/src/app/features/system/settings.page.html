@@ -51,7 +51,7 @@
               Confirm before Start all on Paper
             </span>
           </label>
-          <p class="tiny">Active Isolated book is {{ trading.risk()?.name || '—' }}. Same book for Paper and LIVE; size uses the current workspace wallet. LIVE already asks before Start all.</p>
+          <p class="tiny">Each strategy keeps its own stop, take, and size. Paper and LIVE share that row. Size uses the current workspace wallet.</p>
           <a class="btn sm" routerLink="/bots">Open Bots</a>
         </div>
       </section>
@@ -59,31 +59,33 @@
     @case ('Risk') {
       <section class="panel settings-panel">
         <div class="section-head">
-          <h2>Risk books</h2>
-          <a class="btn sm" routerLink="/risk">Edit books</a>
+          <h2>Strategy risk</h2>
+          <a class="btn sm" routerLink="/risk">Edit</a>
         </div>
-        @if (trading.riskProfiles().length === 0) {
-          <p class="muted tiny">No risk books loaded.</p>
+        @if (trading.strategies().length === 0) {
+          <p class="muted tiny">No strategies loaded.</p>
         } @else {
           <div class="table-scroll">
             <table class="data-table">
               <thead>
                 <tr>
-                  <th><app-sort-btn column="name" [query]="riskQuery">Book</app-sort-btn></th>
-                  <th class="num"><app-sort-btn column="r" [query]="riskQuery" align="end">R%</app-sort-btn></th>
+                  <th><app-sort-btn column="name" [query]="riskQuery">Strategy</app-sort-btn></th>
+                  <th class="num"><app-sort-btn column="r" [query]="riskQuery" align="end">Risk %</app-sort-btn></th>
+                  <th class="num"><app-sort-btn column="sl" [query]="riskQuery" align="end">Stop %</app-sort-btn></th>
+                  <th class="num"><app-sort-btn column="tp" [query]="riskQuery" align="end">Take %</app-sort-btn></th>
                   <th class="num"><app-sort-btn column="lev" [query]="riskQuery" align="end">Leverage</app-sort-btn></th>
-                  <th class="num"><app-sort-btn column="slots" [query]="riskQuery" align="end">Max / strategy</app-sort-btn></th>
-                  <th>Active</th>
+                  <th class="num"><app-sort-btn column="slots" [query]="riskQuery" align="end">Positions</app-sort-btn></th>
                 </tr>
               </thead>
               <tbody>
-                @for (row of riskRows(); track row.id ?? row.name) {
+                @for (row of riskRows(); track row.id) {
                   <tr>
                     <td>{{ row.name }}</td>
-                    <td class="num">{{ row.riskPerTradePercent }}%</td>
-                    <td class="num">{{ row.maxLeverage }}x</td>
-                    <td class="num">{{ row.maxSimultaneousPositions }}</td>
-                    <td>{{ row.isActive ? 'Yes' : '' }}</td>
+                    <td class="num">{{ row.riskPerTradePercent ?? '—' }}%</td>
+                    <td class="num">{{ row.stopLossPercent ?? '—' }}%</td>
+                    <td class="num">{{ row.takeProfitPercent ?? '—' }}%</td>
+                    <td class="num">{{ row.maxLeverage ?? '—' }}x</td>
+                    <td class="num">{{ row.maxSimultaneousPositions ?? '—' }}</td>
                   </tr>
                 }
               </tbody>

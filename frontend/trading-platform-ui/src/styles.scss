@@ -1365,9 +1365,9 @@ app-emergency-stop {
 .risk-table-head,
 .risk-table-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) 52px minmax(88px, auto) 64px 64px 72px;
-  gap: 8px;
-  align-items: baseline;
+  grid-template-columns: minmax(0, 1.6fr) 96px 48px 64px 68px;
+  gap: 10px;
+  align-items: center;
 }
 
 .risk-table-head {
@@ -1385,7 +1385,8 @@ app-emergency-stop {
 }
 
 .risk-table-row {
-  padding: 7px 0;
+  min-height: 36px;
+  padding: 8px 0;
   border-bottom: 1px solid var(--border);
   font-size: 12px;
   color: var(--text-secondary);
@@ -1399,6 +1400,7 @@ app-emergency-stop {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-primary);
+  font-weight: 650;
 }
 
 .risk-table-row strong,

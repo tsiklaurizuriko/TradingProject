@@ -99,6 +99,8 @@ public static class StrategyTemplateKeys
     public const string ClucMay72018 = "cluc_may72018";
     public const string CombinedBinHCluc = "combined_binh_cluc";
     public const string Hlhb = "hlhb";
+    public const string FAdxSma = "fadx_sma";
+    public const string TripleSupertrend = "triple_supertrend";
 
     public static readonly string[] Frozen =
     [
@@ -222,7 +224,9 @@ public static class StrategyTemplateKeys
         BinHv45,
         ClucMay72018,
         CombinedBinHCluc,
-        Hlhb
+        Hlhb,
+        FAdxSma,
+        TripleSupertrend
     ];
 
     public static readonly string[] Range = [FlatRange];
@@ -258,7 +262,9 @@ public static class StrategyTemplateKeys
         BinHv45,
         ClucMay72018,
         CombinedBinHCluc,
-        Hlhb
+        Hlhb,
+        FAdxSma,
+        TripleSupertrend
     ];
 
     public static readonly string[] SupportedTimeframes = ["5m", "15m", "1h"];
@@ -328,6 +334,11 @@ public static class StrategyTemplateKeys
         if (template == Hlhb)
         {
             return ["4h"];
+        }
+
+        if (template is FAdxSma or TripleSupertrend)
+        {
+            return ["1h"];
         }
 
         if (IsCrossSectionalReversal(template))
@@ -431,7 +442,7 @@ public static class StrategyTemplateKeys
         BollingerReversion or FlatRange or BinHv45 or ClucMay72018 or CombinedBinHCluc => "MEAN REVERSION",
         DonchianBreakout => "BREAKOUT / TREND",
         Bb202Break => "BREAKOUT / TREND",
-        VolSpikeEmaTrend or BtcEma20Ema50Long or TsMomentum285 or BtcDailyMax10 or FlowZone => "TREND",
+        VolSpikeEmaTrend or BtcEma20Ema50Long or TsMomentum285 or BtcDailyMax10 or FlowZone or FAdxSma or TripleSupertrend => "TREND",
         var scalp when IsScalping(scalp) => "SCALPING",
         var pa when IsPriceAction(pa) => "SCALPING_PRICE_ACTION",
         var near when IsNearMiss(near) => "NEAR_MISS",
@@ -753,6 +764,22 @@ public static class StrategyTemplates
                 RelativeVolumePeriod = 30,
                 AllowedSide = StrategySides.Long,
                 Timeframe = "5m",
+                VolumeFilterEnabled = false
+            },
+            StrategyTemplateKeys.FAdxSma => core with
+            {
+                EmaFast = 12,
+                EmaSlow = 48,
+                AdxPeriod = 14,
+                MinimumAdx = 30m,
+                AllowedSide = StrategySides.Both,
+                Timeframe = "1h",
+                VolumeFilterEnabled = false
+            },
+            StrategyTemplateKeys.TripleSupertrend => core with
+            {
+                AllowedSide = StrategySides.Both,
+                Timeframe = "1h",
                 VolumeFilterEnabled = false
             },
             StrategyTemplateKeys.Hlhb => core with
@@ -1103,33 +1130,36 @@ public static class StrategyTemplates
         StrategyTemplateKeys.ClucMay72018 => "Cluc May 2018",
         StrategyTemplateKeys.CombinedBinHCluc => "Combined BinH Cluc",
         StrategyTemplateKeys.Hlhb => "HLHB",
+        StrategyTemplateKeys.FAdxSma => "ADX SMA Cross",
+        StrategyTemplateKeys.TripleSupertrend => "Triple Supertrend",
         _ => "EMA RSI Trend"
     };
 
     public static string Blurb(string templateKey) => StrategyTemplateKeys.Normalize(templateKey) switch
     {
         StrategyTemplateKeys.MacdTrend => "იმპულსის გადაკვეთას მიყვება (MACD × სიგნალი, ჰისტოგრამა, ნელი EMA). მიზანი — ტრენდის გაგრძელება, არა მოკლე ხმაური.",
-        StrategyTemplateKeys.RsiPullback => "ტრენდში უკან დახევას იჭერს: RSI oversold/overbought-იდან ბრუნდება. მიზანი — ტრენდში იაფ შესვლა, არა წვერზე ნადირობა.",
-        StrategyTemplateKeys.BollingerReversion => "ზოლიდან გადახრილ ფასს შუაში აბრუნებს. მიზანი — ექსტრემის კორექცია, არა გარღვევა.",
+        StrategyTemplateKeys.EmaRsiTrend => "სწრაფი EMA ნელს კვეთს და RSI ადასტურებს. რისკი 0.5%, სტოპი 3%, ტეიკი 9%, 2x. ხმაურმა 2% აღარ უნდა გაწყვიტოს ტრენდი.",
+        StrategyTemplateKeys.RsiPullback => "ტრენდში უკან დახევას იჭერს. რისკი 0.5%, სტოპი 2.5%, ტეიკი 5%, 2x.",
+        StrategyTemplateKeys.BollingerReversion => "ზოლიდან შუაში ბრუნდება. რისკი 0.5%, სტოპი 2.5%, ტეიკი 2%, 2x. მოკლე ტეიკი, რადგან საშუალოსკენ ბრუნდება და 4%-ს ხშირად ვერ ასწრებს.",
         StrategyTemplateKeys.DonchianBreakout => "ბოლო N სანთლის მაღალ/დაბალ ზოლს არღვევს და იმ მიმართულებით შედის. მიზანი — ახალი ექსტრემის გაგრძელება.",
         StrategyTemplateKeys.TurtleTsm => "Systematic trend-following strategy using prior-range breakouts, EMA trend confirmation and ATR-based volatility control.",
         StrategyTemplateKeys.VwapPullbackTrend => "Trend-following pullback strategy using VWAP, EMA structure, RSI confirmation and volatility-aware stops.",
         StrategyTemplateKeys.VolatilityBreakout => "Volatility-compression breakout strategy using Bollinger width, ATR expansion and relative volume.",
-        StrategyTemplateKeys.SupertrendEmaTrend => "Trend-following strategy using Supertrend direction, EMA structure and ADX trend-strength confirmation.",
+        StrategyTemplateKeys.SupertrendEmaTrend => "Supertrend, EMA და ADX. რისკი 0.5%, სტოპი 3%, ტეიკი 9%, 2x.",
         StrategyTemplateKeys.OiPriceMomentum => "Futures-specific strategy researching conditional relationships between price movement, open interest, volume and trend.",
         StrategyTemplateKeys.FundingOiRegime => "Perpetual-futures strategy researching funding extremes together with price momentum and open-interest regimes.",
         StrategyTemplateKeys.VpVwapReversion => "Research whether VAL/VAH rejections revert toward POC/VWAP outside strong-trend regimes.",
         StrategyTemplateKeys.LiqSweepReversal => "Research failed breaks of causally confirmed swing highs/lows followed by a close back through the level.",
-        StrategyTemplateKeys.LiqSweepContinuation => "Research sweeps that hold beyond the level with volume as breakout continuation, separate from reversal.",
+        StrategyTemplateKeys.LiqSweepContinuation => "სვიპი დონეს მიღმა რჩება და გრძელდება. რისკი 0.5%, სტოპი 3.5%, ტეიკი 7%, 2x.",
         StrategyTemplateKeys.FundingBasisRv => "Research funding and basis extremes as directional or relative-value hypotheses. Requires aligned funding/index.",
         StrategyTemplateKeys.FundingOiReversal => "Research extreme funding plus OI and price displacement as a reversal hypothesis. Requires aligned series.",
         StrategyTemplateKeys.TakerFlowMomentum => "Research persistent taker buy/sell imbalance with price and volume confirmation.",
         StrategyTemplateKeys.OiPriceVolumeRegime => "Research conditional expectancy of price/OI/volume state combinations without pre-assigned bull/bear labels.",
         StrategyTemplateKeys.VwapDeviationReversion => "Research ATR-scaled VWAP deviations with rejection and a trend-regime filter.",
-        StrategyTemplateKeys.VwapBreakoutVolume => "Research VWAP-aligned local breakouts with relative volume, on transition only.",
+        StrategyTemplateKeys.VwapBreakoutVolume => "VWAP-ის გარღვევა მოცულობით. რისკი 0.5%, სტოპი 3.5%, ტეიკი 7%, 2x.",
         StrategyTemplateKeys.FailedBreakoutReversal => "Research Donchian breakouts that fail to hold and close back inside the range.",
-        StrategyTemplateKeys.VolSqueezeStructure => "Research Bollinger/Keltner compression then expansion with a structure break and volume.",
-        StrategyTemplateKeys.MarketStructureTrend => "Research causal HH/HL or LH/LL continuation on a new confirmed swing.",
+        StrategyTemplateKeys.VolSqueezeStructure => "შეკუმშვის შემდეგ გარღვევა. რისკი 0.5%, სტოპი 3.5%, ტეიკი 7%, 2x.",
+        StrategyTemplateKeys.MarketStructureTrend => "ახალი სვინგის გაგრძელება. რისკი 0.5%, სტოპი 3.5%, ტეიკი 7%, 2x.",
         StrategyTemplateKeys.MarketStructurePullback => "Research pullbacks to EMA/VWAP while causal market structure stays intact.",
         StrategyTemplateKeys.AtrNormalizedMomentum => "Research (Close[t]-Close[t-N])/ATR with trend and a persistence transition.",
         StrategyTemplateKeys.MtfTrendStructure => "Research last-completed HTF EMA trend with LTF structure/pullback entry.",
@@ -1179,11 +1209,11 @@ public static class StrategyTemplates
         StrategyTemplateKeys.FlatRange =>
             "ფლეტზე ზედა და ქვედა ზღვარი იკეტება. ლონგი ქვედა მეხუთედში, შორტი ზედა მეხუთედში. სტოპი შესვლის ზღვარია, ტეიკ-პროფიტი მოპირდაპირე ზღვარი. ზომა ისე ითვლება, რომ სტოპმა დაგეგმილი რისკი წაიღოს. 24 საათში იხურება. არ არის validated.",
         StrategyTemplateKeys.MacContrarian710 =>
-            "MAc(7,10,0.01). 5m SMA(7)/SMA(10). სწრაფი საშუალო ნელზე 1%-ით მაღლაა — შორტი, 1%-ით დაბლაა — ლონგი. ზოლში წინა პოზიცია რჩება. სტოპი და ტეიკი არ აქვს.",
+            "MAc(7,10,0.01). 5m SMA(7)/SMA(10). სწრაფი საშუალო ნელზე 1%-ით მაღლაა — შორტი, 1%-ით დაბლაა — ლონგი. რისკი 0.5%, სტოპი 5%, ტეიკი 5%, 3x.",
         StrategyTemplateKeys.ZigZagFade =>
-            "ZigZag fade. 30m, სვინგი 14, deviation 2% (BTC). ETH-ზე deviation 6%, SOL-ზე 5%. გარღვევის საწინააღმდეგო შესვლა, ATR 1.5 სტოპი ყოველ ბარზე ახლდება.",
+            "ZigZag fade. 30m, სვინგი 14, deviation 2% (BTC). ETH 6%, SOL 5%. რისკი 0.5%, სტოპი 4%, ტეიკი 8%, 3x.",
         StrategyTemplateKeys.DonchianV2 =>
-            "Donchian v2 daily. შესვლა 55, გასვლა 5, ATR 1.5. წინა არხის გარღვევა, მოკლე არხით გასვლა, ATR სტოპი ყოველ ბარზე ახლდება. ტეიკი გამორთულია.",
+            "Donchian v2 daily. შესვლა 55, გასვლა 5, ATR 1.5. რისკი 0.5%, სტოპი 8%, ტეიკი 100% რომ 5-ბარიანი გასვლა ადრე მოხდეს, 1x.",
         StrategyTemplateKeys.BinHv45 =>
             "BinHV45, 1 წუთი, მხოლოდ ლონგი. Bollinger(40, 2) ქვედა ზოლის ქვეშ დახურვა პატარა ქვედა ჩრდილით. გასვლის სიგნალი არ აქვს: ტეიკი 1.25%, სტოპი 5%.",
         StrategyTemplateKeys.ClucMay72018 =>
@@ -1191,7 +1221,11 @@ public static class StrategyTemplates
         StrategyTemplateKeys.CombinedBinHCluc =>
             "BinHV45 ან Cluc, 5 წუთი, მხოლოდ ლონგი. გასვლა შუა ზოლზე მხოლოდ მოგებაში. ტეიკი 5%, სტოპი 5%.",
         StrategyTemplateKeys.Hlhb =>
-            "HLHB, 4 საათი, მხოლოდ ლონგი. RSI(10) 50-ს კვეთს და EMA(5) EMA(10)-ს იმავე ბარზე, ADX 25-ზე მეტია. უკუ გადაკვეთა ხურავს. Hyperopt-ის 62% ტეიკი და 32% სტოპი არ არის გადმოტანილი.",
+            "HLHB, 4 საათი, მხოლოდ ლონგი. RSI(10) 50-ს კვეთს და EMA(5) EMA(10)-ს იმავე ბარზე, ADX 25-ზე მეტია. უკუ გადაკვეთა ხურავს. გამოქვეყნებული hyperopt: ტეიკი 62%, სტოპი 32%, მხოლოდ 1x.",
+        StrategyTemplateKeys.FAdxSma =>
+            "Freqtrade FAdxSma, 1 საათი, ორივე მხარე. SMA(12) კვეთს SMA(48)-ს და ADX(14) 30-ზე მეტია. გასვლა, როცა ADX 30-ს ქვემოთ ჩამოდის. ტეიკი 5%, სტოპი 5%.",
+        StrategyTemplateKeys.TripleSupertrend =>
+            "Freqtrade FSupertrend, 1 საათი, ორივე მხარე. ლონგი სამი Supertrend-ის up-ზე (8/4, 9/7, 8/1), შორტი სამი down-ზე (16/1, 18/3, 18/6). ტეიკი 10%, სტოპი 26.5%, მხოლოდ 1x.",
         _ => "ახალ ტრენდს იწყებს: სწრაფი EMA ნელს კვეთს, RSI ადასტურებს. მიზანი — მიმართულების ცვლილება, სუსტი გადაკვეთების გარეშე."
     };
 

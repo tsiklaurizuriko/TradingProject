@@ -1,10 +1,9 @@
 import { Component, computed, effect, inject, signal } from '@angular/core';
-import { NgTemplateOutlet } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { AuthService } from '../../core/auth/auth.service';
 import { TradingService } from '../../core/trading/trading.service';
-import { ExchangeConnectionDto, RiskProfileDto, SaveRiskProfileRequest, money, previewRisk, price } from '../../core/trading/trading.models';
+import { ExchangeConnectionDto, SaveRiskProfileRequest } from '../../core/trading/trading.models';
 import { ListQuery } from '../../shared/lists/list-query';
 import { SortBtnComponent } from '../../shared/lists/list-tools';
 import { ToastService } from '../../core/ui/toast.service';
@@ -24,192 +23,6 @@ interface RiskDraft {
   allowLive: boolean;
 }
 
-@Component({
-  selector: 'app-risk-page',
-  imports: [FormsModule, NgTemplateOutlet],
-  template: `
-    <header class="page-header">
-      <div>
-        <strong>Active book {{ active()?.name || '—' }}</strong>
-        <div class="tiny">New Isolated entries use this book on current {{ ui.workspace() }} available. Existing positions keep the snapshot from fill.</div>
-      </div>
-    </header>
-    <section class="panel">
-      <div class="section-head">
-        <div>
-          <h2>Calculator</h2>
-          <p class="tiny">{{ ui.workspace() }} available · sample entry {{ price(samplePrice()) }}</p>
-        </div>
-      </div>
-      <section class="kpi-row cols-3" style="margin:4px 0 12px">
-        <article class="card"><div class="metric-label">Available</div><div class="metric-value">{{ money(available()) }}</div></article>
-        <article class="card"><div class="metric-label">Planned Risk</div><div class="metric-value">{{ money(calc().risk) }}</div></article>
-        <article class="card"><div class="metric-label">Notional</div><div class="metric-value">{{ money(calc().notional) }}</div></article>
-        <article class="card"><div class="metric-label">Isolated margin</div><div class="metric-value">{{ money(calc().margin) }}</div></article>
-        <article class="card"><div class="metric-label">SL price</div><div class="metric-value">{{ price(calc().stopPrice) }}</div></article>
-        <article class="card"><div class="metric-label">TP price</div><div class="metric-value">{{ price(calc().takePrice) }}</div></article>
-      </section>
-      <p class="tiny">Planned Risk = available × R% if the stop fills as assumed. It is not a guaranteed maximum loss. Notional and Isolated margin are different numbers.</p>
-    </section>
-    @for (row of books(); track row.id ?? row.name) {
-      <section class="panel">
-        <div class="section-head">
-          <div>
-            <strong>{{ row.name }}</strong>
-            <div class="tiny">Isolated · {{ row.riskPerTradePercent }}% R · {{ row.stopLossPercent }}% SL · {{ row.takeProfitPercent }}% TP · {{ row.maxLeverage }}x · {{ row.maxSimultaneousPositions }} / strategy{{ row.allowLive ? '' : ' · paper only' }}</div>
-          </div>
-          <span class="badge" [class.badge-running]="row.isActive" [class.badge-paused]="!row.isActive">{{ row.isActive ? 'Active' : 'Idle' }}</span>
-        </div>
-        @if (editingId() === row.id && draft(); as form) {
-          <ng-container [ngTemplateOutlet]="editor" [ngTemplateOutletContext]="{ $implicit: form }" />
-        } @else {
-          <section class="kpi-row cols-3" style="margin:4px 0 12px">
-            <article class="card"><div class="metric-label">Risk per trade</div><div class="metric-value">{{ row.riskPerTradePercent }}%</div></article>
-            <article class="card"><div class="metric-label">Stop loss</div><div class="metric-value">{{ row.stopLossPercent }}%</div></article>
-            <article class="card"><div class="metric-label">Take profit</div><div class="metric-value">{{ row.takeProfitPercent }}%</div></article>
-            <article class="card"><div class="metric-label">Max leverage</div><div class="metric-value">{{ row.maxLeverage }}x</div></article>
-            <article class="card"><div class="metric-label">Portfolio risk cap</div><div class="metric-value">{{ row.maxPortfolioRiskPercent }}%</div></article>
-            <article class="card"><div class="metric-label">Max per strategy</div><div class="metric-value">{{ row.maxSimultaneousPositions }}</div></article>
-            <article class="card"><div class="metric-label">Cooldown</div><div class="metric-value">{{ row.cooldownMinutes }}m</div></article>
-            <article class="card"><div class="metric-label">Liq. buffer</div><div class="metric-value">{{ row.minimumLiquidationSafetyBufferPercent }}%</div></article>
-            <article class="card"><div class="metric-label">LIVE</div><div class="metric-value">{{ row.allowLive ? 'Allowed' : 'Paper' }}</div></article>
-          </section>
-          <p class="tiny">LIVE places Binance SL/TP with the fill. Paper simulates them. Max positions and the portfolio risk cap apply to each running strategy separately. One Isolated coin still cannot be opened twice. There is no daily money halt — winning is not capped.</p>
-          <div class="btn-row" style="margin-top:12px">
-            <button class="btn" type="button" [disabled]="busy || row.isActive" (click)="activate(row)">Set active</button>
-            <button class="btn secondary" type="button" [disabled]="busy || !row.id" (click)="beginEdit(row)">Edit</button>
-          </div>
-        }
-      </section>
-    }
-    <ng-template #editor let-form>
-      <div class="form" style="margin-top:12px;max-width:880px">
-        <div class="form-grid cols-3">
-          <label class="field">Risk per trade % <input type="number" step="0.1" [(ngModel)]="form.riskPerTradePercent" /></label>
-          <label class="field">Stop loss % <input type="number" step="0.1" [(ngModel)]="form.stopLossPercent" /></label>
-          <label class="field">Take profit % <input type="number" step="0.1" [(ngModel)]="form.takeProfitPercent" /></label>
-          <label class="field">Max leverage <input type="number" step="1" min="1" [(ngModel)]="form.maxLeverage" /></label>
-          <label class="field">Max portfolio risk % <input type="number" step="0.1" [(ngModel)]="form.maxPortfolioRiskPercent" /></label>
-          <label class="field">Max positions per strategy <input type="number" step="1" min="1" [(ngModel)]="form.maxSimultaneousPositions" /></label>
-          <label class="field">Consecutive losses <input type="number" step="1" min="1" [(ngModel)]="form.maxConsecutiveLosses" /></label>
-          <label class="field">Cooldown minutes <input type="number" step="1" min="1" [(ngModel)]="form.cooldownMinutes" /></label>
-          <label class="field">Liq. safety buffer % <input type="number" step="0.1" [(ngModel)]="form.minimumLiquidationSafetyBufferPercent" /></label>
-        </div>
-        <label class="field">
-          <span style="display:flex;gap:8px;align-items:center">
-            <input type="checkbox" [(ngModel)]="form.allowLive" />
-            Allow LIVE bots on this book
-          </span>
-        </label>
-        <div class="btn-row">
-          <button class="btn" type="button" [disabled]="busy" (click)="save()">Save</button>
-          <button class="btn secondary" type="button" [disabled]="busy" (click)="cancel()">Cancel</button>
-        </div>
-      </div>
-    </ng-template>
-  `,
-})
-export class RiskPage {
-  readonly trading = inject(TradingService);
-  readonly ui = inject(UiStateService);
-  private readonly toast = inject(ToastService);
-  readonly money = money;
-  readonly price = price;
-  readonly editingId = signal<string | null>(null);
-  readonly draft = signal<RiskDraft | null>(null);
-  readonly books = computed(() => this.trading.riskProfiles());
-  readonly active = computed(() => this.books().find((row) => row.isActive) ?? this.trading.risk() ?? this.books()[0] ?? null);
-  readonly available = computed(() => {
-    const overview = this.trading.overview();
-    if (this.ui.isLive()) {
-      return overview?.liveAvailable ?? 0;
-    }
-    return overview?.availableBalance ?? 0;
-  });
-  readonly samplePrice = computed(() => {
-    const ticker = this.trading.overview()?.ticker ?? this.trading.tickers().find((row) => row.symbol === 'BTCUSDT') ?? this.trading.tickers()[0];
-    return ticker?.price || 100_000;
-  });
-  readonly calc = computed(() => {
-    const active = this.active();
-    const draft = this.editingId() === active?.id ? this.draft() : null;
-    const row = draft ?? active;
-    if (!row) {
-      return { risk: 0, notional: 0, margin: 0, stopPrice: 0, takePrice: 0 };
-    }
-    return previewRisk(row, this.available(), this.samplePrice());
-  });
-  busy = false;
-
-  constructor() {
-    void this.trading.refreshCatalog();
-    void this.trading.refreshRisk();
-  }
-
-  beginEdit(row: RiskProfileDto): void {
-    this.editingId.set(row.id);
-    this.draft.set(fromRisk(row));
-  }
-
-  cancel(): void {
-    this.editingId.set(null);
-    this.draft.set(null);
-  }
-
-  async activate(row: RiskProfileDto): Promise<void> {
-    if (!row.id) {
-      return;
-    }
-    this.busy = true;
-    try {
-      await this.trading.activateRiskProfile(row.id);
-      await this.trading.refreshCatalog();
-      await this.trading.refreshRisk();
-      this.toast.show('Active book', `${row.name} sizes every new Isolated entry.`, 'success', 'risk');
-    } catch {
-      this.toast.show('Activate blocked', 'Could not switch the active risk book.', 'error', 'risk');
-    } finally {
-      this.busy = false;
-    }
-  }
-
-  async save(): Promise<void> {
-    const form = this.draft();
-    const id = this.editingId();
-    if (!form || !id) {
-      return;
-    }
-    this.busy = true;
-    try {
-      await this.trading.updateRiskProfile(id, toRiskRequest(form));
-      await this.trading.refreshCatalog();
-      await this.trading.refreshRisk();
-      this.cancel();
-      this.toast.show('Risk saved', 'New entries use the active book. Open positions keep their snapshot.', 'success', 'risk');
-    } catch {
-      this.toast.show('Save blocked', 'Check R%, stop, take profit, leverage, and max positions.', 'error', 'risk');
-    } finally {
-      this.busy = false;
-    }
-  }
-}
-
-function fromRisk(row: RiskProfileDto): RiskDraft {
-  return {
-    riskPerTradePercent: row.riskPerTradePercent,
-    stopLossPercent: row.stopLossPercent,
-    takeProfitPercent: row.takeProfitPercent,
-    maxLeverage: row.maxLeverage,
-    maxDailyLossPercent: row.maxDailyLossPercent,
-    maxPortfolioRiskPercent: row.maxPortfolioRiskPercent ?? 4,
-    maxSimultaneousPositions: row.maxSimultaneousPositions ?? 2,
-    maxConsecutiveLosses: row.maxConsecutiveLosses ?? 5,
-    cooldownMinutes: row.cooldownMinutes ?? 30,
-    minimumLiquidationSafetyBufferPercent: row.minimumLiquidationSafetyBufferPercent ?? 1,
-    allowLive: row.allowLive !== false,
-  };
-}
-
 function toRiskRequest(form: RiskDraft): SaveRiskProfileRequest {
   return {
     riskPerTradePercent: Number(form.riskPerTradePercent),
@@ -224,6 +37,113 @@ function toRiskRequest(form: RiskDraft): SaveRiskProfileRequest {
     minimumLiquidationSafetyBufferPercent: Number(form.minimumLiquidationSafetyBufferPercent),
     allowLive: form.allowLive,
   };
+}
+
+@Component({
+  selector: 'app-risk-page',
+  imports: [FormsModule],
+  styleUrl: './risk.page.scss',
+  template: `
+    <div class="risk-page">
+      <header class="risk-head">
+        <h1>Strategy risk</h1>
+        <p>Each strategy keeps its own stop, take profit, and size. A bot uses the risk of the strategy you pick. Open positions keep the stop written at fill.</p>
+      </header>
+      <div class="risk-list">
+        @for (row of trading.strategies(); track row.id) {
+          <article class="risk-card">
+            <div class="risk-card-head">
+              <div class="risk-card-title">
+                <strong>{{ row.name }}</strong>
+                <span class="chip">{{ row.timeframe }}</span>
+              </div>
+              <button class="btn sm" type="button" [class.secondary]="!dirty(row.id)" [class.accent]="dirty(row.id)" [disabled]="busy || !dirty(row.id)" (click)="save(row)">Save</button>
+            </div>
+            <div class="risk-fields">
+              <label>Risk %<input type="number" step="0.1" [ngModel]="draftOf(row).riskPerTradePercent" (ngModelChange)="patch(row, 'riskPerTradePercent', $event)" /></label>
+              <label>Stop %<input type="number" step="0.1" [ngModel]="draftOf(row).stopLossPercent" (ngModelChange)="patch(row, 'stopLossPercent', $event)" /></label>
+              <label>Take %<input type="number" step="0.1" [ngModel]="draftOf(row).takeProfitPercent" (ngModelChange)="patch(row, 'takeProfitPercent', $event)" /></label>
+              <label>Leverage<input type="number" step="1" [ngModel]="draftOf(row).maxLeverage" (ngModelChange)="patch(row, 'maxLeverage', $event)" /></label>
+              <label>Positions<input type="number" step="1" [ngModel]="draftOf(row).maxSimultaneousPositions" (ngModelChange)="patch(row, 'maxSimultaneousPositions', $event)" /></label>
+              <label>Loss streak<input type="number" step="1" [ngModel]="draftOf(row).maxConsecutiveLosses" (ngModelChange)="patch(row, 'maxConsecutiveLosses', $event)" /></label>
+              <label>Cooldown<input type="number" step="1" [ngModel]="draftOf(row).cooldownMinutes" (ngModelChange)="patch(row, 'cooldownMinutes', $event)" /></label>
+            </div>
+          </article>
+        }
+      </div>
+    </div>
+  `,
+})
+export class RiskPage {
+  readonly trading = inject(TradingService);
+  private readonly toast = inject(ToastService);
+  readonly drafts = signal<Record<string, RiskDraft>>({});
+  busy = false;
+
+  constructor() {
+    void this.trading.refreshCatalog();
+  }
+
+  draftOf(row: {
+    id: string;
+    riskPerTradePercent?: number;
+    stopLossPercent?: number;
+    takeProfitPercent?: number;
+    maxLeverage?: number;
+    maxSimultaneousPositions?: number;
+    maxConsecutiveLosses?: number;
+    cooldownMinutes?: number;
+  }): RiskDraft {
+    const existing = this.drafts()[row.id];
+    if (existing) {
+      return existing;
+    }
+    return {
+      riskPerTradePercent: row.riskPerTradePercent || 0.5,
+      stopLossPercent: row.stopLossPercent || 2,
+      takeProfitPercent: row.takeProfitPercent || 4,
+      maxLeverage: row.maxLeverage || 3,
+      maxDailyLossPercent: 3,
+      maxPortfolioRiskPercent: 4,
+      maxSimultaneousPositions: row.maxSimultaneousPositions || 5,
+      maxConsecutiveLosses: row.maxConsecutiveLosses || 5,
+      cooldownMinutes: row.cooldownMinutes || 30,
+      minimumLiquidationSafetyBufferPercent: 1,
+      allowLive: true,
+    };
+  }
+
+  dirty(id: string): boolean {
+    return !!this.drafts()[id];
+  }
+
+  patch(row: { id: string; riskPerTradePercent?: number; stopLossPercent?: number; takeProfitPercent?: number; maxLeverage?: number }, key: keyof RiskDraft, value: number): void {
+    const next = { ...this.draftOf(row), [key]: Number(value) };
+    this.drafts.update((map) => ({ ...map, [row.id]: next }));
+  }
+
+  async save(row: { id: string; riskProfileId?: string | null; name: string; riskPerTradePercent?: number; stopLossPercent?: number; takeProfitPercent?: number; maxLeverage?: number }): Promise<void> {
+    const id = row.riskProfileId;
+    if (!id) {
+      this.toast.show('Risk missing', row.name + ' has no risk row yet. Restart the API so the seed can attach one.', 'error', 'risk');
+      return;
+    }
+    this.busy = true;
+    try {
+      await this.trading.updateRiskProfile(id, toRiskRequest(this.draftOf(row)));
+      await this.trading.refreshCatalog();
+      this.drafts.update((map) => {
+        const next = { ...map };
+        delete next[row.id];
+        return next;
+      });
+      this.toast.show('Risk saved', row.name + ' will size the next entry.', 'success', 'risk');
+    } catch {
+      this.toast.show('Save blocked', 'Could not save this strategy risk.', 'error', 'risk');
+    } finally {
+      this.busy = false;
+    }
+  }
 }
 
 @Component({
@@ -351,13 +271,15 @@ export class SettingsPage {
   readonly riskQuery = new ListQuery();
   readonly riskRows = computed(() =>
     this.riskQuery.apply(
-      this.trading.riskProfiles(),
+      this.trading.strategies(),
       (row) => [row.name],
       {
         name: (row) => row.name,
-        r: (row) => row.riskPerTradePercent,
-        slots: (row) => row.maxSimultaneousPositions,
-        lev: (row) => row.maxLeverage,
+        r: (row) => row.riskPerTradePercent ?? 0,
+        sl: (row) => row.stopLossPercent ?? 0,
+        tp: (row) => row.takeProfitPercent ?? 0,
+        slots: (row) => row.maxSimultaneousPositions ?? 0,
+        lev: (row) => row.maxLeverage ?? 0,
       },
     ),
   );

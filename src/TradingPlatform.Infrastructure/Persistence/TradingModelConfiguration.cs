@@ -114,6 +114,7 @@ internal static class TradingModelConfiguration
             b.Property(x => x.IsEnabled).IsRequired();
             b.Property(x => x.ValidationStatus).HasMaxLength(32).IsRequired();
             b.HasIndex(x => new { x.UserId, x.Name });
+            b.HasOne(x => x.RiskProfile).WithMany().HasForeignKey(x => x.RiskProfileId).OnDelete(DeleteBehavior.Restrict);
         });
         model.Entity<StrategyVersion>(b =>
         {

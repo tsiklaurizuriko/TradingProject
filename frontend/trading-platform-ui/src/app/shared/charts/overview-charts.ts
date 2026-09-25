@@ -3,6 +3,7 @@ import {
   BotDto,
   PositionDto,
   RiskProfileDto,
+  StrategyDto,
   TradeDto,
   dailyPnlSeries,
   money,
@@ -179,27 +180,16 @@ export class GoalProgressComponent {
   selector: 'app-risk-overview',
   template: `
     <section class="panel panel-fill compact risk-overview">
-      <div class="section-head"><h2>Risk Overview</h2></div>
+      <div class="section-head">
+        <h2>Risk Overview</h2>
+      </div>
       <div class="risk-split">
         <div class="risk-metrics">
-          <div class="risk-row">
-            <span>Profile <strong>{{ risk()?.name || '—' }}</strong></span>
-          </div>
-          <div class="risk-row">
-            <span>Risk per trade <strong>{{ pctLabel(risk()?.riskPerTradePercent) }}</strong></span>
-            <div class="progress"><span [style.width.%]="bar(risk()?.riskPerTradePercent, 2)"></span></div>
-          </div>
-          <div class="risk-row">
-            <span>Stop / Take <strong>{{ slTpLabel() }}</strong></span>
-          </div>
           <div class="risk-row">
             <span>Available <strong>{{ money(available()) }}</strong></span>
           </div>
           <div class="risk-row">
-            <span>Planned Risk next <strong>{{ money(plannedRiskNext()) }}</strong></span>
-          </div>
-          <div class="risk-row">
-            <span>Margin <strong>Isolated · {{ risk() ? risk()!.maxLeverage + 'x' : '—' }}</strong></span>
+            <span>Margin <strong>Isolated</strong></span>
           </div>
           <div class="risk-row">
             <span>Today's PnL <strong [class]="todaysPnL() >= 0 ? 'pnl-pos' : 'pnl-neg'">{{ signedMoney(todaysPnL()) }}</strong></span>
@@ -211,26 +201,21 @@ export class GoalProgressComponent {
             <span>Open Positions <strong>{{ uniqueCoins() }}</strong></span>
           </div>
           <div class="risk-row">
-            <span>Consecutive losses <strong>{{ consecutiveLosses() }}{{ risk() ? ' / ' + risk()!.maxConsecutiveLosses : '' }}</strong></span>
+            <span>Consecutive losses <strong>{{ consecutiveLosses() }}</strong></span>
           </div>
           <div class="risk-row">
             <span>Risk Lock <strong>{{ locked() ? 'ON' : 'Off' }}</strong></span>
           </div>
         </div>
         <div class="risk-book">
-          <div class="risk-strategy-head">
-            <span>Strategies</span>
-            <span class="tiny">max {{ risk()?.maxSimultaneousPositions ?? '—' }} · cap {{ pctLabel(risk()?.maxPortfolioRiskPercent) }}</span>
-          </div>
           @if (rows().length === 0) {
             <p class="tiny muted">No running strategies.</p>
           } @else {
             <div class="risk-table">
               <div class="risk-table-head">
-                <span>Strategy</span>
+                <span>Strategies</span>
+                <span>SL / TP</span>
                 <span>Open</span>
-                <span>Risk</span>
-                <span>Entries</span>
                 <span>W / L</span>
                 <span>PnL</span>
               </div>
@@ -241,14 +226,12 @@ export class GoalProgressComponent {
                   [title]="strategyTitle(row)"
                 >
                   <span class="risk-strategy-name" [title]="row.name">{{ row.name }}</span>
+                  <span class="num">{{ bookLabel(row) }}</span>
                   @if (row.historical) {
-                    <span class="num muted">—</span>
                     <span class="num muted">—</span>
                   } @else {
                     <strong class="num">{{ row.openCoins }}/{{ row.maxPositions }}</strong>
-                    <span class="num">{{ money(row.plannedRiskUsdt) }} · {{ pctLabel(row.plannedRiskPercent) }}</span>
                   }
-                  <span class="num">{{ countLabel(row.entries) }}</span>
                   <span class="num wl">
                     <span [class]="row.wins ? 'pnl-pos' : 'muted'">{{ countLabel(row.wins) }}</span>
                     <span class="muted">/</span>
@@ -266,6 +249,7 @@ export class GoalProgressComponent {
 })
 export class RiskOverviewComponent {
   readonly risk = input<RiskProfileDto | null>(null);
+  readonly strategies = input<StrategyDto[]>([]);
   readonly available = input(0);
   readonly todaysPnL = input(0);
   readonly positions = input<PositionDto[]>([]);
@@ -281,7 +265,7 @@ export class RiskOverviewComponent {
     return strategyOccupancy(
       this.bots(),
       books.length > 0 ? books : this.positions(),
-      this.risk(),
+      this.strategies(),
       this.available(),
     );
   });
@@ -300,6 +284,10 @@ export class RiskOverviewComponent {
         name: row.name,
         openCoins: row.openCoins,
         maxPositions: row.maxPositions,
+        stopLossPercent: row.stopLossPercent,
+        takeProfitPercent: row.takeProfitPercent,
+        riskPerTradePercent: row.riskPerTradePercent,
+        maxLeverage: row.maxLeverage,
         plannedRiskUsdt: row.plannedRiskUsdt,
         plannedRiskPercent: row.plannedRiskPercent,
         entries: loaded ? (hit?.entries ?? 0) : null,
@@ -314,11 +302,16 @@ export class RiskOverviewComponent {
     });
     const extra = (results ?? [])
       .filter((row) => !used.has(row.name.trim().toLowerCase()) && row.entries > 0)
-      .map((row, index) => ({
+      .map((row, index) => {
+        const match = this.strategies().find((item) => item.name.trim().toLowerCase() === row.name.trim().toLowerCase());
+        return {
         key: `history:${row.name}`,
         name: row.name,
         openCoins: 0,
         maxPositions: 0,
+        stopLossPercent: match?.stopLossPercent ?? null,
+        takeProfitPercent: match?.takeProfitPercent ?? null,
+        maxLeverage: match?.maxLeverage ?? null,
         plannedRiskUsdt: 0,
         plannedRiskPercent: 0,
         entries: row.entries,
@@ -329,7 +322,8 @@ export class RiskOverviewComponent {
         unrealized: row.unrealizedPnL,
         historical: true,
         firstHistorical: index === 0,
-      }));
+      };
+      });
     return [...running, ...extra];
   });
   readonly uniqueCoins = computed(() => uniqueOpenCoins(this.positions()));
@@ -340,20 +334,11 @@ export class RiskOverviewComponent {
     const available = this.available();
     return available > 0 ? (this.totalOpenRisk() / available) * 100 : 0;
   });
-  readonly plannedRiskNext = computed(() => {
-    const risk = this.risk();
-    const available = this.available();
-    if (!risk || available <= 0) {
-      return 0;
+  bookLabel(row: { stopLossPercent?: number | null; takeProfitPercent?: number | null }): string {
+    if (row.stopLossPercent == null || row.takeProfitPercent == null) {
+      return '—';
     }
-    return (available * (risk.riskPerTradePercent ?? 0)) / 100;
-  });
-
-  bar(value: number | null | undefined, max: number): number {
-    if (value === null || value === undefined || max <= 0) {
-      return 0;
-    }
-    return Math.min(100, Math.max(0, (value / max) * 100));
+    return `${row.stopLossPercent}% / ${row.takeProfitPercent}%`;
   }
 
   pctLabel(value: number | null | undefined): string {
@@ -361,14 +346,6 @@ export class RiskOverviewComponent {
       return '—';
     }
     return `${value.toFixed(1)}%`;
-  }
-
-  slTpLabel(): string {
-    const risk = this.risk();
-    if (!risk) {
-      return '—';
-    }
-    return `${risk.stopLossPercent}% / ${risk.takeProfitPercent}%`;
   }
 
   countLabel(value: number | null): string {

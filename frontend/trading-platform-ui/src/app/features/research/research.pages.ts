@@ -1,7 +1,6 @@
 import { Component, computed, effect, inject, signal } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { RouterLink } from '@angular/router';
 import { TradingService } from '../../core/trading/trading.service';
 import {
   BacktestResultDto,
@@ -17,7 +16,6 @@ import {
 import { ListQuery, timeValue } from '../../shared/lists/list-query';
 import { SortBtnComponent } from '../../shared/lists/list-tools';
 import { ToastService } from '../../core/ui/toast.service';
-import { IconComponent } from '../../shared/icon/icon';
 import {
   ratingFor,
   ratingMeta,
@@ -89,6 +87,12 @@ const templateOptions = [
   { key: 'btc_daily_max_10', label: '1d BTC 10-day High' },
   { key: 'flow_zone', label: 'Flow Zone' },
   { key: 'flat_range', label: 'Flat Range' },
+  { key: 'fadx_sma', label: 'ADX SMA Cross' },
+  { key: 'triple_supertrend', label: 'Triple Supertrend' },
+  { key: 'binhv45', label: 'BinHV45' },
+  { key: 'cluc_may72018', label: 'Cluc May 2018' },
+  { key: 'combined_binh_cluc', label: 'Combined BinH Cluc' },
+  { key: 'hlhb', label: 'HLHB' },
   { key: 'cross_sectional_reversal_return_15m', label: 'Return 15m Reversal' },
   { key: 'cross_sectional_reversal_return_1h', label: 'Return 1h Reversal' },
 ] as const;
@@ -284,138 +288,45 @@ function depsFor(key: string): string {
 
 @Component({
   selector: 'app-strategies-page',
-  imports: [FormsModule, NgTemplateOutlet, SortBtnComponent, IconComponent, RouterLink],
+  imports: [FormsModule, NgTemplateOutlet, SortBtnComponent],
   styleUrl: './strategies.page.scss',
   template: `
     <div class="strategies-page">
       <header class="strategies-toolbar">
-        <div class="strategies-toolbar-actions">
-          <label class="field">Use
-            <select [ngModel]="useFilter()" (ngModelChange)="useFilter.set($event)">
-              <option value="">All</option>
-              <option value="weak">სუსტი</option>
-              <option value="near-miss">NEAR-MISS</option>
-              <option value="avoid">არ გამოიყენო</option>
-              <option value="blocked">ვერ გაეშვება</option>
-              <option value="paper">გამოიყენე PAPER-ზე</option>
-            </select>
-          </label>
-          <label class="field">Family
-            <select [ngModel]="familyFilter()" (ngModelChange)="familyFilter.set($event)">
-              <option value="">All families</option>
-              <option value="TREND">TREND</option>
-              <option value="TREND / STRUCTURE">TREND / STRUCTURE</option>
-              <option value="BREAKOUT / TREND">BREAKOUT / TREND</option>
-              <option value="MEAN REVERSION">MEAN REVERSION</option>
-              <option value="REVERSAL">REVERSAL</option>
-              <option value="CROSS_SECTIONAL_REVERSAL">CROSS_SECTIONAL_REVERSAL</option>
-              <option value="FUTURES / FLOW">FUTURES / FLOW</option>
-              <option value="SCALPING">SCALPING</option>
-              <option value="ROUTER">ROUTER</option>
-            </select>
-          </label>
-          <label class="field">Status
-            <select [ngModel]="statusFilter()" (ngModelChange)="statusFilter.set($event)">
-              <option value="">All statuses</option>
-              <option value="VALIDATION_PENDING">VALIDATION_PENDING</option>
-              <option value="RESEARCHING">RESEARCHING</option>
-              <option value="DATA_UNAVAILABLE">DATA_UNAVAILABLE</option>
-              <option value="HISTORICALLY_FITTED_CANDIDATE">HISTORICALLY_FITTED_CANDIDATE</option>
-            </select>
-          </label>
-          <label class="field">Timeframe
-            <select [ngModel]="timeframeFilter()" (ngModelChange)="timeframeFilter.set($event)">
-              <option value="">All TF</option>
-              <option value="5m">5m</option>
-              <option value="15m">15m</option>
-              <option value="1h">1h</option>
-            </select>
-          </label>
-          <label class="field">Direction
-            <select [ngModel]="directionFilter()" (ngModelChange)="directionFilter.set($event)">
-              <option value="">All</option>
-              <option value="Long">Long</option>
-              <option value="Short">Short</option>
-              <option value="Both">Both</option>
-            </select>
-          </label>
-          <label class="field">Data
-            <select [ngModel]="dataFilter()" (ngModelChange)="dataFilter.set($event)">
-              <option value="">All data</option>
-              <option value="ohlcv">OHLCV</option>
-              <option value="oi">Open interest</option>
-              <option value="funding">Funding / basis</option>
-              <option value="taker">Taker flow</option>
-              <option value="universe">Universe / pairs</option>
-            </select>
-          </label>
-          <label class="field">Coin
-            <select [(ngModel)]="previewCoin">
-              @for (coin of coins(); track coin.symbol) {
-                <option [value]="coin.symbol">{{ coin.symbol }} · {{ coin.displayName }}</option>
-              }
-            </select>
-          </label>
-          <button class="btn accent" type="button" [disabled]="busy" (click)="beginCreate()">Add strategy</button>
+        <div>
+          <h1>Strategies</h1>
+          <p>Stop, take profit, risk, and leverage are edited on Risk Management. A bot uses the strategy you pick.</p>
         </div>
-        <div class="list-sorts">
-          <app-sort-btn column="name" [query]="list">Name</app-sort-btn>
-          <app-sort-btn column="tf" [query]="list">TF</app-sort-btn>
-          <app-sort-btn column="rating" [query]="list">Rating</app-sort-btn>
+        <div class="strategies-toolbar-actions">
+          <div class="list-sorts">
+            <app-sort-btn column="name" [query]="list">Name</app-sort-btn>
+            <app-sort-btn column="tf" [query]="list">TF</app-sort-btn>
+            <app-sort-btn column="rating" [query]="list">Rating</app-sort-btn>
+          </div>
+          <button class="btn accent" type="button" [disabled]="busy" (click)="beginCreate()">Add strategy</button>
         </div>
       </header>
 
-      <section class="panel near-miss-panel">
-        <div class="section-head">
-          <h2>მართვა · NEAR-MISS</h2>
-        </div>
-        <p class="tiny">ვალიდაცია ვერ გაიარა. აქედან შეგიძლია მაინც ჩართო. ჩართვა ბოტს არ სტარტავს და ორდერს არ აგზავნის. ბოტი იქმნება <a routerLink="/bots">Bots</a> გვერდზე, მას შემდეგ რაც Price Action და Paper ან Live ჩართულია.</p>
-        @if (arm(); as state) {
-          <div class="near-miss-masters">
-            <label class="settings-check">
-              <input type="checkbox" [checked]="state.enabled" [disabled]="armBusy()" (change)="setMaster({ enabled: checked($event) })" />
-              Price Action
-            </label>
-            <label class="settings-check">
-              <input type="checkbox" [checked]="state.paperEnabled" [disabled]="armBusy()" (change)="setMaster({ paperEnabled: checked($event) })" />
-              Paper
-            </label>
-            <label class="settings-check">
-              <input type="checkbox" [checked]="state.liveEnabled" [disabled]="armBusy()" (change)="setMaster({ liveEnabled: checked($event) })" />
-              Live
-            </label>
-          </div>
-          <p class="tiny">
-            Paper ბოტი: {{ state.enabled && state.paperEnabled ? 'დასაშვებია ჩართულ სტრატეგიებზე' : 'დაბლოკილია' }}
-            · Live ბოტი: {{ state.enabled && state.liveEnabled ? 'დასაშვებია ჩართულ სტრატეგიებზე' : 'გამორთული' }}
-          </p>
-          <div class="strategies-grid">
-            @for (row of state.candidates; track row.templateKey) {
-              <article class="card strategy-card">
-                <div class="strategy-card-head">
-                  <div>
-                    <strong>{{ row.name }}</strong>
-                    <p class="tiny" style="margin:4px 0 0">{{ row.hypothesisId }}</p>
-                  </div>
-                  <label class="settings-check">
-                    <input type="checkbox" [checked]="row.candidateEnabled" [disabled]="armBusy()" (change)="setCandidate(row.templateKey, checked($event))" />
-                    გაშვებადი
-                  </label>
-                </div>
-                <div class="strategy-pills">
-                  <span class="badge badge-stopped">NEAR-MISS · არ არის დადასტურებული</span>
-                  <span class="badge" [class.badge-running]="row.candidateEnabled && state.enabled && state.paperEnabled" [class.badge-paused]="!(row.candidateEnabled && state.enabled && state.paperEnabled)">Paper {{ row.candidateEnabled && state.enabled && state.paperEnabled ? 'დასაშვებია' : 'გამორთული' }}</span>
-                  <span class="badge" [class.badge-running]="row.candidateEnabled && state.enabled && state.liveEnabled" [class.badge-paused]="!(row.candidateEnabled && state.enabled && state.liveEnabled)">Live {{ row.candidateEnabled && state.enabled && state.liveEnabled ? 'დასაშვებია' : 'გამორთული' }}</span>
-                </div>
-                <p class="strategy-blurb">{{ ratingFor(row.templateKey).note }}</p>
-                @if (!row.strategyId) {
-                  <p class="tiny">სტრატეგიის რიგი ჯერ არ არის. API-ის რესტარტის შემდეგ გამოჩნდება.</p>
-                }
-              </article>
-            }
-          </div>
-        } @else {
-          <p class="tiny">{{ armError() || 'მართვის მდგომარეობა იტვირთება.' }}</p>
+      <section class="strategy-catalog">
+        @for (row of visible(); track row.id) {
+          <article class="strategy-row">
+            <div class="strategy-row-copy">
+              <div class="strategy-row-title">
+                <strong>{{ row.name }}</strong>
+                <span class="chip">{{ row.timeframe }}</span>
+                <span class="side-chip" [attr.data-side]="row.allowedSide">{{ row.allowedSide }}</span>
+              </div>
+              <p>{{ row.blurb }}</p>
+            </div>
+            <dl class="strategy-stats">
+              <div><dt>Stop</dt><dd>{{ row.stopLossPercent ?? '—' }}%</dd></div>
+              <div><dt>Take</dt><dd>{{ row.takeProfitPercent ?? '—' }}%</dd></div>
+              <div><dt>Risk</dt><dd>{{ row.riskPerTradePercent ?? '—' }}%</dd></div>
+              <div><dt>Lev</dt><dd>{{ row.maxLeverage ?? '—' }}×</dd></div>
+            </dl>
+          </article>
+        } @empty {
+          <p class="strategy-empty">No strategies yet.</p>
         }
       </section>
 
@@ -428,117 +339,6 @@ function depsFor(key: string): string {
           <ng-container [ngTemplateOutlet]="editor" [ngTemplateOutletContext]="{ $implicit: form }" />
         </section>
       }
-
-      <div class="strategies-grid">
-        @for (row of visible(); track row.id) {
-          <section class="panel strategy-card" [class.is-editing]="editingId() === row.id">
-            <div class="strategy-card-head">
-              <div>
-                <div class="strategy-title-row">
-                  <strong>{{ row.name }}</strong>
-                  @if (ratingFor(row.templateKey); as rate) {
-                    <div class="strategy-rating" [attr.title]="rate.note + ' ' + ratingMeta(rate)">
-                      <span class="strategy-stars" [attr.aria-label]="verdictLabel(row.templateKey) + ', ' + rate.stars + ' of 5'">
-                        @for (n of starSlots; track n) {
-                          <app-icon name="star" [size]="14" [filled]="n <= rate.stars" [class.is-on]="n <= rate.stars" />
-                        }
-                      </span>
-                      <span class="strategy-verdict" [class.is-paper]="rate.verdict === 'paper'" [class.is-weak]="rate.verdict === 'weak'" [class.is-avoid]="rate.verdict === 'avoid'" [class.is-blocked]="rate.verdict === 'blocked'" [class.is-near-miss]="rate.verdict === 'near-miss'">{{ verdictLabel(row.templateKey) }}</span>
-                    </div>
-                  }
-                </div>
-                @if (ratingFor(row.templateKey); as rate) {
-                  <p class="strategy-rating-meta">{{ rate.note }}</p>
-                  <p class="strategy-rating-meta">{{ ratingMeta(rate) }}</p>
-                }
-                <div class="strategy-pills">
-                  <span class="badge badge-stopped">{{ row.timeframe }}</span>
-                  <span class="badge" [class.badge-long]="(row.allowedSide || 'Long') === 'Long'" [class.badge-short]="row.allowedSide === 'Short'" [class.badge-paper]="row.allowedSide === 'Both'">{{ row.allowedSide || 'Long' }}</span>
-                  <span class="badge" [class.badge-running]="qualityOn(row)" [class.badge-stopped]="!qualityOn(row)">
-                    {{ qualityOn(row) ? 'Quality on' : 'Quality off' }}
-                  </span>
-                  <span class="badge" [class.badge-running]="row.appliesToAllSymbols" [class.badge-paused]="!row.appliesToAllSymbols">
-                    {{ row.appliesToAllSymbols ? 'All coins' : ((row.allowedSymbols?.length ?? 0) + ' coins') }}
-                  </span>
-                  @if (row.versionUsed) {
-                    <span class="badge badge-paused">v{{ row.version }} used</span>
-                  }
-                  <span class="badge" [class.badge-running]="row.isEnabled !== false" [class.badge-stopped]="row.isEnabled === false">
-                    {{ row.isEnabled === false ? 'Disabled' : 'Enabled' }}
-                  </span>
-                  <span class="badge badge-paused">{{ familyFor(row.templateKey, row.family) }}</span>
-                  @if (isNearMiss(row.templateKey)) {
-                    <span class="badge badge-stopped">NEAR-MISS · not validated</span>
-                    <span class="badge badge-paused">Paper {{ row.paperEnabled ? 'on' : 'off' }}</span>
-                    <span class="badge badge-paused">Live {{ row.liveEnabled ? 'on' : 'off' }}</span>
-                  } @else if (isResearchOnly(row.templateKey)) {
-                    <span class="badge badge-stopped">RESEARCH ONLY</span>
-                  }
-                  <span class="badge badge-paused">{{ row.validationStatus || 'VALIDATION_PENDING' }}</span>
-                  <span class="badge badge-paused">{{ (row.supportedDirections?.length ? row.supportedDirections.join('/') : 'LONG/SHORT') }}</span>
-                </div>
-              </div>
-              @if (editingId() !== row.id) {
-                <div class="strategy-actions">
-                  <button class="btn ghost sm" type="button" [disabled]="busy" (click)="beginEdit(row)">Edit</button>
-                  <button class="btn ghost sm" type="button" [disabled]="busy" (click)="toggleEnabled(row)">
-                    {{ row.isEnabled === false ? 'Enable' : 'Disable' }}
-                  </button>
-                  <button class="btn accent sm" type="button" [disabled]="previewBusy() === row.id" (click)="preview(row)">
-                    {{ previewBusy() === row.id ? 'Preview…' : 'Preview' }}
-                  </button>
-                </div>
-              }
-            </div>
-
-            @if (editingId() === row.id && draft(); as form) {
-              <ng-container [ngTemplateOutlet]="editor" [ngTemplateOutletContext]="{ $implicit: form }" />
-            } @else {
-              <p class="strategy-blurb">{{ blurbFor(row.templateKey, row.description || row.blurb) }}</p>
-              <p class="tiny">{{ row.dataDependencies || depsFor(row.templateKey) }} · TF {{ (row.supportedTimeframes || ['5m','15m','1h']).join(', ') }}</p>
-              @if (previews()[row.id]; as snap) {
-                <div class="strategy-preview">
-                  <div class="strategy-preview-head">
-                    <span class="tiny">{{ snap.symbol }} · last <span [class]="signalClass(snap.lastSignal)">{{ snap.lastSignal }}</span></span>
-                    <span class="tiny">{{ snap.lastReason }}</span>
-                  </div>
-                  <div class="table-scroll" style="max-height:220px">
-                    <table class="data-table">
-                      <thead>
-                        <tr>
-                          <th>Time</th>
-                          <th>Signal</th>
-                          <th class="num">Close</th>
-                          <th>Reason</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        @for (bar of newestBars(snap.bars); track bar.time) {
-                          <tr>
-                            <td>{{ formatTime(bar.time) }}</td>
-                            <td [class]="signalClass(bar.signal)">{{ bar.signal }}</td>
-                            <td class="num">{{ money(bar.close, 4) }}</td>
-                            <td>{{ bar.reason }}</td>
-                          </tr>
-                        }
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              }
-            }
-          </section>
-        } @empty {
-          @if (!creating()) {
-            <section class="panel">
-              <div class="empty-state">
-                <strong>No strategies yet</strong>
-                <p>Add one to assign coins. This does not start bots.</p>
-              </div>
-            </section>
-          }
-        }
-      </div>
     </div>
 
     <ng-template #editor let-form>
@@ -1153,7 +953,7 @@ function toRequest(form: StrategyDraft): SaveStrategyRequest {
           <label class="field">From <input type="date" [(ngModel)]="from" /></label>
           <label class="field">To <input type="date" [(ngModel)]="to" /></label>
           <label class="field">Initial capital <input type="number" [(ngModel)]="capital" /></label>
-          <p class="tiny">Sizing uses the active Isolated book {{ trading.risk()?.name || '—' }} · {{ trading.risk()?.riskPerTradePercent ?? '—' }}% R · {{ trading.risk()?.stopLossPercent ?? '—' }}% SL · {{ trading.risk()?.takeProfitPercent ?? '—' }}% TP · {{ trading.risk()?.maxLeverage ?? '—' }}x. Change it on Risk.</p>
+          <p class="tiny">Sizing uses this strategy's stop, take profit, and risk percent. Change those numbers on Risk Management.</p>
           <label class="field">Fees % <input type="number" step="0.01" [(ngModel)]="fees" /></label>
           <label class="field">Slippage % <input type="number" step="0.01" [(ngModel)]="slippage" /></label>
           <button class="btn accent" type="button" [disabled]="busy() || !strategyId" (click)="run()">
@@ -1280,6 +1080,10 @@ export class BacktestingPage {
     return pnlClass(value);
   }
 
+  selectedStrategyRisk(): { riskPerTradePercent?: number; maxLeverage?: number } | undefined {
+    return this.trading.strategies().find((row) => row.id === this.strategyId);
+  }
+
   async run(): Promise<void> {
     const symbol = this.symbol.trim().toUpperCase();
     if (!this.strategyId) {
@@ -1295,8 +1099,8 @@ export class BacktestingPage {
         from: `${this.from}T00:00:00.000Z`,
         to: `${this.to}T23:59:59.000Z`,
         initialCapital: Number(this.capital),
-        riskPercent: this.trading.risk()?.riskPerTradePercent ?? 1,
-        leverage: this.trading.risk()?.maxLeverage ?? 3,
+        riskPercent: this.selectedStrategyRisk()?.riskPerTradePercent ?? 0.5,
+        leverage: this.selectedStrategyRisk()?.maxLeverage ?? 2,
         feesPercent: Number(this.fees),
         slippagePercent: Number(this.slippage),
       });

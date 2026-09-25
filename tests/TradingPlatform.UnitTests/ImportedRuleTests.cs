@@ -205,6 +205,13 @@ public sealed class ImportedRuleTests
             candles.Count - 1);
     }
 
+    [Fact]
+    public void Adx_sma_stays_flat_until_the_slow_average_exists()
+    {
+        var candles = Enumerable.Range(0, 40).Select(i => Bar(i, 100m + i)).ToList();
+        Eval(StrategyTemplateKeys.FAdxSma, candles, false, PositionSide.Long).Signal.Should().Be(SignalType.NoAction);
+    }
+
     private static MarketCandle Bar(int index, decimal close, decimal? high = null, decimal? low = null)
     {
         var open = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(index * 5);

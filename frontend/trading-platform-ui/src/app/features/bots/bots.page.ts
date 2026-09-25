@@ -78,6 +78,14 @@ export class BotsPage {
   );
   readonly ratingFor = ratingFor;
 
+  bookLabel(bot: { strategyId?: string; riskProfileName?: string } | undefined): string {
+    const row = this.trading.strategies().find((item) => item.id === bot?.strategyId);
+    if (!row || row.stopLossPercent == null || row.takeProfitPercent == null) {
+      return bot?.riskProfileName || 'Strategy risk';
+    }
+    return `SL ${row.stopLossPercent}% · TP ${row.takeProfitPercent}% · ${row.maxLeverage ?? '—'}x`;
+  }
+
   strategyOptionLabel(row: { name: string; templateKey: string; isEnabled: boolean; appliesToAllSymbols: boolean; allowedSymbols: string[] }): string {
     const rate = ratingFor(row.templateKey);
     const coins = row.appliesToAllSymbols ? 'All coins' : `${row.allowedSymbols.length} coins`;
@@ -158,10 +166,9 @@ export class BotsPage {
 
   async createBots(): Promise<void> {
     const strategy = this.selectedStrategy();
-    const risk = this.trading.risk() ?? this.trading.riskProfiles().find((row) => row.isActive) ?? this.trading.riskProfiles()[0];
     const symbols = [...this.selected()].filter((symbol) => !this.alreadyCreated(symbol));
-    if (!strategy?.id || !risk?.id) {
-      this.toast.show('Pick a strategy', 'Choose a strategy. New bots use the active Isolated book.', 'error');
+    if (!strategy?.id) {
+      this.toast.show('Pick a strategy', 'Choose a strategy. The order uses that strategy stop and take profit.', 'error');
       return;
     }
     if (!symbols.length) {
@@ -170,7 +177,7 @@ export class BotsPage {
     }
     this.busy = true;
     try {
-      const result = await this.trading.createWorkspaceBots(strategy.id, risk.id, symbols);
+      const result = await this.trading.createWorkspaceBots(strategy.id, strategy.riskProfileId || '00000000-0000-0000-0000-000000000000', symbols);
       this.selected.set(new Set());
       if (result.created) {
         this.createOpen.set(false);

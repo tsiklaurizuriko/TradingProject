@@ -24,9 +24,9 @@
     <section class="create-composer">
       <div class="create-composer-head">
         <strong>New bots</strong>
-        <span class="tiny">Active Isolated book {{ trading.risk()?.name || '—' }} · {{ trading.risk()?.riskPerTradePercent ?? '—' }}% R</span>
+        <p>One bot per coin. Orders use the stop and take profit saved on the strategy.</p>
       </div>
-      <div class="btn-row" style="align-items:flex-end">
+      <div class="create-fields">
         <label class="field">
           Strategy
           <select [ngModel]="selectedStrategy()?.id ?? ''" (ngModelChange)="strategyId.set($event)">
@@ -36,7 +36,7 @@
           </select>
         </label>
         <label class="field">
-          Filter
+          Find a coin
           <input type="search" [ngModel]="coinQuery()" (ngModelChange)="coinQuery.set($event)" placeholder="BTC, PEPE, SOL…" />
         </label>
       </div>
@@ -52,14 +52,17 @@
       </div>
       <div class="coin-pick">
         @for (row of coins(); track row.symbol) {
-          <label [class.is-used]="alreadyCreated(row.symbol)">
+          <label class="coin-chip" [class.is-on]="isSelected(row.symbol)" [class.is-used]="alreadyCreated(row.symbol)">
             <input
               type="checkbox"
               [disabled]="alreadyCreated(row.symbol)"
               [ngModel]="isSelected(row.symbol)"
               (ngModelChange)="toggle(row.symbol, $event)"
             />
-            <span>{{ row.symbol }} <em>{{ row.displayName }}</em></span>
+            <span class="coin-name">{{ row.displayName || row.symbol }}</span>
+            @if (row.displayName && row.displayName !== row.symbol) {
+              <span class="coin-id">{{ row.symbol }}</span>
+            }
             @if (alreadyCreated(row.symbol)) {
               <span class="tiny">exists</span>
             } @else if (row.eligible === false) {
@@ -90,10 +93,12 @@
         <div class="section-head">
           <button type="button" class="section-fold" (click)="ui.toggleCollapsed(groupKey(group.key))" [attr.aria-expanded]="!ui.isCollapsed(groupKey(group.key))">
             <app-icon name="chevron" [class.is-closed]="ui.isCollapsed(groupKey(group.key))" />
-            <h2>{{ group.name }} ({{ group.bots.length }})</h2>
+            <h2>{{ group.name }}</h2>
+            <span class="count-chip">{{ group.bots.length }}</span>
           </button>
           <div class="section-head-meta">
-            <span class="tiny">{{ runningCount(group.bots) }} running</span>
+            <span class="tiny">{{ bookLabel(group.bots[0]) }}</span>
+            <span class="tiny" [class.is-live]="runningCount(group.bots) > 0">{{ runningCount(group.bots) }} running</span>
             <button class="btn ghost sm" type="button" [disabled]="busy" (click)="askDeleteGroup(group.bots)">Delete group</button>
           </div>
         </div>
@@ -104,7 +109,7 @@
                 <div class="section-head">
                   <div>
                     <strong>{{ bot.symbol }}</strong>
-                    <div class="tiny">{{ bot.displayName }} · {{ bot.timeframe }} · {{ bot.riskProfileName }}</div>
+                    <div class="tiny">{{ bot.displayName }} · {{ bot.timeframe }} · {{ bookLabel(bot) }}</div>
                   </div>
                   <div class="section-head-meta">
                     <app-status-badge [label]="botStatus(bot.status).label" [cls]="botStatus(bot.status).cls" />

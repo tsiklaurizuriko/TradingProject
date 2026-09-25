@@ -52,9 +52,9 @@ import { ConfirmModalComponent, StatusBadgeComponent } from '../../shared/ui/ui-
             <p class="muted">No open position. Bots are monitoring this market.</p>
           }
           <h2 style="margin-top:16px">Risk</h2>
-          <p class="tiny">Active Isolated book {{ trading.risk()?.name || bot.riskProfileName }} · Planned Risk {{ trading.risk()?.riskPerTradePercent ?? '—' }}% of available. Changing the book does not resize this position.</p>
+          <p class="tiny">{{ strategyBook() }} An open position keeps the stop written at fill.</p>
           <h2 style="margin-top:16px">Strategy parameters</h2>
-          <p class="tiny">EMA 20/50 cross · RSI 14 &gt; 50. SL/TP come from the active Isolated book.</p>
+          <p class="tiny">SL/TP come from the strategy risk on this bot.</p>
         </section>
       </section>
       <section class="mid-grid">
@@ -136,6 +136,14 @@ export class BotDetailPage {
   readonly confirmDelete = signal(false);
   readonly busy = signal(false);
   readonly bot = computed(() => this.trading.bots().find((item) => item.id === this.route.snapshot.paramMap.get('id')) ?? null);
+  readonly strategyBook = computed(() => {
+    const bot = this.bot();
+    const row = this.trading.strategies().find((item) => item.id === bot?.strategyId);
+    if (!row || row.stopLossPercent == null || row.takeProfitPercent == null) {
+      return `${bot?.riskProfileName || 'Strategy risk'}.`;
+    }
+    return `SL ${row.stopLossPercent}% · TP ${row.takeProfitPercent}% · risk ${row.riskPerTradePercent ?? '—'}% · ${row.maxLeverage ?? '—'}x.`;
+  });
   readonly position = computed(() => this.trading.positions().find((item) => item.botId === this.bot()?.id) ?? null);
   readonly signals = computed(() => this.trading.signals().filter((item) => item.botId === this.bot()?.id));
   readonly trades = computed(() => this.trading.trades().filter((item) => item.botId === this.bot()?.id));

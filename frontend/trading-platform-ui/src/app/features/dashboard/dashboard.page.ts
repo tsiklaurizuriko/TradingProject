@@ -233,15 +233,7 @@ export class DashboardPage {
     if (!this.isLive()) {
       return 'This starts every stopped bot in this PAPER workspace. LIVE bots are not touched.';
     }
-    const risk = this.trading.risk();
-    const name = risk?.name ?? '—';
-    const r = risk?.riskPerTradePercent ?? '—';
-    const sl = risk?.stopLossPercent ?? '—';
-    const tp = risk?.takeProfitPercent ?? '—';
-    const lev = risk?.maxLeverage ?? '—';
-    const port = risk?.maxPortfolioRiskPercent ?? '—';
-    const maxPos = risk?.maxSimultaneousPositions ?? '—';
-    return `LIVE bots only. Paper stays stopped. Isolated still allows only one open LIVE position per coin. Current book ${name}. Risk per trade ${r}%. SL ${sl}%. TP ${tp}%. Max leverage ${lev}x. Available Balance ${money(this.available())}. Max portfolio risk ${port}% per strategy. Max positions ${maxPos} per strategy.`;
+    return `LIVE bots only. Paper stays stopped. Isolated still allows only one open LIVE position per coin. Each bot uses the stop, take, size, and leverage saved on its strategy. Available Balance ${money(this.available())}.`;
   });
   readonly startAllWarning = computed(() =>
     this.isLive()

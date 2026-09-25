@@ -1581,6 +1581,9 @@ namespace TradingPlatform.Infrastructure.Persistence.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
 
+                    b.Property<Guid?>("RiskProfileId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("TemplateKey")
                         .IsRequired()
                         .HasMaxLength(64)
@@ -1598,6 +1601,8 @@ namespace TradingPlatform.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(32)");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("RiskProfileId");
 
                     b.HasIndex("UserId", "Name");
 
@@ -2088,11 +2093,18 @@ namespace TradingPlatform.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("TradingPlatform.Domain.Strategies.Strategy", b =>
                 {
+                    b.HasOne("TradingPlatform.Domain.Risk.RiskProfile", "RiskProfile")
+                        .WithMany()
+                        .HasForeignKey("RiskProfileId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("TradingPlatform.Domain.Identity.User", "User")
                         .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("RiskProfile");
 
                     b.Navigation("User");
                 });
