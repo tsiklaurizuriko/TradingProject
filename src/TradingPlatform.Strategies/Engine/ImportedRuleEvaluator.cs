@@ -321,7 +321,7 @@ public static class ImportedRuleEvaluator
         }
 
         var close = candles[i].Close;
-        return Detail(SignalType.Buy, entryReason, candles, i, close * (1m - stopPct));
+        return Detail(SignalType.Buy, entryReason, candles, i, close * (1m - stopPct), close * (1m + roiPct));
     }
 
     private static bool PriceTargetHit(StrategyContext context, MarketCandle bar, decimal stopPct, decimal roiPct)
@@ -556,6 +556,7 @@ public static class ImportedRuleEvaluator
         string reason,
         IReadOnlyList<MarketCandle> candles,
         int i,
-        decimal? stop = null) =>
-        new(signal, reason, candles[i].CloseTime, stop, null, null, "IMPORTED_RULE");
+        decimal? stop = null,
+        decimal? take = null) =>
+        new(signal, reason, candles[i].CloseTime, stop, take, null, "IMPORTED_RULE");
 }

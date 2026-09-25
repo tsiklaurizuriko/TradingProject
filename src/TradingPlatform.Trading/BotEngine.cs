@@ -632,6 +632,8 @@ public sealed class BotEngine : IBotEngine
         var nearMiss = StrategyTemplateKeys.IsNearMiss(definition.Template);
         SignalType signalType;
         string reason;
+        decimal? describedStop = null;
+        decimal? describedTake = null;
         if (nearMiss)
         {
             var block = NearMissGate.BlockReason(_options, definition.Template, bot.Mode);
@@ -720,19 +722,21 @@ public sealed class BotEngine : IBotEngine
                 }
             }
 
-            signalType = _strategy.Evaluate(
-                definition,
-                new StrategyContext
-                {
-                    ClosedCandles = candles,
-                    CurrentPrice = lastPrice,
-                    HasOpenPosition = position is not null,
-                    AverageEntryPrice = position?.AverageEntryPrice,
-                    PositionSide = position?.Side ?? PositionSide.Long,
-                    PositionOpenedAt = position?.OpenedAt,
-                    OpenInterest = openInterest
-                },
-                out reason);
+            var context = new StrategyContext
+            {
+                ClosedCandles = candles,
+                CurrentPrice = lastPrice,
+                HasOpenPosition = position is not null,
+                AverageEntryPrice = position?.AverageEntryPrice,
+                PositionSide = position?.Side ?? PositionSide.Long,
+                PositionOpenedAt = position?.OpenedAt,
+                OpenInterest = openInterest
+            };
+            var quote = _strategy.EvaluateDetailAt(definition, context, new CausalIndicatorCache(candles), candles.Count - 1);
+            signalType = quote.Signal;
+            reason = quote.Reason;
+            describedStop = quote.SuggestedStop;
+            describedTake = quote.SuggestedTakeProfit;
         }
 
         var lastCandle = candles[^1];
@@ -938,26 +942,35 @@ public sealed class BotEngine : IBotEngine
         }
 
         snapshot = snapshot with { Side = signalType == SignalType.Sell ? PositionSide.Short : PositionSide.Long };
-        if (StrategyTemplateKeys.IsFlatRange(definition.Template))
+        if (describedStop is decimal stop && lastPrice > 0m)
         {
-            var quote = FlatRangeStrategy.Evaluate(candles, candles.Count - 1, false, StrategySides.Both, null);
-            if (quote.SuggestedStop is not decimal stop || quote.SuggestedTakeProfit is not decimal take || lastPrice <= 0m)
+            var stopPct = Math.Abs(lastPrice - stop) / lastPrice * 100m;
+            var takePct = describedTake is decimal take
+                ? Math.Abs(take - lastPrice) / lastPrice * 100m
+                : profile.TakeProfitPercent;
+            var longSide = signalType == SignalType.Buy;
+            var stopSide = longSide ? stop < lastPrice : stop > lastPrice;
+            var takeSide = describedTake is not decimal lockedTake
+                || (longSide ? lockedTake > lastPrice : lockedTake < lastPrice);
+            if (!stopSide || !takeSide || stopPct <= 0m || takePct <= 0m)
             {
-                bot.LastError = "Flat range did not lock a stop and a take profit.";
+                bot.LastError = "The strategy stop and take profit do not sit on the right sides of price.";
                 return;
             }
 
-            var stopPct = Math.Abs(lastPrice - stop) / lastPrice * 100m;
-            var takePct = Math.Abs(take - lastPrice) / lastPrice * 100m;
-            var longSide = signalType == SignalType.Buy;
-            var ordered = longSide ? stop < lastPrice && take > lastPrice : stop > lastPrice && take < lastPrice;
-            if (!ordered || stopPct < FlatRangeStrategy.MinStopPercent || takePct <= stopPct)
+            if (StrategyTemplateKeys.IsFlatRange(definition.Template)
+                && (stopPct < FlatRangeStrategy.MinStopPercent || takePct <= stopPct))
             {
                 bot.LastError = "Flat range stop and take profit no longer sit on the right sides of price.";
                 return;
             }
 
             profile = FlatRangeRisk(profile, stopPct, takePct);
+        }
+        else if (StrategyTemplateKeys.IsFlatRange(definition.Template))
+        {
+            bot.LastError = "Flat range did not lock a stop and a take profit.";
+            return;
         }
 
         var risk = _risk.Evaluate(signalType, profile, snapshot, now);
