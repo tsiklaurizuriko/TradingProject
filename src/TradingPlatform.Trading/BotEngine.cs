@@ -583,6 +583,15 @@ public sealed class BotEngine : IBotEngine
             position = overlayProtect.Position;
         }
 
+        if (position is null && StrategySlotsFull(bot, running, book, liveBook, liveAuth, now))
+        {
+            var cap = bot.RiskProfile?.MaxSimultaneousPositions ?? 0;
+            bot.LastError = cap > 0
+                ? $"This strategy already has {cap} open. Waiting for one to close."
+                : "This strategy already has its open positions. Waiting for one to close.";
+            return;
+        }
+
         if (bot.Mode != TradingMode.Live &&
             position is not null &&
             !StrategyTemplateKeys.IsImported(TemplateKey(bot)) &&
@@ -1750,6 +1759,38 @@ public sealed class BotEngine : IBotEngine
 
         existing.Status = OrderStatus.Cancelled;
         existing.RemainingQuantity = 0m;
+    }
+
+    private static bool StrategySlotsFull(
+        Bot bot,
+        IReadOnlyList<Bot> running,
+        IReadOnlyList<Position> book,
+        IReadOnlyList<LiveOpenPosition>? liveBook,
+        bool liveAuth,
+        DateTimeOffset now)
+    {
+        var strategyId = bot.StrategyVersion?.StrategyId ?? Guid.Empty;
+        if (strategyId == Guid.Empty)
+        {
+            return false;
+        }
+
+        var cap = bot.RiskProfile?.MaxSimultaneousPositions ?? 0;
+        if (cap <= 0)
+        {
+            cap = 2;
+        }
+
+        var peers = running
+            .Where(peer => peer.StrategyVersion?.StrategyId == strategyId)
+            .Select(peer => peer.Id)
+            .ToHashSet();
+        var versions = running
+            .Where(peer => peer.StrategyVersion?.StrategyId == strategyId)
+            .Select(peer => peer.StrategyVersionId)
+            .ToHashSet();
+        var open = IsolatedOccupancy.UniqueCoinsForStrategy(book, strategyId, liveBook, liveAuth, now, peers, versions);
+        return open >= cap;
     }
 
     private static RiskProfile FlatRangeRisk(RiskProfile source, decimal stopPercent, decimal takePercent) =>

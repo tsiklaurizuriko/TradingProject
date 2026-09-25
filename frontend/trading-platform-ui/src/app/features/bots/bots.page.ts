@@ -94,9 +94,19 @@ export class BotsPage {
   }
   readonly coins = computed(() => {
     const markets = this.trading.markets();
-    const all: { symbol: string; displayName: string; eligible?: boolean }[] = markets.length
-      ? markets.map((row) => ({ symbol: row.symbol, displayName: row.displayName, eligible: row.eligible }))
-      : this.trading.tickers().map((row) => ({ symbol: row.symbol, displayName: row.displayName }));
+    const all: CoinPick[] = markets.length
+      ? markets.map((row) => ({
+          symbol: row.symbol,
+          displayName: row.displayName,
+          eligible: row.eligible,
+          quoteVolume: row.quoteVolume ?? 0,
+        }))
+      : this.trading.tickers().map((row) => ({
+          symbol: row.symbol,
+          displayName: row.displayName,
+          quoteVolume: 0,
+          marketCapRank: row.marketCapRank,
+        }));
     const strategy = this.selectedStrategy();
     const scoped = all.filter((row) => {
       if (strategy && !strategy.appliesToAllSymbols && !(strategy.allowedSymbols ?? []).includes(row.symbol)) {
@@ -104,6 +114,7 @@ export class BotsPage {
       }
       return true;
     });
+    scoped.sort(compareCoinPick);
     const q = this.coinQuery().trim().toUpperCase();
     if (!q) {
       return scoped;
@@ -322,6 +333,31 @@ export class BotsPage {
     const wins = closed.filter((t) => t.pnL > 0).length;
     return `${((wins / closed.length) * 100).toFixed(0)}%`;
   }
+}
+
+interface CoinPick {
+  symbol: string;
+  displayName: string;
+  eligible?: boolean;
+  quoteVolume: number;
+  marketCapRank?: number;
+}
+
+function compareCoinPick(a: CoinPick, b: CoinPick): number {
+  const volume = b.quoteVolume - a.quoteVolume;
+  if (volume !== 0) {
+    return volume;
+  }
+  const rank = coinRank(a) - coinRank(b);
+  if (rank !== 0) {
+    return rank;
+  }
+  return a.symbol.localeCompare(b.symbol);
+}
+
+function coinRank(row: CoinPick): number {
+  const rank = row.marketCapRank ?? 0;
+  return rank > 0 && rank < 999 ? rank : 9999;
 }
 
 function apiMessage(error: unknown): string {
