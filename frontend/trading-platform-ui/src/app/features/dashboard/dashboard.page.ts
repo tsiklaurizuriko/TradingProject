@@ -5,7 +5,6 @@ import { TradingService } from '../../core/trading/trading.service';
 import { BotDto, money, pct, pnlClass, price, signedMoney } from '../../core/trading/trading.models';
 import { ToastService } from '../../core/ui/toast.service';
 import { UiStateService } from '../../core/ui/ui-state.service';
-import { QuickActionsComponent } from '../../shared/actions/quick-actions';
 import { TradingChartComponent } from '../../shared/chart/trading-chart';
 import { AllocationChartComponent, GoalProgressComponent, PnlChartComponent, RiskOverviewComponent } from '../../shared/charts/overview-charts';
 import { MarketWatchlistComponent } from '../../shared/market/market-watchlist';
@@ -24,7 +23,6 @@ import { MetricCardComponent, ConfirmModalComponent } from '../../shared/ui/ui-k
     LedgerBookComponent,
     PnlChartComponent,
     AllocationChartComponent,
-    QuickActionsComponent,
     RiskOverviewComponent,
     RouterLink,
     ConfirmModalComponent,
@@ -160,6 +158,14 @@ export class DashboardPage {
     }
     return count;
   });
+  readonly strategyResults = computed(() => {
+    const snap = this.trading.performance();
+    if (!snap || snap.mode !== this.ui.workspace() || snap.strategyResults == null) {
+      return null;
+    }
+    return snap.strategyResults;
+  });
+
   readonly riskLocked = computed(() =>
     this.modeBots().some((bot) => {
       const err = (bot.lastError ?? '').toLowerCase();

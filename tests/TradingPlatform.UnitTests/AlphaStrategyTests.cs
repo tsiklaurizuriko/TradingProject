@@ -16,15 +16,21 @@ public sealed class AlphaStrategyTests
         StrategyTemplateKeys.Frozen.Should().HaveCount(5);
         StrategyTemplateKeys.AdvancedSix.Should().HaveCount(6);
         StrategyTemplateKeys.Alpha.Should().HaveCount(24);
-        StrategyTemplateKeys.Research.Should().HaveCount(73);
+        StrategyTemplateKeys.Research.Should().HaveCount(75);
         StrategyTemplateKeys.All.Should().HaveCount(
             StrategyTemplateKeys.Frozen.Length
             + StrategyTemplateKeys.Research.Length
             + StrategyTemplateKeys.NearMiss.Length
             + StrategyTemplateKeys.CrossSectionalReversal.Length
-            + StrategyTemplateKeys.Range.Length);
+            + StrategyTemplateKeys.Range.Length
+            + StrategyTemplateKeys.Flow.Length
+            + StrategyTemplateKeys.Imported.Length);
         StrategyTemplateKeys.Scalping.Should().HaveCount(22);
-        StrategyTemplateKeys.OperatorCatalog.Should().HaveCount(12);
+        StrategyTemplateKeys.OperatorCatalog.Should().HaveCount(22);
+        StrategyTemplateKeys.IsOperatorCatalog(StrategyTemplateKeys.BtcDailyMax10).Should().BeTrue();
+        StrategyTemplateKeys.IsOperatorCatalog(StrategyTemplateKeys.TsMomentum285).Should().BeTrue();
+        StrategyTemplateKeys.TimeframesFor(StrategyTemplateKeys.TsMomentum285).Should().Equal("1d");
+        StrategyTemplateKeys.DirectionsFor(StrategyTemplateKeys.TsMomentum285).Should().Equal("LONG");
         StrategyTemplateKeys.IsOperatorCatalog(StrategyTemplateKeys.RsiPullback).Should().BeTrue();
         StrategyTemplateKeys.IsOperatorCatalog(StrategyTemplateKeys.MacdTrend).Should().BeFalse();
         StrategyTemplateKeys.IsOperatorCatalog(StrategyTemplateKeys.ScalpEmaMomentum).Should().BeFalse();
@@ -34,7 +40,9 @@ public sealed class AlphaStrategyTests
                 .Concat(StrategyTemplateKeys.Research)
                 .Concat(StrategyTemplateKeys.NearMiss)
                 .Concat(StrategyTemplateKeys.CrossSectionalReversal)
-                .Concat(StrategyTemplateKeys.Range));
+                .Concat(StrategyTemplateKeys.Range)
+                .Concat(StrategyTemplateKeys.Flow)
+                .Concat(StrategyTemplateKeys.Imported));
         StrategyTemplateKeys.IsOperatorCatalog(StrategyTemplateKeys.CrossSectionalReversalReturn15m).Should().BeFalse();
     }
 

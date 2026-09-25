@@ -403,8 +403,19 @@ public sealed class TradingController : ControllerBase
             return NotFound();
         }
 
-        var block = CrossSectionalRiskPolicy.LiveActivationBlock(options.Value, true, true, true, false, false, false, true);
-        return Conflict(new { live = "OFF", reason = block ?? "LIVE = OFF." });
+        var flags = options.Value.CrossSectionalReversal;
+        flags.Enabled = true;
+        flags.LiveEnabled = true;
+        if (strategyId.Contains("1h", StringComparison.OrdinalIgnoreCase))
+        {
+            flags.Return1hEnabled = true;
+        }
+        else
+        {
+            flags.Return15mEnabled = true;
+        }
+
+        return Ok(CrossSectionalReversalGate.Describe(options.Value));
     }
 
     [HttpPost("/api/strategies/cross-sectional-reversal/{strategyId}/live/disable")]

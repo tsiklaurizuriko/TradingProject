@@ -47,6 +47,9 @@ public interface IPublicMarketDataClient
     Task<IReadOnlyList<FuturesBookTicker>> GetBookTickersAsync(CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<FuturesPremiumIndex>> GetPremiumIndexAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Last two hourly open-interest prints. Null when Binance does not return them.</summary>
+    Task<(decimal? Previous, decimal? Latest)> GetOpenInterestPairAsync(string symbol, CancellationToken cancellationToken = default);
 }
 
 public interface IMarketDataCache

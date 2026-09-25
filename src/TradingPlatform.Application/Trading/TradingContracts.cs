@@ -343,6 +343,15 @@ public sealed record PerformanceSliceDto(
     decimal Expectancy,
     int Bots = 0);
 
+public sealed record StrategyResultDto(
+    string Name,
+    int Entries,
+    int Wins,
+    int Losses,
+    int OpenEntries,
+    decimal RealizedPnL,
+    decimal UnrealizedPnL);
+
 public sealed record PerformanceDto(
     string Mode,
     int ClosedTrades,
@@ -371,7 +380,8 @@ public sealed record PerformanceDto(
     IReadOnlyList<PerformanceSliceDto> Strategies,
     IReadOnlyList<PerformanceSliceDto> Coins,
     IReadOnlyList<TradeDto> RecentTrades,
-    decimal MonthlyPnL = 0m);
+    decimal MonthlyPnL = 0m,
+    IReadOnlyList<StrategyResultDto>? StrategyResults = null);
 
 public interface ITradingQueryService
 {

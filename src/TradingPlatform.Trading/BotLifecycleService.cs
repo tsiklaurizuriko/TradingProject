@@ -1239,7 +1239,15 @@ public sealed class TradingQueryService : ITradingQueryService
             ? IsolatedOccupancy.UniqueCoins(positions, live.OpenPositions, liveAuth)
             : positions.Count;
 
-        return BuildPerformance(modeLabel, rows, bots, unrealized, openPositions, tradingMode == TradingMode.Paper ? _options.PaperDefaultBalance : 0m);
+        var strategyResults = BuildStrategyResults(rows, positions, bots);
+        return BuildPerformance(
+            modeLabel,
+            rows,
+            bots,
+            unrealized,
+            openPositions,
+            tradingMode == TradingMode.Paper ? _options.PaperDefaultBalance : 0m,
+            strategyResults);
     }
 
     private static (decimal? PnL, decimal? Fee) FillLedger(Order order)
@@ -1291,13 +1299,87 @@ public sealed class TradingQueryService : ITradingQueryService
             t.Mode,
             string.IsNullOrWhiteSpace(t.Side) ? "Long" : t.Side);
 
+    private static List<StrategyResultDto> BuildStrategyResults(
+        IReadOnlyList<PerformanceTradeRow> uniqueTrips,
+        IReadOnlyList<Position> positions,
+        IReadOnlyList<BotDto> bots)
+    {
+        var nameByBot = bots.ToDictionary(
+            bot => bot.Id,
+            bot => string.IsNullOrWhiteSpace(bot.StrategyName) ? "Strategy" : bot.StrategyName);
+        var map = new Dictionary<string, (int Entries, int Wins, int Losses, int Open, decimal Realized, decimal Unrealized)>(StringComparer.OrdinalIgnoreCase);
+
+        (int Entries, int Wins, int Losses, int Open, decimal Realized, decimal Unrealized) Slot(string name)
+        {
+            if (!map.TryGetValue(name, out var slot))
+            {
+                slot = (0, 0, 0, 0, 0m, 0m);
+            }
+
+            return slot;
+        }
+
+        foreach (var trip in uniqueTrips)
+        {
+            var name = string.IsNullOrWhiteSpace(trip.StrategyName) ? "Strategy" : trip.StrategyName;
+            var slot = Slot(name);
+            slot.Entries++;
+            if (trip.ClosedAt is null)
+            {
+                slot.Open++;
+            }
+            else if (trip.PnL > 0m)
+            {
+                slot.Wins++;
+                slot.Realized += trip.PnL;
+            }
+            else if (trip.PnL < 0m)
+            {
+                slot.Losses++;
+                slot.Realized += trip.PnL;
+            }
+            else
+            {
+                slot.Realized += trip.PnL;
+            }
+
+            map[name] = slot;
+        }
+
+        foreach (var position in positions)
+        {
+            if (position.Quantity <= 0m || !nameByBot.TryGetValue(position.BotId, out var name))
+            {
+                continue;
+            }
+
+            var slot = Slot(name);
+            slot.Unrealized += position.UnrealizedPnL;
+            map[name] = slot;
+        }
+
+        return map
+            .Select(pair => new StrategyResultDto(
+                pair.Key,
+                pair.Value.Entries,
+                pair.Value.Wins,
+                pair.Value.Losses,
+                pair.Value.Open,
+                RoundPerf(pair.Value.Realized),
+                RoundPerf(pair.Value.Unrealized)))
+            .OrderByDescending(row => row.Entries)
+            .ThenBy(row => row.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
     private static PerformanceDto BuildPerformance(
         string mode,
         IReadOnlyList<PerformanceTradeRow> rows,
         IReadOnlyList<BotDto> bots,
         decimal unrealized,
         int openPositions,
-        decimal startingEquity)
+        decimal startingEquity,
+        IReadOnlyList<StrategyResultDto> strategyResults)
     {
         var closed = rows.Where(t => t.ClosedAt is not null).OrderBy(t => t.ClosedAt).ToList();
         var openTrades = rows.Count(t => t.ClosedAt is null);
@@ -1361,7 +1443,8 @@ public sealed class TradingQueryService : ITradingQueryService
             Slices(closed, t => string.IsNullOrWhiteSpace(t.StrategyName) ? "Strategy" : t.StrategyName, botCounts),
             Slices(closed, t => t.Symbol, null),
             rows.Take(40).Select(MapTrade).ToList(),
-            RoundPerf(monthClosed + unrealized));
+            RoundPerf(monthClosed + unrealized),
+            strategyResults);
     }
 
     private static IReadOnlyList<PerformanceDayDto> PerformanceDays(
@@ -1502,7 +1585,6 @@ public sealed class TradingQueryService : ITradingQueryService
     {
         _ = mode;
         return (await _store.ListStrategiesAsync(cancellationToken))
-            .Where(row => IsOperatorStrategy(row) || IsNearMissStrategy(row) || IsCrossSectionStrategy(row) || IsScalpingStrategy(row))
             .Select(row => MapStrategy(row, _options))
             .ToList();
     }
@@ -1526,7 +1608,14 @@ public sealed class TradingQueryService : ITradingQueryService
                 : SymbolScope.Parse(strategy.AllowedSymbolsCsv).FirstOrDefault() ?? "BTCUSDT";
         }
 
-        var bars = Math.Clamp(limit ?? 80, 20, 300);
+        var wanted = limit ?? 80;
+        if (string.Equals(strategy.TemplateKey, StrategyTemplateKeys.TsMomentum285, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(strategy.TemplateKey, StrategyTemplateKeys.BtcDailyMax10, StringComparison.OrdinalIgnoreCase))
+        {
+            wanted = Math.Max(wanted, 500);
+        }
+
+        var bars = Math.Clamp(wanted, 20, 1500);
         var candles = await _market.GetClosedKlinesAsync(coin, latest.Timeframe, bars, cancellationToken);
         var series = new List<StrategyPreviewBarDto>();
         var open = false;
@@ -1624,10 +1713,6 @@ public sealed class TradingQueryService : ITradingQueryService
 
         var parameters = StrategyTemplates.Validate(ToTemplateParams(request) with { Timeframe = timeframe.ToBinanceInterval() });
         var crossSection = StrategyTemplateKeys.IsCrossSectionalReversal(parameters.TemplateKey);
-        if (!StrategyTemplateKeys.IsOperatorCatalog(parameters.TemplateKey) && !crossSection)
-        {
-            throw new DomainException(ErrorCodes.StrategyInvalid, "That template is retired from the operator catalog.");
-        }
 
         var strategy = new Strategy
         {
@@ -1670,11 +1755,6 @@ public sealed class TradingQueryService : ITradingQueryService
         }
 
         var parameters = StrategyTemplates.Validate(ToTemplateParams(request) with { Timeframe = timeframe.ToBinanceInterval() });
-        if (!StrategyTemplateKeys.IsOperatorCatalog(parameters.TemplateKey)
-            && !StrategyTemplateKeys.IsCrossSectionalReversal(parameters.TemplateKey))
-        {
-            throw new DomainException(ErrorCodes.StrategyInvalid, "That template is retired from the operator catalog.");
-        }
 
         strategy.Name = request.Name.Trim();
         strategy.Description = (request.Description ?? string.Empty).Trim();
@@ -1951,54 +2031,6 @@ public sealed class TradingQueryService : ITradingQueryService
         }
     }
 
-    private static bool IsOperatorStrategy(Strategy strategy)
-    {
-        var key = strategy.TemplateKey;
-        if (string.IsNullOrWhiteSpace(key))
-        {
-            var latest = strategy.Versions.OrderByDescending(row => row.VersionNumber).FirstOrDefault();
-            key = latest is null ? string.Empty : StrategyTemplates.Read(latest.DefinitionJson).TemplateKey;
-        }
-
-        return StrategyTemplateKeys.IsOperatorCatalog(key);
-    }
-
-    private static bool IsNearMissStrategy(Strategy strategy)
-    {
-        var key = strategy.TemplateKey;
-        if (string.IsNullOrWhiteSpace(key))
-        {
-            var latest = strategy.Versions.OrderByDescending(row => row.VersionNumber).FirstOrDefault();
-            key = latest is null ? string.Empty : StrategyTemplates.Read(latest.DefinitionJson).TemplateKey;
-        }
-
-        return StrategyTemplateKeys.IsNearMiss(key);
-    }
-
-    private static bool IsCrossSectionStrategy(Strategy strategy)
-    {
-        var key = strategy.TemplateKey;
-        if (string.IsNullOrWhiteSpace(key))
-        {
-            var latest = strategy.Versions.OrderByDescending(row => row.VersionNumber).FirstOrDefault();
-            key = latest is null ? string.Empty : StrategyTemplates.Read(latest.DefinitionJson).TemplateKey;
-        }
-
-        return StrategyTemplateKeys.IsCrossSectionalReversal(key);
-    }
-
-    private static bool IsScalpingStrategy(Strategy strategy)
-    {
-        var key = strategy.TemplateKey;
-        if (string.IsNullOrWhiteSpace(key))
-        {
-            var latest = strategy.Versions.OrderByDescending(row => row.VersionNumber).FirstOrDefault();
-            key = latest is null ? string.Empty : StrategyTemplates.Read(latest.DefinitionJson).TemplateKey;
-        }
-
-        return StrategyTemplateKeys.IsScalping(key);
-    }
-
     private static StrategyDto MapStrategy(Strategy strategy, TradingOptions? options = null)
     {
         var latest = strategy.Versions.OrderByDescending(v => v.VersionNumber).FirstOrDefault();
@@ -2042,16 +2074,8 @@ public sealed class TradingQueryService : ITradingQueryService
             string.IsNullOrWhiteSpace(strategy.ValidationStatus)
                 ? StrategyValidationStatuses.ValidationPending
                 : strategy.ValidationStatus,
-            StrategyTemplateKeys.IsScalping(template)
-                ? StrategyTemplateKeys.ScalpingTimeframes
-                : template == StrategyTemplateKeys.BtcEma20Ema50Long
-                    ? ["30m"]
-                    : StrategyTemplateKeys.IsCrossSectionalReversal(template)
-                        ? ["15m"]
-                        : StrategyTemplateKeys.SupportedTimeframes,
-            template == StrategyTemplateKeys.BtcEma20Ema50Long
-                ? ["LONG"]
-                : StrategyTemplateKeys.SupportedDirections,
+            StrategyTemplateKeys.TimeframesFor(template),
+            StrategyTemplateKeys.DirectionsFor(template),
             StrategyTemplates.DataDependencies(template),
             parsed.EntryLookback,
             parsed.ExitLookback,
@@ -2078,8 +2102,7 @@ public sealed class TradingQueryService : ITradingQueryService
                 && options.PriceAction.PaperEnabled
                 && NearMissGate.CandidateEnabled(options.PriceAction, template),
             StrategyTemplateKeys.IsNearMiss(template)
-                && options?.LiveTradingEnabled == true
-                && options.PriceAction.Enabled
+                && options?.PriceAction.Enabled == true
                 && options.PriceAction.LiveEnabled
                 && NearMissGate.CandidateEnabled(options.PriceAction, template),
             StrategyTemplateKeys.NearMissHypothesisId(template));

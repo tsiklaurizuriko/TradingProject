@@ -29,7 +29,7 @@ export const routes: Routes = [
       { path: 'scanner', component: ScannerPage, data: page('Market Scanner', '') },
       { path: 'watchlist', component: WatchlistPage, data: page('Watchlist', '') },
       { path: 'strategies', component: StrategiesPage, data: page('Strategies', '') },
-      { path: 'scalping', component: ScalpingPage, data: page('Scalping', 'Research-only. LIVE off.') },
+      { path: 'scalping', component: ScalpingPage, data: page('Scalping', 'Scalping research.') },
       { path: 'strategy-builder', redirectTo: 'strategies' },
       { path: 'backtesting', component: BacktestingPage, data: page('Backtesting', '') },
       { path: 'performance', component: PerformancePage, data: page('Performance', '') },

@@ -41,7 +41,9 @@ internal static class StrategyTemplateEvaluator
 
         var cache = new CausalIndicatorCache(candles);
         var raw = EvaluateTemplate(parsed, candles, i, context, cache);
-        if (raw.Signal is SignalType.Buy or SignalType.Sell && !PassesQuality(parsed.Quality, candles, i, cache))
+        if (raw.Signal is SignalType.Buy or SignalType.Sell
+            && !StrategyTemplateKeys.IsImported(parsed.TemplateKey)
+            && !PassesQuality(parsed.Quality, candles, i, cache))
         {
             reason = "Quality filter skipped this bar (volume or ATR%).";
             return SignalType.NoAction;
@@ -162,6 +164,7 @@ internal static class StrategyTemplateEvaluator
         var raw = EvaluateTemplate(parsed, candles, index, context, cache);
         if (raw.Signal is SignalType.Buy or SignalType.Sell
             && !StrategyTemplateKeys.IsFlatRange(parsed.TemplateKey)
+            && !StrategyTemplateKeys.IsImported(parsed.TemplateKey)
             && !PassesQuality(parsed.Quality, candles, index, cache))
         {
             return new StrategySignalDetail(SignalType.NoAction, "Quality filter skipped this bar (volume or ATR%).");
@@ -190,7 +193,9 @@ internal static class StrategyTemplateEvaluator
         int i,
         StrategyContext context,
         CausalIndicatorCache cache) =>
-        StrategyTemplateKeys.IsFlatRange(p.TemplateKey)
+        StrategyTemplateKeys.IsImported(p.TemplateKey)
+            ? ImportedRuleEvaluator.Evaluate(p, candles, i, context, cache)
+            : StrategyTemplateKeys.IsFlatRange(p.TemplateKey)
             ? FlatRangeStrategy.Evaluate(candles, i, context.HasOpenPosition, p.AllowedSide, context.PositionOpenedAt)
             : StrategyTemplateKeys.IsCrossSectionalReversal(p.TemplateKey)
             ? new StrategySignalDetail(
@@ -204,7 +209,7 @@ internal static class StrategyTemplateEvaluator
                 "NEAR_MISS uses the frozen contextual book on the last closed 5m bar. This preview path does not invent an EMA signal.",
                 candles[i].CloseTime,
                 Status: NearMissAudit.Status)
-            : StrategyTemplateKeys.IsResearch(p.TemplateKey)
+            : StrategyTemplateKeys.IsResearch(p.TemplateKey) || p.TemplateKey == StrategyTemplateKeys.FlowZone
             ? AdvancedStrategyEvaluator.Evaluate(p, candles, i, context, cache)
             : Wrap(p.TemplateKey switch
             {

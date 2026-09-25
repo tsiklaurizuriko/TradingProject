@@ -49,15 +49,9 @@ public static class CrossSectionalRiskPolicy
 
     public static string? LiveActivationBlock(TradingOptions options, bool exchangeHealthy, bool marketDataHealthy, bool accountHealthy, bool riskHalted, bool dailyLossHalted, bool emergencyStop, bool isolatedConfirmed)
     {
-        var flags = options.CrossSectionalReversal ?? new CrossSectionalReversalOptions();
         if (!options.LiveTradingEnabled)
         {
             return "LIVE = OFF. Global live trading is disabled.";
-        }
-
-        if (!flags.Enabled || !flags.LiveEnabled)
-        {
-            return "Strategy Live is OFF.";
         }
 
         if (!exchangeHealthy)

@@ -11,6 +11,102 @@ namespace TradingPlatform.UnitTests;
 public sealed class AdvancedStrategyTests
 {
     [Fact]
+    public void Ts_momentum_buys_the_top_third_stays_long_only_and_exits_when_the_sleeve_is_flat()
+    {
+        var start = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var candles = new List<MarketCandle>();
+        decimal price = 100m;
+        for (var i = 0; i < 80; i++)
+        {
+            candles.Add(Day(start.AddDays(i), price));
+        }
+
+        var flat = EvalTs(candles, open: false);
+        flat.Signal.Should().Be(SignalType.NoAction);
+        flat.Signal.Should().NotBe(SignalType.Sell);
+
+        for (var i = 0; i < 40; i++)
+        {
+            price *= 1.02m;
+            candles.Add(Day(start.AddDays(candles.Count), price));
+        }
+
+        var buyAt = -1;
+        for (var i = 80; i < candles.Count; i++)
+        {
+            var signal = EvalTs(candles.Take(i + 1).ToList(), open: false);
+            signal.Signal.Should().NotBe(SignalType.Sell);
+            if (signal.Signal == SignalType.Buy)
+            {
+                buyAt = i;
+                break;
+            }
+        }
+
+        buyAt.Should().BeGreaterThan(28);
+
+        for (var i = 0; i < 40; i++)
+        {
+            candles.Add(Day(start.AddDays(candles.Count), price));
+        }
+
+        SignalType? closed = null;
+        for (var i = buyAt; i < candles.Count; i++)
+        {
+            var signal = EvalTs(candles.Take(i + 1).ToList(), open: true);
+            signal.Signal.Should().NotBe(SignalType.Sell);
+            if (signal.Signal == SignalType.Exit)
+            {
+                closed = signal.Signal;
+                break;
+            }
+        }
+
+        closed.Should().Be(SignalType.Exit);
+    }
+
+    [Fact]
+    public void Flow_zone_buys_only_when_the_upper_zone_taker_buy_and_open_interest_agree()
+    {
+        var start = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var candles = new List<MarketCandle>();
+        for (var i = 0; i < 23; i++)
+        {
+            candles.Add(FlowBar(start.AddHours(i), 100m, 100m, buy: 4m, volume: 10m));
+        }
+
+        candles.Add(FlowBar(start.AddHours(23), 100m, 130m, buy: 8m, volume: 10m));
+        var buy = EvalFlow(candles, new decimal?[] { 10m, 12m });
+        buy.Signal.Should().Be(SignalType.Buy);
+
+        var noInterest = EvalFlow(candles, new decimal?[] { 12m, 10m });
+        noInterest.Signal.Should().Be(SignalType.NoAction);
+
+        var missingFlow = candles.ToList();
+        missingFlow[^1] = FlowBar(start.AddHours(23), 100m, 130m, buy: 0m, volume: 10m);
+        EvalFlow(missingFlow, new decimal?[] { 10m, 12m }).Signal.Should().Be(SignalType.NoAction);
+    }
+
+    [Fact]
+    public void Btc_daily_max_buys_a_10_day_high_and_exits_when_the_high_breaks()
+    {
+        var start = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var candles = new List<MarketCandle>();
+        for (var i = 0; i < 12; i++)
+        {
+            candles.Add(Day(start.AddDays(i), 100m + i));
+        }
+
+        var buy = EvalMax(candles, open: false);
+        buy.Signal.Should().Be(SignalType.Buy);
+        buy.Signal.Should().NotBe(SignalType.Sell);
+
+        candles.Add(Day(start.AddDays(12), 90m));
+        var exit = EvalMax(candles, open: true);
+        exit.Signal.Should().Be(SignalType.Exit);
+    }
+
+    [Fact]
     public void Ema_cross_long_buys_on_cross_up_exits_on_cross_down_and_does_not_short()
     {
         var candles = new List<MarketCandle>();
@@ -240,7 +336,10 @@ public sealed class AdvancedStrategyTests
             StrategyTemplateKeys.Frozen.Length
             + StrategyTemplateKeys.Research.Length
             + StrategyTemplateKeys.NearMiss.Length
-            + StrategyTemplateKeys.CrossSectionalReversal.Length);
+            + StrategyTemplateKeys.CrossSectionalReversal.Length
+            + StrategyTemplateKeys.Range.Length
+            + StrategyTemplateKeys.Flow.Length
+            + StrategyTemplateKeys.Imported.Length);
         StrategyTemplateKeys.AdvancedSix.Should().HaveCount(6);
         StrategyTemplateKeys.Scalping.Should().HaveCount(22);
         StrategyTemplateKeys.PriceAction.Should().HaveCount(18);
@@ -253,7 +352,10 @@ public sealed class AdvancedStrategyTests
             StrategyTemplateKeys.Frozen
                 .Concat(StrategyTemplateKeys.Research)
                 .Concat(StrategyTemplateKeys.NearMiss)
-                .Concat(StrategyTemplateKeys.CrossSectionalReversal));
+                .Concat(StrategyTemplateKeys.CrossSectionalReversal)
+                .Concat(StrategyTemplateKeys.Range)
+                .Concat(StrategyTemplateKeys.Flow)
+                .Concat(StrategyTemplateKeys.Imported));
     }
 
     [Fact]
@@ -316,6 +418,87 @@ public sealed class AdvancedStrategyTests
         };
         return AdvancedStrategyEvaluator.Evaluate(parsed, candles, i, ctx, cache);
     }
+
+    private static StrategySignalDetail EvalFlow(IReadOnlyList<MarketCandle> candles, IReadOnlyList<decimal?> openInterest)
+    {
+        var parsed = StrategyTemplates.Validate(StrategyTemplates.DefaultsFor(StrategyTemplateKeys.FlowZone, false));
+        return AdvancedStrategyEvaluator.Evaluate(
+            parsed,
+            candles,
+            candles.Count - 1,
+            new StrategyContext
+            {
+                ClosedCandles = candles,
+                CurrentPrice = candles[^1].Close,
+                HasOpenPosition = false,
+                OpenInterest = openInterest
+            },
+            new CausalIndicatorCache(candles));
+    }
+
+    private static MarketCandle FlowBar(DateTimeOffset open, decimal low, decimal close, decimal buy, decimal volume) =>
+        new()
+        {
+            Open = low,
+            High = close,
+            Low = low,
+            Close = close,
+            Volume = volume,
+            TakerBuyVolume = buy,
+            IsClosed = true,
+            OpenTime = open,
+            CloseTime = open.AddHours(1),
+            ExchangeTimestamp = open.AddHours(1)
+        };
+
+    private static StrategySignalDetail EvalMax(IReadOnlyList<MarketCandle> candles, bool open)
+    {
+        var parsed = StrategyTemplates.Validate(StrategyTemplates.DefaultsFor(StrategyTemplateKeys.BtcDailyMax10, false));
+        return AdvancedStrategyEvaluator.Evaluate(
+            parsed,
+            candles,
+            candles.Count - 1,
+            new StrategyContext
+            {
+                ClosedCandles = candles,
+                CurrentPrice = candles[^1].Close,
+                HasOpenPosition = open,
+                PositionSide = PositionSide.Long
+            },
+            new CausalIndicatorCache(candles));
+    }
+
+    private static StrategySignalDetail EvalTs(IReadOnlyList<MarketCandle> candles, bool open)
+    {
+        var parsed = StrategyTemplates.Validate(StrategyTemplates.DefaultsFor(StrategyTemplateKeys.TsMomentum285, false));
+        var cache = new CausalIndicatorCache(candles);
+        return AdvancedStrategyEvaluator.Evaluate(
+            parsed,
+            candles,
+            candles.Count - 1,
+            new StrategyContext
+            {
+                ClosedCandles = candles,
+                CurrentPrice = candles[^1].Close,
+                HasOpenPosition = open,
+                PositionSide = PositionSide.Long
+            },
+            cache);
+    }
+
+    private static MarketCandle Day(DateTimeOffset open, decimal close) =>
+        new()
+        {
+            Open = close,
+            High = close,
+            Low = close,
+            Close = close,
+            Volume = 1m,
+            IsClosed = true,
+            OpenTime = open,
+            CloseTime = open.AddDays(1),
+            ExchangeTimestamp = open.AddDays(1)
+        };
 
     private static StrategySignalDetail Eval(string template, IReadOnlyList<MarketCandle> candles, bool volumeOff = false)
     {

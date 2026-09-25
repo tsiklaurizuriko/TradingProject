@@ -503,7 +503,8 @@ public sealed class BotEngine : IBotEngine
             throw new DomainException(ErrorCodes.LiveTradingDisabled, "This bot mode cannot run.");
         }
 
-        var candles = await GetCycleKlinesAsync(bot.Symbol, bot.Timeframe, cycleKlines, cancellationToken);
+        var klineLimit = TemplateKey(bot) is StrategyTemplateKeys.TsMomentum285 or StrategyTemplateKeys.BtcDailyMax10 ? 500 : (int?)null;
+        var candles = await GetCycleKlinesAsync(bot.Symbol, bot.Timeframe, cycleKlines, cancellationToken, klineLimit);
         var lastPrice = await GetCycleLastPriceAsync(bot.Symbol, candles, cyclePrices, cancellationToken);
         var now = _clock.UtcNow;
         _cache.SetKlines(bot.Symbol, bot.Timeframe, candles);
@@ -584,6 +585,7 @@ public sealed class BotEngine : IBotEngine
 
         if (bot.Mode != TradingMode.Live &&
             position is not null &&
+            !StrategyTemplateKeys.IsImported(TemplateKey(bot)) &&
             HitsProtectiveExit(position, lastPrice, out var protectiveReason))
         {
             var usdtProtect = await _store.GetOrCreateBalanceAsync(
@@ -708,6 +710,16 @@ public sealed class BotEngine : IBotEngine
         }
         else
         {
+            IReadOnlyList<decimal?>? openInterest = null;
+            if (string.Equals(TemplateKey(bot), StrategyTemplateKeys.FlowZone, StringComparison.OrdinalIgnoreCase))
+            {
+                var pair = await _market.GetOpenInterestPairAsync(bot.Symbol, cancellationToken);
+                if (pair.Previous is { } previous && pair.Latest is { } latest)
+                {
+                    openInterest = new decimal?[] { previous, latest };
+                }
+            }
+
             signalType = _strategy.Evaluate(
                 definition,
                 new StrategyContext
@@ -717,7 +729,8 @@ public sealed class BotEngine : IBotEngine
                     HasOpenPosition = position is not null,
                     AverageEntryPrice = position?.AverageEntryPrice,
                     PositionSide = position?.Side ?? PositionSide.Long,
-                    PositionOpenedAt = position?.OpenedAt
+                    PositionOpenedAt = position?.OpenedAt,
+                    OpenInterest = openInterest
                 },
                 out reason);
         }
@@ -735,7 +748,7 @@ public sealed class BotEngine : IBotEngine
             return;
         }
 
-        if (bot.Mode == TradingMode.Live && position is not null)
+        if (bot.Mode == TradingMode.Live && position is not null && !StrategyTemplateKeys.IsImported(definition.Template))
         {
             bot.LastError =
                 $"Live Isolated SL/TP own the exit. Strategy {signalType}: {reason}";
@@ -887,31 +900,27 @@ public sealed class BotEngine : IBotEngine
 
         if (position is not null)
         {
-            var flatten = signalType is SignalType.Exit
-                || (position.Side == PositionSide.Long && signalType == SignalType.Sell)
+            var opposite = (position.Side == PositionSide.Long && signalType == SignalType.Sell)
                 || (position.Side == PositionSide.Short && signalType == SignalType.Buy);
-            if (!flatten)
+            var flatten = signalType is SignalType.Exit || opposite;
+            if (StrategyTemplateKeys.IsImported(definition.Template) && flatten)
             {
-                bot.LastError = reason;
+                await ClosePositionAsync(position.Id, cancellationToken);
+                if (signalType is SignalType.Exit)
+                {
+                    bot.LastError = reason;
+                    return;
+                }
+
+                position = null;
+            }
+            else
+            {
+                bot.LastError = flatten
+                    ? $"Stop or take owns the exit. Strategy {signalType}: {reason}"
+                    : reason;
                 return;
             }
-
-            var closeSide = position.Side == PositionSide.Short ? OrderSide.Buy : OrderSide.Sell;
-            await PlaceAndFillAsync(
-                bot,
-                closeSide,
-                position.Quantity,
-                clientOrderId,
-                correlationId,
-                usdt,
-                btc,
-                position,
-                lastPrice,
-                0m,
-                cancellationToken,
-                flatten: true);
-            bot.LastError = "Paper exit filled.";
-            return;
         }
 
         if (signalType is not (SignalType.Buy or SignalType.Sell))

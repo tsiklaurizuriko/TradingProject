@@ -41,15 +41,12 @@
 .dash-bots { grid-column: 1 / -1; height: 420px; }
 .dash-bots:has(.is-collapsed) { height: auto; }
 .dash-book { grid-column: 1 / -1; min-height: 380px; height: 420px; }
-.dash-quick { grid-column: span 3; height: 240px; }
-.dash-account { grid-column: span 3; min-height: 240px; height: 240px; min-width: 0; }
-.dash-pnl { grid-column: span 3; height: 240px; }
+.dash-account { grid-column: span 3; min-height: 280px; min-width: 0; }
+.dash-pnl { grid-column: span 3; min-height: 280px; }
 .dash-risk {
-  grid-column: span 3;
-  min-height: 240px;
-  height: auto;
+  grid-column: span 6;
+  min-height: 280px;
   min-width: 0;
-  overflow: auto;
 }
 
 .goal-kpi .metric-value {
@@ -127,14 +124,14 @@
 
 @media (max-width: 899px) and (min-width: 600px) {
   .dash-kpi { grid-column: span 6; }
-  .dash-chart, .dash-watch, .dash-controls, .dash-bots, .dash-book, .dash-quick, .dash-account, .dash-pnl, .dash-risk {
+  .dash-chart, .dash-watch, .dash-controls, .dash-bots, .dash-book, .dash-account, .dash-pnl, .dash-risk {
     grid-column: span 12;
   }
   .dash-chart, .dash-watch { height: 360px; }
 }
 
 @media (max-width: 599px) {
-  .dash-kpi, .dash-chart, .dash-watch, .dash-controls, .dash-bots, .dash-book, .dash-quick, .dash-account, .dash-pnl, .dash-risk {
+  .dash-kpi, .dash-chart, .dash-watch, .dash-controls, .dash-bots, .dash-book, .dash-account, .dash-pnl, .dash-risk {
     grid-column: span 12;
   }
   .dash-kpi { height: auto; }

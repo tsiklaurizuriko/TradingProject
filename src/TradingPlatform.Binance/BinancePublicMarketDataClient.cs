@@ -127,6 +127,40 @@ public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
         return candles;
     }
 
+    public async Task<(decimal? Previous, decimal? Latest)> GetOpenInterestPairAsync(string symbol, CancellationToken cancellationToken = default)
+    {
+        var url = $"futures/data/openInterestHist?symbol={Uri.EscapeDataString(symbol)}&period=1h&limit=2";
+        var payload = await GetJsonOrNullAsync(url, cancellationToken);
+        if (payload is null || payload.Value.ValueKind != JsonValueKind.Array)
+        {
+            return (null, null);
+        }
+
+        var points = new List<(long Ts, decimal Oi)>();
+        foreach (var row in payload.Value.EnumerateArray())
+        {
+            if (!row.TryGetProperty("sumOpenInterest", out var oiEl) || !row.TryGetProperty("timestamp", out var tsEl))
+            {
+                continue;
+            }
+
+            var oi = Dec(oiEl);
+            var ts = tsEl.ValueKind == JsonValueKind.Number ? tsEl.GetInt64() : 0;
+            if (oi > 0m && ts > 0)
+            {
+                points.Add((ts, oi));
+            }
+        }
+
+        if (points.Count < 2)
+        {
+            return (null, null);
+        }
+
+        points.Sort((a, b) => a.Ts.CompareTo(b.Ts));
+        return (points[^2].Oi, points[^1].Oi);
+    }
+
     public async Task<decimal> GetLastPriceAsync(string symbol, CancellationToken cancellationToken = default)
     {
         var id = symbol.ToUpperInvariant();

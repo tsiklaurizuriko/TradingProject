@@ -85,6 +85,9 @@ const templateOptions = [
   { key: 'vol_spike_ema_trend', label: 'BTC 15m Volume Spike EMA' },
   { key: 'bb20_2_break', label: 'BTC 15m Bollinger Break' },
   { key: 'btc_ema20_ema50_long', label: '30m EMA Cross' },
+  { key: 'ts_momentum_28_5', label: '1d Time-Series Momentum' },
+  { key: 'btc_daily_max_10', label: '1d BTC 10-day High' },
+  { key: 'flow_zone', label: 'Flow Zone' },
   { key: 'flat_range', label: 'Flat Range' },
   { key: 'cross_sectional_reversal_return_15m', label: 'Return 15m Reversal' },
   { key: 'cross_sectional_reversal_return_1h', label: 'Return 1h Reversal' },
@@ -156,21 +159,27 @@ const templateLogic: Record<string, string> = {
   regime_strategy_router:
     'Deferred interpretable router. Must not be fit on OOS.',
   funding_price_momentum:
-    'Research funding with price momentum as continuation vs contrarian. Not LIVE.',
+    'Research funding with price momentum as continuation vs contrarian.',
   funding_extreme_momentum_exhaustion:
-    'Research funding extremes with weakening momentum. Not LIVE.',
+    'Research funding extremes with weakening momentum.',
   basis_mean_reversion:
-    'Research normalized basis z-score as reversion and continuation separately. Not LIVE.',
+    'Research normalized basis z-score as reversion and continuation separately.',
   funding_basis_vwap:
-    'Research funding + basis + VWAP deviation. Not LIVE.',
+    'Research funding + basis + VWAP deviation.',
   oi_breakout_confirmation:
-    'Research whether OI expansion adds information to a volume breakout. OI_SAMPLE_LIMITED. Not LIVE.',
+    'Research whether OI expansion adds information to a volume breakout. OI_SAMPLE_LIMITED.',
   vol_spike_ema_trend:
-    'ისტორიულად მორგებული BTCUSDT 15m: volume spike + EMA21. არ არის validated alpha. SL 2.50% / TP 5.00% / 192 bar. LIVE არა.',
+    'ისტორიულად მორგებული BTCUSDT 15m: volume spike + EMA21. არ არის validated alpha. SL 2.50% / TP 5.00% / 192 bar.',
   bb20_2_break:
-    'ისტორიულად მორგებული BTCUSDT 15m: Bollinger (20,2) break. არ არის validated alpha. SL 4.00% / TP 5.00% / 192 bar. LIVE არა.',
+    'ისტორიულად მორგებული BTCUSDT 15m: Bollinger (20,2) break. არ არის validated alpha. SL 4.00% / TP 5.00% / 192 bar.',
   btc_ema20_ema50_long:
-    'ყველა მონეტა, 30 წუთი, მხოლოდ ყიდვა. EMA(20) კვეთს EMA(50)-ს ზემოთ. გასვლა უკუ გადაკვეთაზე. სტოპი 1%. TP 20% შორი ჭერია. არ არის validated. LIVE არა.',
+    'ყველა მონეტა, 30 წუთი, მხოლოდ ყიდვა. EMA(20) კვეთს EMA(50)-ს ზემოთ. გასვლა უკუ გადაკვეთაზე. სტოპი 1%. TP 20% შორი ჭერია. არ არის validated.',
+  flow_zone:
+    'ყველა მონეტა, 1 საათი. ზედა მეოთხედში ძლიერი taker-ყიდვა და მზარდი ღია პოზიცია — ყიდვა. ქვედა მეოთხედში ძლიერი გაყიდვა და მზარდი პოზიცია — გაყიდვა. მონაცემი თუ არ მოდის, ორდერი არ იგზავნება. წარსულზე არ არის გაზომილი.',
+  btc_daily_max_10:
+    'BTCUSDT, დღიური, მხოლოდ ყიდვა. დღე 10 დღის მაქსიმუმზე იხურება — მეორე დღეს ლონგი. შორტი არ არის. ამ ქეშზე IS −1%, VAL +8%, OOS −2%. Live ჩართვა Bots-ზეა. თავისით არ ეშვება. რისკის წიგნი 1x, სტოპი 8% მხოლოდ ღობეა.',
+  ts_momentum_28_5:
+    'BTCUSDT, დღიური, მხოლოდ ყიდვა. 28 დღის ამონაგები საკუთარი ისტორიის ზედა მესამედშია — ლონგი. ხუთი დღე რჩება, შორტი არ არის. VAL-ზე ზრდა −11% იყო. Live ჩართვა Bots-ზეა, როცა LIVE რეჟიმი და API გასაღები გაქვს. თავისით არ ეშვება. რისკის წიგნი 1x, სტოპი 8% მხოლოდ ღობეა.',
   flat_range:
     'ფლეტზე წინა 24 საათის ზედა და ქვედა ზღვარი იკეტება. ლონგი ქვედა 20%-ში, შორტი ზედა 20%-ში. სტოპი შესვლის ზღვარია, ტეიკ-პროფიტი მოპირდაპირე ზღვარი. ზომა დაგეგმილ რისკს სტოპამდე მანძილზე ანაწილებს. 24 საათში იხურება.',
 };
@@ -202,7 +211,7 @@ const frozenKeys = new Set([
 ]);
 
 function isResearchOnly(key: string | undefined): boolean {
-  return !!key && !frozenKeys.has(key);
+  return !!key && !frozenKeys.has(key) && key !== 'ts_momentum_28_5' && key !== 'btc_daily_max_10' && key !== 'flow_zone';
 }
 
 function isCrossSection(key: string | undefined): boolean {
@@ -372,16 +381,13 @@ function depsFor(key: string): string {
               Paper
             </label>
             <label class="settings-check">
-              <input type="checkbox" [checked]="state.liveEnabled" [disabled]="armBusy() || !state.globalLive" (change)="setMaster({ liveEnabled: checked($event) })" />
+              <input type="checkbox" [checked]="state.liveEnabled" [disabled]="armBusy()" (change)="setMaster({ liveEnabled: checked($event) })" />
               Live
             </label>
           </div>
           <p class="tiny">
             Paper ბოტი: {{ state.enabled && state.paperEnabled ? 'დასაშვებია ჩართულ სტრატეგიებზე' : 'დაბლოკილია' }}
-            · Live ბოტი: {{ state.enabled && state.liveEnabled && state.globalLive ? 'დასაშვებია ჩართულ სტრატეგიებზე' : 'დაბლოკილია' }}
-            @if (!state.globalLive) {
-              · გლობალური LIVE გამორთულია, ამიტომ აქედან Live ვერ ჩაირთვება.
-            }
+            · Live ბოტი: {{ state.enabled && state.liveEnabled ? 'დასაშვებია ჩართულ სტრატეგიებზე' : 'გამორთული' }}
           </p>
           <div class="strategies-grid">
             @for (row of state.candidates; track row.templateKey) {
@@ -399,7 +405,7 @@ function depsFor(key: string): string {
                 <div class="strategy-pills">
                   <span class="badge badge-stopped">NEAR-MISS · არ არის დადასტურებული</span>
                   <span class="badge" [class.badge-running]="row.candidateEnabled && state.enabled && state.paperEnabled" [class.badge-paused]="!(row.candidateEnabled && state.enabled && state.paperEnabled)">Paper {{ row.candidateEnabled && state.enabled && state.paperEnabled ? 'დასაშვებია' : 'გამორთული' }}</span>
-                  <span class="badge" [class.badge-running]="row.candidateEnabled && state.enabled && state.liveEnabled && state.globalLive" [class.badge-paused]="!(row.candidateEnabled && state.enabled && state.liveEnabled && state.globalLive)">Live {{ row.candidateEnabled && state.enabled && state.liveEnabled && state.globalLive ? 'დასაშვებია' : 'გამორთული' }}</span>
+                  <span class="badge" [class.badge-running]="row.candidateEnabled && state.enabled && state.liveEnabled" [class.badge-paused]="!(row.candidateEnabled && state.enabled && state.liveEnabled)">Live {{ row.candidateEnabled && state.enabled && state.liveEnabled ? 'დასაშვებია' : 'გამორთული' }}</span>
                 </div>
                 <p class="strategy-blurb">{{ ratingFor(row.templateKey).note }}</p>
                 @if (!row.strategyId) {
@@ -489,7 +495,7 @@ function depsFor(key: string): string {
               <ng-container [ngTemplateOutlet]="editor" [ngTemplateOutletContext]="{ $implicit: form }" />
             } @else {
               <p class="strategy-blurb">{{ blurbFor(row.templateKey, row.description || row.blurb) }}</p>
-              <p class="tiny">{{ row.dataDependencies || depsFor(row.templateKey) }} · TF {{ (row.supportedTimeframes || ['5m','15m','1h']).join(', ') }} · research, not LIVE</p>
+              <p class="tiny">{{ row.dataDependencies || depsFor(row.templateKey) }} · TF {{ (row.supportedTimeframes || ['5m','15m','1h']).join(', ') }}</p>
               @if (previews()[row.id]; as snap) {
                 <div class="strategy-preview">
                   <div class="strategy-preview-head">
@@ -549,7 +555,7 @@ function depsFor(key: string): string {
         </div>
         <div class="form-grid">
           <label class="field">Template
-            <select [(ngModel)]="form.templateKey">
+            <select [ngModel]="form.templateKey" (ngModelChange)="onTemplate(form, $event)">
               @for (row of templates; track row.key) {
                 <option [value]="row.key">{{ row.label }} · {{ verdictLabel(row.key) }}</option>
               }
@@ -564,7 +570,7 @@ function depsFor(key: string): string {
           </label>
         </div>
         <p class="strategy-hint">{{ blurbFor(form.templateKey) }}</p>
-        <p class="tiny">{{ depsFor(form.templateKey) }} · LONG and SHORT · 5m / 15m / 1h · not auto-promoted to Paper or LIVE</p>
+        <p class="tiny">{{ depsFor(form.templateKey) }} · {{ form.templateKey === 'ts_momentum_28_5' || form.templateKey === 'btc_daily_max_10' ? 'LONG · 1d · BTCUSDT' : 'LONG and SHORT · 5m / 15m / 1h' }}</p>
         @if (ratingFor(form.templateKey); as rate) {
           <p class="strategy-rating-note">{{ verdictLabel(form.templateKey) }} · {{ rate.stars }}/5 · {{ rate.note }} {{ ratingMeta(rate) }}</p>
         }
@@ -652,7 +658,7 @@ function depsFor(key: string): string {
           <p class="tiny">This template stays DATA_UNAVAILABLE until the required historical series is timestamp-aligned. It will not invent data or auto-enable LIVE.</p>
         }
         @if (form.templateKey === 'funding_basis_rv' || form.templateKey === 'funding_oi_reversal' || form.templateKey === 'oi_price_volume_regime' || form.templateKey === 'funding_price_momentum' || form.templateKey === 'funding_extreme_momentum_exhaustion' || form.templateKey === 'basis_mean_reversion' || form.templateKey === 'funding_basis_vwap' || form.templateKey === 'oi_breakout_confirmation') {
-          <p class="tiny">Phase 3 research-only. Continuation and contrarian are tested independently. OI books are OI_SAMPLE_LIMITED (~29d). Not LIVE. Not auto-promoted.</p>
+          <p class="tiny">Phase 3 research-only. Continuation and contrarian are tested independently. OI books are OI_SAMPLE_LIMITED (~29d).</p>
         }
         @if (form.templateKey === 'regime_strategy_router') {
           <p class="tiny">Router is deferred until independent candidates are validated. Routing rules will not be fit on OOS. RESEARCH ONLY.</p>
@@ -860,6 +866,21 @@ export class StrategiesPage {
       stored ||
       'Closed-candle signal only. Isolated size, stop loss, and take profit stay on Risk.'
     );
+  }
+
+  onTemplate(form: StrategyDraft, key: string): void {
+    form.templateKey = key;
+    if (key !== 'ts_momentum_28_5' && key !== 'btc_daily_max_10') {
+      return;
+    }
+
+    form.timeframe = '1d';
+    form.allowedSide = 'Long';
+    form.all = false;
+    form.symbols = 'BTCUSDT';
+    if (!form.name.trim()) {
+      form.name = key === 'btc_daily_max_10' ? '1d BTC 10-day High' : '1d Time-Series Momentum';
+    }
   }
 
   beginCreate(): void {

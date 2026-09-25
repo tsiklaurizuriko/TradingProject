@@ -647,6 +647,16 @@ export interface PerformanceSliceDto {
   bots: number;
 }
 
+export interface StrategyResultDto {
+  name: string;
+  entries: number;
+  wins: number;
+  losses: number;
+  openEntries: number;
+  realizedPnL: number;
+  unrealizedPnL: number;
+}
+
 export interface PerformanceDto {
   mode: string;
   closedTrades: number;
@@ -676,6 +686,7 @@ export interface PerformanceDto {
   coins: PerformanceSliceDto[];
   recentTrades: TradeDto[];
   monthlyPnL?: number;
+  strategyResults?: StrategyResultDto[] | null;
 }
 
 export interface SignalDto {

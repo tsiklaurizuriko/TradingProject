@@ -8,6 +8,7 @@ import {
   money,
   signedMoney,
   strategyOccupancy,
+  StrategyResultDto,
   uniqueOpenCoins,
 } from '../../core/trading/trading.models';
 
@@ -179,63 +180,87 @@ export class GoalProgressComponent {
   template: `
     <section class="panel panel-fill compact risk-overview">
       <div class="section-head"><h2>Risk Overview</h2></div>
-      <div class="risk-row">
-        <span>Profile <strong>{{ risk()?.name || '—' }}</strong></span>
-      </div>
-      <div class="risk-row">
-        <span>Risk per trade <strong>{{ pctLabel(risk()?.riskPerTradePercent) }}</strong></span>
-        <div class="progress"><span [style.width.%]="bar(risk()?.riskPerTradePercent, 2)"></span></div>
-      </div>
-      <div class="risk-row">
-        <span>Stop / Take <strong>{{ slTpLabel() }}</strong></span>
-      </div>
-      <div class="risk-row">
-        <span>Available <strong>{{ money(available()) }}</strong></span>
-      </div>
-      <div class="risk-row">
-        <span>Planned Risk next <strong>{{ money(plannedRiskNext()) }}</strong></span>
-      </div>
-      <div class="risk-row">
-        <span>Margin <strong>Isolated · {{ risk() ? risk()!.maxLeverage + 'x' : '—' }}</strong></span>
-      </div>
-      <div class="risk-row">
-        <span>Today's PnL <strong [class]="todaysPnL() >= 0 ? 'pnl-pos' : 'pnl-neg'">{{ signedMoney(todaysPnL()) }}</strong></span>
-      </div>
-      <div class="risk-row">
-        <span>Open planned risk <strong>{{ money(totalOpenRisk()) }} · {{ pctLabel(totalOpenRiskPct()) }}</strong></span>
-      </div>
-      <div class="risk-row">
-        <span>Open Positions <strong>{{ uniqueCoins() }}</strong></span>
-      </div>
-      <div class="risk-row">
-        <span>Consecutive losses <strong>{{ consecutiveLosses() }}{{ risk() ? ' / ' + risk()!.maxConsecutiveLosses : '' }}</strong></span>
-      </div>
-      <div class="risk-row">
-        <span>Risk Lock <strong>{{ locked() ? 'ON' : 'Off' }}</strong></span>
-      </div>
-      <div class="risk-strategy-head">
-        <span>Per running strategy</span>
-        <span class="tiny">max {{ risk()?.maxSimultaneousPositions ?? '—' }} · cap {{ pctLabel(risk()?.maxPortfolioRiskPercent) }}</span>
-      </div>
-      @if (occupancy().length === 0) {
-        <p class="tiny muted">No running strategies.</p>
-      } @else {
-        <div class="risk-strategy-list">
-          @for (row of occupancy(); track row.key) {
-            <div
-              class="risk-strategy"
-              [class.is-full]="row.openCoins >= row.maxPositions"
-              [title]="row.openCoins > row.maxPositions
-                ? 'Existing Isolated stays until it closes. New coins are blocked.'
-                : ''"
-            >
-              <span class="risk-strategy-name" [title]="row.name">{{ row.name }}</span>
-              <strong>{{ row.openCoins }}/{{ row.maxPositions }}</strong>
-              <span class="tiny num">{{ money(row.plannedRiskUsdt) }} · {{ pctLabel(row.plannedRiskPercent) }}</span>
+      <div class="risk-split">
+        <div class="risk-metrics">
+          <div class="risk-row">
+            <span>Profile <strong>{{ risk()?.name || '—' }}</strong></span>
+          </div>
+          <div class="risk-row">
+            <span>Risk per trade <strong>{{ pctLabel(risk()?.riskPerTradePercent) }}</strong></span>
+            <div class="progress"><span [style.width.%]="bar(risk()?.riskPerTradePercent, 2)"></span></div>
+          </div>
+          <div class="risk-row">
+            <span>Stop / Take <strong>{{ slTpLabel() }}</strong></span>
+          </div>
+          <div class="risk-row">
+            <span>Available <strong>{{ money(available()) }}</strong></span>
+          </div>
+          <div class="risk-row">
+            <span>Planned Risk next <strong>{{ money(plannedRiskNext()) }}</strong></span>
+          </div>
+          <div class="risk-row">
+            <span>Margin <strong>Isolated · {{ risk() ? risk()!.maxLeverage + 'x' : '—' }}</strong></span>
+          </div>
+          <div class="risk-row">
+            <span>Today's PnL <strong [class]="todaysPnL() >= 0 ? 'pnl-pos' : 'pnl-neg'">{{ signedMoney(todaysPnL()) }}</strong></span>
+          </div>
+          <div class="risk-row">
+            <span>Open planned risk <strong>{{ money(totalOpenRisk()) }} · {{ pctLabel(totalOpenRiskPct()) }}</strong></span>
+          </div>
+          <div class="risk-row">
+            <span>Open Positions <strong>{{ uniqueCoins() }}</strong></span>
+          </div>
+          <div class="risk-row">
+            <span>Consecutive losses <strong>{{ consecutiveLosses() }}{{ risk() ? ' / ' + risk()!.maxConsecutiveLosses : '' }}</strong></span>
+          </div>
+          <div class="risk-row">
+            <span>Risk Lock <strong>{{ locked() ? 'ON' : 'Off' }}</strong></span>
+          </div>
+        </div>
+        <div class="risk-book">
+          <div class="risk-strategy-head">
+            <span>Strategies</span>
+            <span class="tiny">max {{ risk()?.maxSimultaneousPositions ?? '—' }} · cap {{ pctLabel(risk()?.maxPortfolioRiskPercent) }}</span>
+          </div>
+          @if (rows().length === 0) {
+            <p class="tiny muted">No running strategies.</p>
+          } @else {
+            <div class="risk-table">
+              <div class="risk-table-head">
+                <span>Strategy</span>
+                <span>Open</span>
+                <span>Risk</span>
+                <span>Entries</span>
+                <span>W / L</span>
+                <span>PnL</span>
+              </div>
+              @for (row of rows(); track row.key) {
+                <div
+                  class="risk-table-row"
+                  [class.is-full]="!row.historical && row.openCoins >= row.maxPositions"
+                  [title]="strategyTitle(row)"
+                >
+                  <span class="risk-strategy-name" [title]="row.name">{{ row.name }}</span>
+                  @if (row.historical) {
+                    <span class="num muted">—</span>
+                    <span class="num muted">—</span>
+                  } @else {
+                    <strong class="num">{{ row.openCoins }}/{{ row.maxPositions }}</strong>
+                    <span class="num">{{ money(row.plannedRiskUsdt) }} · {{ pctLabel(row.plannedRiskPercent) }}</span>
+                  }
+                  <span class="num">{{ countLabel(row.entries) }}</span>
+                  <span class="num wl">
+                    <span [class]="row.wins ? 'pnl-pos' : 'muted'">{{ countLabel(row.wins) }}</span>
+                    <span class="muted">/</span>
+                    <span [class]="row.losses ? 'pnl-neg' : 'muted'">{{ countLabel(row.losses) }}</span>
+                  </span>
+                  <span class="num" [class]="pnlClass(row.pnl)">{{ pnlAmount(row.pnl) }}</span>
+                </div>
+              }
             </div>
           }
         </div>
-      }
+      </div>
     </section>
   `,
 })
@@ -248,6 +273,7 @@ export class RiskOverviewComponent {
   readonly bots = input<BotDto[]>([]);
   readonly consecutiveLosses = input(0);
   readonly locked = input(false);
+  readonly strategyResults = input<StrategyResultDto[] | null>(null);
   readonly money = money;
   readonly signedMoney = signedMoney;
   readonly occupancy = computed(() => {
@@ -258,6 +284,53 @@ export class RiskOverviewComponent {
       this.risk(),
       this.available(),
     );
+  });
+  readonly rows = computed(() => {
+    const results = this.strategyResults();
+    const loaded = results !== null;
+    const byName = new Map((results ?? []).map((row) => [row.name.trim().toLowerCase(), row]));
+    const used = new Set<string>();
+    const running = this.occupancy().map((row) => {
+      const hit = byName.get(row.name.trim().toLowerCase());
+      if (hit) {
+        used.add(hit.name.trim().toLowerCase());
+      }
+      return {
+        key: row.key,
+        name: row.name,
+        openCoins: row.openCoins,
+        maxPositions: row.maxPositions,
+        plannedRiskUsdt: row.plannedRiskUsdt,
+        plannedRiskPercent: row.plannedRiskPercent,
+        entries: loaded ? (hit?.entries ?? 0) : null,
+        wins: loaded ? (hit?.wins ?? 0) : null,
+        losses: loaded ? (hit?.losses ?? 0) : null,
+        openEntries: loaded ? (hit?.openEntries ?? 0) : null,
+        pnl: loaded ? (hit?.realizedPnL ?? 0) : null,
+        unrealized: loaded ? (hit?.unrealizedPnL ?? 0) : null,
+        historical: false,
+        firstHistorical: false,
+      };
+    });
+    const extra = (results ?? [])
+      .filter((row) => !used.has(row.name.trim().toLowerCase()) && row.entries > 0)
+      .map((row, index) => ({
+        key: `history:${row.name}`,
+        name: row.name,
+        openCoins: 0,
+        maxPositions: 0,
+        plannedRiskUsdt: 0,
+        plannedRiskPercent: 0,
+        entries: row.entries,
+        wins: row.wins,
+        losses: row.losses,
+        openEntries: row.openEntries,
+        pnl: row.realizedPnL,
+        unrealized: row.unrealizedPnL,
+        historical: true,
+        firstHistorical: index === 0,
+      }));
+    return [...running, ...extra];
   });
   readonly uniqueCoins = computed(() => uniqueOpenCoins(this.positions()));
   readonly totalOpenRisk = computed(() =>
@@ -296,5 +369,55 @@ export class RiskOverviewComponent {
       return '—';
     }
     return `${risk.stopLossPercent}% / ${risk.takeProfitPercent}%`;
+  }
+
+  countLabel(value: number | null): string {
+    if (value === null || this.strategyResults() === null) {
+      return '—';
+    }
+    return String(value);
+  }
+
+  pnlAmount(value: number | null): string {
+    if (value === null || this.strategyResults() === null) {
+      return '—';
+    }
+    return this.signedMoney(value);
+  }
+
+  pnlClass(value: number | null): string {
+    if (value === null || value === 0 || this.strategyResults() === null) {
+      return 'muted';
+    }
+    return value > 0 ? 'pnl-pos' : 'pnl-neg';
+  }
+
+  strategyTitle(row: {
+    historical: boolean;
+    openCoins: number;
+    maxPositions: number;
+    entries: number | null;
+    wins: number | null;
+    losses: number | null;
+    openEntries: number | null;
+    unrealized: number | null;
+  }): string {
+    const parts: string[] = [];
+    if (!row.historical && row.openCoins > row.maxPositions) {
+      parts.push('Existing Isolated stays until it closes. New coins are blocked.');
+    }
+    if (row.entries !== null) {
+      parts.push(`${row.entries} entries. Stop and take-profit orders are not counted.`);
+    }
+    if (row.wins !== null && row.losses !== null) {
+      parts.push(`${row.wins} won, ${row.losses} lost.`);
+    }
+    if (row.openEntries) {
+      parts.push(`${row.openEntries} still open.`);
+    }
+    if (row.unrealized) {
+      parts.push(`Open unrealized ${this.signedMoney(row.unrealized)}.`);
+    }
+    return parts.join(' ');
   }
 }

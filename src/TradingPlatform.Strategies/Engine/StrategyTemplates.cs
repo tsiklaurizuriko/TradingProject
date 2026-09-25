@@ -46,6 +46,9 @@ public static class StrategyTemplateKeys
     public const string VolSpikeEmaTrend = "vol_spike_ema_trend";
     public const string Bb202Break = "bb20_2_break";
     public const string BtcEma20Ema50Long = "btc_ema20_ema50_long";
+    public const string TsMomentum285 = "ts_momentum_28_5";
+    public const string BtcDailyMax10 = "btc_daily_max_10";
+    public const string FlowZone = "flow_zone";
     public const string ScalpEmaMomentum = "scalp_ema_momentum";
     public const string ScalpVwapReclaim = "scalp_vwap_reclaim";
     public const string ScalpVwapReversion = "scalp_vwap_reversion";
@@ -89,6 +92,13 @@ public static class StrategyTemplateKeys
     public const string CrossSectionalReversalReturn15m = "cross_sectional_reversal_return_15m";
     public const string CrossSectionalReversalReturn1h = "cross_sectional_reversal_return_1h";
     public const string FlatRange = "flat_range";
+    public const string MacContrarian710 = "mac_contrarian_7_10";
+    public const string ZigZagFade = "zigzag_fade";
+    public const string DonchianV2 = "donchian_v2_55";
+    public const string BinHv45 = "binhv45";
+    public const string ClucMay72018 = "cluc_may72018";
+    public const string CombinedBinHCluc = "combined_binh_cluc";
+    public const string Hlhb = "hlhb";
 
     public static readonly string[] Frozen =
     [
@@ -141,7 +151,9 @@ public static class StrategyTemplateKeys
     [
         VolSpikeEmaTrend,
         Bb202Break,
-        BtcEma20Ema50Long
+        BtcEma20Ema50Long,
+        TsMomentum285,
+        BtcDailyMax10
     ];
 
     public static readonly string[] Scalping =
@@ -202,9 +214,22 @@ public static class StrategyTemplateKeys
 
     public static readonly string[] NearMiss = NearMissAudit.SelectedRows.Select(NearMissAudit.TemplateKey).ToArray();
 
+    public static readonly string[] Imported =
+    [
+        MacContrarian710,
+        ZigZagFade,
+        DonchianV2,
+        BinHv45,
+        ClucMay72018,
+        CombinedBinHCluc,
+        Hlhb
+    ];
+
     public static readonly string[] Range = [FlatRange];
 
-    public static readonly string[] All = [.. Frozen, .. Research, .. NearMiss, .. CrossSectionalReversal, .. Range];
+    public static readonly string[] Flow = [FlowZone];
+
+    public static readonly string[] All = [.. Frozen, .. Research, .. NearMiss, .. CrossSectionalReversal, .. Range, .. Flow, .. Imported];
 
     /// <summary>
     /// Operator catalog: PAPER or weak guidance only. Avoid/blocked templates stay in the engine
@@ -223,7 +248,17 @@ public static class StrategyTemplateKeys
         VolSpikeEmaTrend,
         Bb202Break,
         BtcEma20Ema50Long,
-        FlatRange
+        TsMomentum285,
+        BtcDailyMax10,
+        FlowZone,
+        FlatRange,
+        MacContrarian710,
+        ZigZagFade,
+        DonchianV2,
+        BinHv45,
+        ClucMay72018,
+        CombinedBinHCluc,
+        Hlhb
     ];
 
     public static readonly string[] SupportedTimeframes = ["5m", "15m", "1h"];
@@ -238,6 +273,79 @@ public static class StrategyTemplateKeys
 
     public static bool IsHistoricallyFitted(string? key) =>
         HistoricallyFitted.Contains(Normalize(key), StringComparer.OrdinalIgnoreCase);
+
+    public static bool IsImported(string? key) =>
+        Imported.Contains(Normalize(key), StringComparer.OrdinalIgnoreCase);
+
+    public static IReadOnlyList<string> TimeframesFor(string? key)
+    {
+        var template = Normalize(key);
+        if (IsScalping(template))
+        {
+            return ScalpingTimeframes;
+        }
+
+        if (template == BtcEma20Ema50Long)
+        {
+            return ["30m"];
+        }
+
+        if (template is TsMomentum285 or BtcDailyMax10)
+        {
+            return ["1d"];
+        }
+
+        if (template == FlowZone)
+        {
+            return ["1h"];
+        }
+
+        if (template == MacContrarian710)
+        {
+            return ["5m"];
+        }
+
+        if (template == ZigZagFade)
+        {
+            return ["30m"];
+        }
+
+        if (template == DonchianV2)
+        {
+            return ["1d"];
+        }
+
+        if (template == BinHv45)
+        {
+            return ["1m"];
+        }
+
+        if (template is ClucMay72018 or CombinedBinHCluc)
+        {
+            return ["5m"];
+        }
+
+        if (template == Hlhb)
+        {
+            return ["4h"];
+        }
+
+        if (IsCrossSectionalReversal(template))
+        {
+            return ["15m"];
+        }
+
+        return SupportedTimeframes;
+    }
+
+    public static IReadOnlyList<string> DirectionsFor(string? key)
+    {
+        var template = Normalize(key);
+        return template is BtcEma20Ema50Long or TsMomentum285 or BtcDailyMax10
+            or BinHv45 or ClucMay72018 or CombinedBinHCluc or Hlhb
+            ? ["LONG"]
+            : SupportedDirections;
+    }
 
     public static bool IsOperatorCatalog(string? key)
     {
@@ -320,10 +428,10 @@ public static class StrategyTemplateKeys
             or FundingPriceMomentum or FundingExtremeMomentumExhaustion or BasisMeanReversion or FundingBasisVwap
             or OiBreakoutConfirmation => "FUTURES / FLOW",
         RegimeStrategyRouter => "ROUTER",
-        BollingerReversion or FlatRange => "MEAN REVERSION",
+        BollingerReversion or FlatRange or BinHv45 or ClucMay72018 or CombinedBinHCluc => "MEAN REVERSION",
         DonchianBreakout => "BREAKOUT / TREND",
         Bb202Break => "BREAKOUT / TREND",
-        VolSpikeEmaTrend or BtcEma20Ema50Long => "TREND",
+        VolSpikeEmaTrend or BtcEma20Ema50Long or TsMomentum285 or BtcDailyMax10 or FlowZone => "TREND",
         var scalp when IsScalping(scalp) => "SCALPING",
         var pa when IsPriceAction(pa) => "SCALPING_PRICE_ACTION",
         var near when IsNearMiss(near) => "NEAR_MISS",
@@ -545,6 +653,24 @@ public static class StrategyTemplates
                 EmaSlow = 50,
                 VolumeFilterEnabled = false
             },
+            StrategyTemplateKeys.TsMomentum285 => core with
+            {
+                Timeframe = "1d",
+                AllowedSide = StrategySides.Long,
+                VolumeFilterEnabled = false
+            },
+            StrategyTemplateKeys.BtcDailyMax10 => core with
+            {
+                Timeframe = "1d",
+                AllowedSide = StrategySides.Long,
+                VolumeFilterEnabled = false
+            },
+            StrategyTemplateKeys.FlowZone => core with
+            {
+                Timeframe = "1h",
+                AllowedSide = StrategySides.Both,
+                VolumeFilterEnabled = false
+            },
             StrategyTemplateKeys.FlatRange => core with
             {
                 Timeframe = "1h",
@@ -581,6 +707,65 @@ public static class StrategyTemplates
                 MinimumRelativeVolume = 1.2m,
                 VolumeFilterEnabled = true,
                 Timeframe = "5m"
+            },
+            StrategyTemplateKeys.MacContrarian710 => core with
+            {
+                EmaFast = 7,
+                EmaSlow = 10,
+                PriceChangeThreshold = 0.01m,
+                AllowedSide = StrategySides.Both,
+                Timeframe = "5m",
+                VolumeFilterEnabled = false
+            },
+            StrategyTemplateKeys.ZigZagFade => core with
+            {
+                SwingLength = 14,
+                PriceChangeThreshold = 2m,
+                AtrPeriod = 14,
+                AtrStopMultiplier = 1.5m,
+                AllowedSide = StrategySides.Both,
+                Timeframe = "30m",
+                VolumeFilterEnabled = false
+            },
+            StrategyTemplateKeys.DonchianV2 => core with
+            {
+                EntryLookback = 55,
+                ExitLookback = 5,
+                AtrPeriod = 14,
+                AtrStopMultiplier = 1.5m,
+                AllowedSide = StrategySides.Both,
+                Timeframe = "1d",
+                VolumeFilterEnabled = false
+            },
+            StrategyTemplateKeys.BinHv45 => core with
+            {
+                BbPeriod = 40,
+                BbStdDev = 2m,
+                AllowedSide = StrategySides.Long,
+                Timeframe = "1m",
+                VolumeFilterEnabled = false
+            },
+            StrategyTemplateKeys.ClucMay72018 or StrategyTemplateKeys.CombinedBinHCluc => core with
+            {
+                EmaSlow = 50,
+                BbPeriod = 20,
+                BbStdDev = 2m,
+                RelativeVolumePeriod = 30,
+                AllowedSide = StrategySides.Long,
+                Timeframe = "5m",
+                VolumeFilterEnabled = false
+            },
+            StrategyTemplateKeys.Hlhb => core with
+            {
+                EmaFast = 5,
+                EmaSlow = 10,
+                RsiPeriod = 10,
+                RsiMinimum = 50m,
+                AdxPeriod = 14,
+                MinimumAdx = 25m,
+                AllowedSide = StrategySides.Long,
+                Timeframe = "4h",
+                VolumeFilterEnabled = false
             },
             _ => core
         };
@@ -864,6 +1049,9 @@ public static class StrategyTemplates
         StrategyTemplateKeys.VolSpikeEmaTrend => "BTC 15m Volume Spike EMA",
         StrategyTemplateKeys.Bb202Break => "BTC 15m Bollinger Break",
         StrategyTemplateKeys.BtcEma20Ema50Long => "30m EMA Cross",
+        StrategyTemplateKeys.TsMomentum285 => "1d Time-Series Momentum",
+        StrategyTemplateKeys.BtcDailyMax10 => "1d BTC 10-day High",
+        StrategyTemplateKeys.FlowZone => "Flow Zone",
         StrategyTemplateKeys.ScalpEmaMomentum => "Scalp EMA Momentum",
         StrategyTemplateKeys.ScalpVwapReclaim => "Scalp VWAP Reclaim",
         StrategyTemplateKeys.ScalpVwapReversion => "Scalp VWAP Reversion",
@@ -908,6 +1096,13 @@ public static class StrategyTemplates
         StrategyTemplateKeys.CrossSectionalReversalReturn15m => "Return 15m Reversal",
         StrategyTemplateKeys.CrossSectionalReversalReturn1h => "Return 1h Reversal",
         StrategyTemplateKeys.FlatRange => "Flat Range",
+        StrategyTemplateKeys.MacContrarian710 => "Contrarian SMA 7/10",
+        StrategyTemplateKeys.ZigZagFade => "ZigZag Fade",
+        StrategyTemplateKeys.DonchianV2 => "Donchian 55/5",
+        StrategyTemplateKeys.BinHv45 => "BinHV45",
+        StrategyTemplateKeys.ClucMay72018 => "Cluc May 2018",
+        StrategyTemplateKeys.CombinedBinHCluc => "Combined BinH Cluc",
+        StrategyTemplateKeys.Hlhb => "HLHB",
         _ => "EMA RSI Trend"
     };
 
@@ -950,6 +1145,9 @@ public static class StrategyTemplates
         StrategyTemplateKeys.VolSpikeEmaTrend => "ისტორიულად მორგებული BTCUSDT 15m კანდიდატი: volume spike + EMA21. არ არის validated alpha. SL 2.50% / TP 5.00% / 192 bar.",
         StrategyTemplateKeys.Bb202Break => "ისტორიულად მორგებული BTCUSDT 15m კანდიდატი: Bollinger (20,2) break. არ არის validated alpha. SL 4.00% / TP 5.00% / 192 bar.",
         StrategyTemplateKeys.BtcEma20Ema50Long => "ყველა მონეტა, 30 წუთი, მხოლოდ ყიდვა. EMA(20) დახურულ ბარზე კვეთს EMA(50)-ს ზემოთ. გასვლა უკუ გადაკვეთაზე. სტოპი 1%. Take profit 20% შორი ჭერია, რადგან რისკის წიგნს მიზანი სჭირდება. არ არის validated.",
+        StrategyTemplateKeys.TsMomentum285 => "BTCUSDT, დღიური, მხოლოდ ყიდვა. 28 დღის ამონაგები საკუთარი ისტორიის ზედა მესამედშია — ლონგი. ხუთი დღე რჩება, შორტი არ არის. VAL-ზე ზრდა −11% იყო. Live ჩართვა Bots-ზეა, როცა LIVE რეჟიმი და API გასაღები გაქვს. თავისით არ ეშვება. რისკის წიგნი 1x, სტოპი 8% მხოლოდ ღობეა.",
+        StrategyTemplateKeys.BtcDailyMax10 => "BTCUSDT, დღიური, მხოლოდ ყიდვა. დღე 10 დღის მაქსიმუმზე იხურება — მეორე დღეს ლონგი. შორტი არ არის. ამ ქეშზე IS −1%, VAL +8%, OOS −2% 12 bp ხარჯის შემდეგ. Live ჩართვა Bots-ზეა. თავისით არ ეშვება. რისკის წიგნი 1x, სტოპი 8% მხოლოდ ღობეა.",
+        StrategyTemplateKeys.FlowZone => "ყველა მონეტა, 1 საათი. ბოლო 24 საათის ზედა მეოთხედში და taker-ის ყიდვა ბარის 62%-ზე მეტია და ღია პოზიცია იზრდება — ყიდვა. ქვედა მეოთხედში, ძლიერი გაყიდვა და პოზიციის ზრდა — გაყიდვა. Taker ან ღია პოზიცია თუ არ მოდის, ორდერი არ იგზავნება. წარსულზე არ არის გაზომილი. Live-ზე გასვლას სტოპი ფლობს.",
         StrategyTemplateKeys.ScalpEmaMomentum => "RESEARCH_ONLY scalping hypothesis: fast/slow EMA momentum on closed 1m–15m bars. Not a profit claim.",
         StrategyTemplateKeys.ScalpVwapReclaim => "RESEARCH_ONLY scalping hypothesis: session VWAP reclaim after a dip. Isolated book owns SL/TP.",
         StrategyTemplateKeys.ScalpVwapReversion => "RESEARCH_ONLY scalping hypothesis: ATR-scaled VWAP deviation fade. Isolated book owns SL/TP.",
@@ -980,6 +1178,20 @@ public static class StrategyTemplates
             "Repeatable cross-sectional reversal factor — not validated for trading.",
         StrategyTemplateKeys.FlatRange =>
             "ფლეტზე ზედა და ქვედა ზღვარი იკეტება. ლონგი ქვედა მეხუთედში, შორტი ზედა მეხუთედში. სტოპი შესვლის ზღვარია, ტეიკ-პროფიტი მოპირდაპირე ზღვარი. ზომა ისე ითვლება, რომ სტოპმა დაგეგმილი რისკი წაიღოს. 24 საათში იხურება. არ არის validated.",
+        StrategyTemplateKeys.MacContrarian710 =>
+            "MAc(7,10,0.01). 5m SMA(7)/SMA(10). სწრაფი საშუალო ნელზე 1%-ით მაღლაა — შორტი, 1%-ით დაბლაა — ლონგი. ზოლში წინა პოზიცია რჩება. სტოპი და ტეიკი არ აქვს.",
+        StrategyTemplateKeys.ZigZagFade =>
+            "ZigZag fade. 30m, სვინგი 14, deviation 2% (BTC). ETH-ზე deviation 6%, SOL-ზე 5%. გარღვევის საწინააღმდეგო შესვლა, ATR 1.5 სტოპი ყოველ ბარზე ახლდება.",
+        StrategyTemplateKeys.DonchianV2 =>
+            "Donchian v2 daily. შესვლა 55, გასვლა 5, ATR 1.5. წინა არხის გარღვევა, მოკლე არხით გასვლა, ATR სტოპი ყოველ ბარზე ახლდება. ტეიკი გამორთულია.",
+        StrategyTemplateKeys.BinHv45 =>
+            "BinHV45, 1 წუთი, მხოლოდ ლონგი. Bollinger(40, 2) ქვედა ზოლის ქვეშ დახურვა პატარა ქვედა ჩრდილით. გასვლის სიგნალი არ აქვს: ტეიკი 1.25%, სტოპი 5%.",
+        StrategyTemplateKeys.ClucMay72018 =>
+            "Cluc, 5 წუთი, მხოლოდ ლონგი. დახურვა EMA(50)-ის და typical-price Bollinger ქვედა ზოლის 98.5%-ის ქვეშ, მოცულობა წინა 30 ბარის საშუალოს 20-ჯერ ნაკლებია. გასვლა შუა ზოლზე. ტეიკი 1%, სტოპი 5%.",
+        StrategyTemplateKeys.CombinedBinHCluc =>
+            "BinHV45 ან Cluc, 5 წუთი, მხოლოდ ლონგი. გასვლა შუა ზოლზე მხოლოდ მოგებაში. ტეიკი 5%, სტოპი 5%.",
+        StrategyTemplateKeys.Hlhb =>
+            "HLHB, 4 საათი, მხოლოდ ლონგი. RSI(10) 50-ს კვეთს და EMA(5) EMA(10)-ს იმავე ბარზე, ADX 25-ზე მეტია. უკუ გადაკვეთა ხურავს. Hyperopt-ის 62% ტეიკი და 32% სტოპი არ არის გადმოტანილი.",
         _ => "ახალ ტრენდს იწყებს: სწრაფი EMA ნელს კვეთს, RSI ადასტურებს. მიზანი — მიმართულების ცვლილება, სუსტი გადაკვეთების გარეშე."
     };
 
@@ -1022,9 +1234,12 @@ public static class StrategyTemplates
         StrategyTemplateKeys.OiBreakoutConfirmation => "RESEARCHING",
         StrategyTemplateKeys.CryptoPairsArb => "DATA_UNAVAILABLE",
         StrategyTemplateKeys.XsRelativeStrength => "DATA_UNAVAILABLE",
+        var imported when StrategyTemplateKeys.IsImported(imported) => "RESEARCHING",
         StrategyTemplateKeys.VolSpikeEmaTrend => StrategyValidationStatuses.HistoricallyFittedCandidate,
         StrategyTemplateKeys.Bb202Break => StrategyValidationStatuses.HistoricallyFittedCandidate,
         StrategyTemplateKeys.BtcEma20Ema50Long => StrategyValidationStatuses.HistoricallyFittedCandidate,
+        StrategyTemplateKeys.TsMomentum285 => StrategyValidationStatuses.HistoricallyFittedCandidate,
+        StrategyTemplateKeys.BtcDailyMax10 => StrategyValidationStatuses.HistoricallyFittedCandidate,
         var near when StrategyTemplateKeys.IsNearMiss(near) => StrategyValidationStatuses.NearMiss,
         var csr when StrategyTemplateKeys.IsCrossSectionalReversal(csr) => StrategyValidationStatuses.Researching,
         var key when StrategyTemplateKeys.IsResearch(key) => "RESEARCHING",

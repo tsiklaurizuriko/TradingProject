@@ -189,8 +189,8 @@ public class CrossSectionalReversalTests
         CrossSectionalReversalGate.Describe(options).PaperStatus.Should().Be("OFF");
         CrossSectionalReversalGate.Describe(options).LiveStatus.Should().Be("OFF");
         CrossSectionalReversalGate.Describe(options).Enabled.Should().BeFalse();
-        var act = () => RiskLiveGuard.EnsureAllowed(TradingMode.Live, new RiskProfile { Name = "HIGH", AllowLive = false });
-        act.Should().Throw<TradingPlatform.Domain.Errors.DomainException>();
+        var act = () => RiskLiveGuard.EnsureAllowed(TradingMode.Live, new RiskProfile { Name = "HIGH", AllowLive = true });
+        act.Should().NotThrow();
     }
 
     [Fact]

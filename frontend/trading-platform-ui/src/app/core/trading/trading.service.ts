@@ -84,9 +84,17 @@ export class TradingService {
   readonly workspacePositions = computed(() => {
     const ids = this.workspaceBotIds();
     const live = this.ui.isLive();
-    const rows = this.positions().filter(
-      (row) => row.quantity > 0 && (ids.has(row.botId) || (live && row.source === 'Binance')),
-    );
+    const books = this.workspacePositionBooks();
+    const bookCoins = new Set(books.map((row) => row.symbol.trim().toUpperCase()));
+    const rows = this.positions().filter((row) => {
+      if ((row.quantity ?? 0) <= 0) {
+        return false;
+      }
+      if (ids.has(row.botId) || (live && row.source === 'Binance')) {
+        return true;
+      }
+      return live && bookCoins.has(row.symbol.trim().toUpperCase());
+    });
     if (!live) {
       return [...rows].sort((a, b) => byTimeDesc(a.openedAt, b.openedAt));
     }
@@ -116,6 +124,23 @@ export class TradingService {
         currentPrice: filled.currentPrice || snapshot.currentPrice,
         unrealizedPnL: filled.unrealizedPnL,
         notionalUsdt: filled.quantity * entry,
+      });
+    }
+    const running = new Set(this.runningWorkspaceBots().map((bot) => bot.id));
+    for (const [key, row] of byCoin) {
+      if (ids.has(row.botId)) {
+        continue;
+      }
+      const owned = books.filter((book) => book.symbol.trim().toUpperCase() === key);
+      const owner = owned.find((book) => running.has(book.botId)) ?? owned[0];
+      if (!owner) {
+        continue;
+      }
+      byCoin.set(key, {
+        ...owner,
+        currentPrice: row.currentPrice || owner.currentPrice,
+        unrealizedPnL: row.unrealizedPnL,
+        quantity: row.quantity || owner.quantity,
       });
     }
     return [...byCoin.values()].sort((a, b) => byTimeDesc(a.openedAt, b.openedAt));

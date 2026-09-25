@@ -25,7 +25,8 @@ public sealed record ReplaySettings(
     int CooldownMinutes = 30,
     decimal MinimumLiquidationSafetyBufferPercent = 0.1m,
     bool HonorSuggestedStops = false,
-    int MaxHoldBars = 0);
+    int MaxHoldBars = 0,
+    bool BookStopsOff = false);
 
 public sealed record ReplayTrade(
     DateTimeOffset OpenedAt,
@@ -138,6 +139,7 @@ public sealed class BacktestReplay
         decimal? pendingStop = null;
         decimal? pendingTake = null;
         var pendingExit = false;
+        PositionSide? pendingReverse = null;
         var pendingExitReason = "Exit";
         var sampleEvery = Math.Max(1, ordered.Count / 300);
         var lastBar = start;
@@ -191,6 +193,15 @@ public sealed class BacktestReplay
                 inWindow++;
             }
 
+            if (pendingReverse is { } reverseSide && pendingExit && open is not null)
+            {
+                Close(open, ApplySlippage(bar.Open, settings.SlippagePercent, worseForBuy: open.Side == PositionSide.Short), bar.Open, bar.OpenTime, pendingExitReason, settings, trades, ref equity, ref feesPaid, ref slippagePaid, ref grossPnl, ref consecutiveLosses, ref lastLossAt, ref dayPnl);
+                open = null;
+                pendingExit = false;
+                pendingEntry = reverseSide;
+                pendingReverse = null;
+            }
+
             if (pendingEntry is { } entrySide && open is null)
             {
                 var utcDay = new DateTimeOffset(bar.OpenTime.UtcDateTime.Date, TimeSpan.Zero);
@@ -205,7 +216,15 @@ public sealed class BacktestReplay
                     decimal? posStop = null;
                     decimal? posTake = null;
                     decimal? stopPctOverride = null;
-                    if (settings.HonorSuggestedStops && pendingStop is not null)
+                    if (settings.BookStopsOff)
+                    {
+                        posStop = pendingStop;
+                        if (pendingStop is { } structural && fill > 0m)
+                        {
+                            stopPctOverride = Math.Abs(structural - fill) / fill * 100m;
+                        }
+                    }
+                    else if (settings.HonorSuggestedStops && pendingStop is not null)
                     {
                         if (!TryStructuralStops(entrySide, fill, pendingStop, pendingTake, out posStop, out posTake, out stopPctOverride))
                         {
@@ -280,39 +299,45 @@ public sealed class BacktestReplay
 
             if (open is not null)
             {
-                var stop = open.StopPrice ?? (open.Side == PositionSide.Short
-                    ? open.EntryPrice * (1m + settings.StopLossPercent / 100m)
-                    : open.EntryPrice * (1m - settings.StopLossPercent / 100m));
-                var target = open.TakePrice ?? (open.Side == PositionSide.Short
-                    ? open.EntryPrice * (1m - settings.TakeProfitPercent / 100m)
-                    : open.EntryPrice * (1m + settings.TakeProfitPercent / 100m));
-                if (open.Side == PositionSide.Long && bar.Low <= stop)
+                decimal? stop = open.StopPrice;
+                decimal? target = open.TakePrice;
+                if (!settings.BookStopsOff)
                 {
-                    var mid = Math.Min(stop, bar.Low);
+                    stop ??= open.Side == PositionSide.Short
+                        ? open.EntryPrice * (1m + settings.StopLossPercent / 100m)
+                        : open.EntryPrice * (1m - settings.StopLossPercent / 100m);
+                    target ??= open.Side == PositionSide.Short
+                        ? open.EntryPrice * (1m - settings.TakeProfitPercent / 100m)
+                        : open.EntryPrice * (1m + settings.TakeProfitPercent / 100m);
+                }
+
+                if (stop is { } stopPrice && open.Side == PositionSide.Long && bar.Low <= stopPrice)
+                {
+                    var mid = Math.Min(stopPrice, bar.Low);
                     var fill = ApplySlippage(mid, settings.SlippagePercent, worseForBuy: false);
                     Close(open, fill, mid, bar.CloseTime, "Stop loss", settings, trades, ref equity, ref feesPaid, ref slippagePaid, ref grossPnl, ref consecutiveLosses, ref lastLossAt, ref dayPnl);
                     open = null;
                     pendingExit = false;
                 }
-                else if (open.Side == PositionSide.Short && bar.High >= stop)
+                else if (stop is { } shortStop && open.Side == PositionSide.Short && bar.High >= shortStop)
                 {
-                    var mid = Math.Max(stop, bar.High);
+                    var mid = Math.Max(shortStop, bar.High);
                     var fill = ApplySlippage(mid, settings.SlippagePercent, worseForBuy: true);
                     Close(open, fill, mid, bar.CloseTime, "Stop loss", settings, trades, ref equity, ref feesPaid, ref slippagePaid, ref grossPnl, ref consecutiveLosses, ref lastLossAt, ref dayPnl);
                     open = null;
                     pendingExit = false;
                 }
-                else if (open.Side == PositionSide.Long && bar.High >= target)
+                else if (target is { } targetPrice && open.Side == PositionSide.Long && bar.High >= targetPrice)
                 {
-                    var mid = Math.Min(target, bar.High);
+                    var mid = Math.Min(targetPrice, bar.High);
                     var fill = ApplySlippage(mid, settings.SlippagePercent, worseForBuy: false);
                     Close(open, fill, mid, bar.CloseTime, "Take profit", settings, trades, ref equity, ref feesPaid, ref slippagePaid, ref grossPnl, ref consecutiveLosses, ref lastLossAt, ref dayPnl);
                     open = null;
                     pendingExit = false;
                 }
-                else if (open.Side == PositionSide.Short && bar.Low <= target)
+                else if (target is { } shortTarget && open.Side == PositionSide.Short && bar.Low <= shortTarget)
                 {
-                    var mid = Math.Max(target, bar.Low);
+                    var mid = Math.Max(shortTarget, bar.Low);
                     var fill = ApplySlippage(mid, settings.SlippagePercent, worseForBuy: true);
                     Close(open, fill, mid, bar.CloseTime, "Take profit", settings, trades, ref equity, ref feesPaid, ref slippagePaid, ref grossPnl, ref consecutiveLosses, ref lastLossAt, ref dayPnl);
                     open = null;
@@ -407,6 +432,18 @@ public sealed class BacktestReplay
                 {
                     pendingExit = true;
                     pendingExitReason = string.IsNullOrWhiteSpace(reason) ? "Exit" : reason;
+                    var opposite = (open.Side == PositionSide.Long && signal == SignalType.Sell)
+                        || (open.Side == PositionSide.Short && signal == SignalType.Buy);
+                    if (settings.BookStopsOff && opposite)
+                    {
+                        pendingReverse = signal == SignalType.Sell ? PositionSide.Short : PositionSide.Long;
+                        pendingStop = detail?.SuggestedStop;
+                        pendingTake = null;
+                    }
+                }
+                else if (settings.BookStopsOff && open is not null && detail?.SuggestedStop is decimal trail)
+                {
+                    open = open with { StopPrice = trail };
                 }
             }
         }

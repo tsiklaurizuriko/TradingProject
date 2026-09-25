@@ -30,10 +30,90 @@ const ratings: Record<string, StrategyRating> = {
     bookReturnPct: null,
     sample: '527×1h OOS',
   },
+  mac_contrarian_7_10: {
+    stars: 3,
+    verdict: 'weak',
+    note: 'MAc(7,10,0.01), 5 წუთი. სწრაფი SMA ნელ ზოლს 1%-ით რომ სცდება, პოზიცია ტრიალდება საწინააღმდეგოდ. სტოპი არ აქვს. 2019–2022 walk-forward პლუსშია; 2023–2026 სუსტია.',
+    pf: null,
+    bookReturnPct: null,
+    sample: 'BTC 5m 2017–2022',
+  },
+  zigzag_fade: {
+    stars: 3,
+    verdict: 'weak',
+    note: 'სვინგის გარღვევის საწინააღმდეგო შესვლა. ნაგულისხმევი BTC 30m: deviation 2%, ATR 1.5. ETH-ზე 6%, SOL-ზე 5%.',
+    pf: 1.289,
+    bookReturnPct: null,
+    sample: 'BTC 30m published',
+  },
+  binhv45: {
+    stars: 2,
+    verdict: 'weak',
+    note: 'BinHV45, 1 წუთი, მხოლოდ ლონგი. ქვედა Bollinger-ის ქვეშ პატარა ჩრდილით. გასვლის სიგნალი არაა: ტეიკი 1.25%, სტოპი 5%. ჩვენს ფიუჩერსებზე არ არის გაზომილი.',
+    pf: null,
+    bookReturnPct: null,
+    sample: 'freqtrade BinHV45',
+  },
+  cluc_may72018: {
+    stars: 2,
+    verdict: 'weak',
+    note: 'Cluc, 5 წუთი, მხოლოდ ლონგი. EMA(50) და ქვედა ზოლის 98.5%-ის ქვეშ, წყნარი მოცულობა. გასვლა შუა ზოლზე. ტეიკი 1%, სტოპი 5%.',
+    pf: null,
+    bookReturnPct: null,
+    sample: 'freqtrade Cluc',
+  },
+  combined_binh_cluc: {
+    stars: 2,
+    verdict: 'weak',
+    note: 'BinHV45 ან Cluc, 5 წუთი, მხოლოდ ლონგი. შუა ზოლი მხოლოდ მოგებაში ხურავს. ტეიკი 5%, სტოპი 5%. 2018-ის სპოტის წესია, აქ არ არის გაზომილი.',
+    pf: null,
+    bookReturnPct: null,
+    sample: 'freqtrade Combined',
+  },
+  hlhb: {
+    stars: 2,
+    verdict: 'weak',
+    note: 'HLHB, 4 საათი, მხოლოდ ლონგი. RSI და EMA ერთ ბარზე კვეთენ, ADX 25-ზე მეტია. Hyperopt-ის ტეიკი და 32% სტოპი არ არის გადმოტანილი.',
+    pf: null,
+    bookReturnPct: null,
+    sample: 'freqtrade HLHB',
+  },
+  donchian_v2_55: {
+    stars: 3,
+    verdict: 'weak',
+    note: 'დღიური Donchian. შესვლა 55, გასვლა 5, ATR სტოპი 1.5. ტეიკი გამორთულია. ETH-ზე PF 2.10, buy-and-hold არ არის გამოკლებული.',
+    pf: 2.099,
+    bookReturnPct: null,
+    sample: 'ETH daily 2017–2026',
+  },
+  flow_zone: {
+    stars: 2,
+    verdict: 'weak',
+    note: 'ლოგიკური სიგნალი, წარსულზე არ არის გაზომილი. 24 საათის ზონა, taker-ის უმრავლესობა და მზარდი ღია პოზიცია. Live-ზე შენ ამოწმებ. თავისით არ ეშვება.',
+    pf: null,
+    bookReturnPct: null,
+    sample: 'არ არის გაზომილი',
+  },
+  btc_daily_max_10: {
+    stars: 2,
+    verdict: 'weak',
+    note: 'BTC დღიური, მხოლოდ ლონგი, 10 დღის მაქსიმუმი. IS −1%, VAL +8%, OOS −2% 12 bp ხარჯის შემდეგ. Live შეგიძლია ჩართო Bots-ზე; თავისით არ ეშვება. რისკის წიგნი 1x, სტოპი 8%.',
+    pf: null,
+    bookReturnPct: null,
+    sample: 'BTC 1d IS/VAL/OOS',
+  },
+  ts_momentum_28_5: {
+    stars: 2,
+    verdict: 'weak',
+    note: 'BTC დღიური, მხოლოდ ლონგი. 28 დღის ამონაგები საკუთარ ზედა მესამედში. IS +47%, VAL −11%, OOS +7% 12 bp ხარჯის შემდეგ. Live შეგიძლია ჩართო Bots-ზე; თავისით არ ეშვება. რისკის წიგნი 1x, სტოპი 8%.',
+    pf: null,
+    bookReturnPct: null,
+    sample: 'BTC 1d IS/VAL/OOS',
+  },
   btc_ema20_ema50_long: {
     stars: 3,
     verdict: 'weak',
-    note: '22 მონეტა, სრული 2 წელი, თანაბარი წილი +16%, PF 1.06. 17 მოგებაშია, 5 ზარალში. ეს იგივე ფანჯარაა, OOS არ არის. ვარდნა ≈ 49%. LIVE არა.',
+    note: '22 მონეტა, სრული 2 წელი, თანაბარი წილი +16%, PF 1.06. 17 მოგებაშია, 5 ზარალში. ეს იგივე ფანჯარაა, OOS არ არის. ვარდნა ≈ 49%.',
     pf: 1.06,
     bookReturnPct: 15.97,
     sample: '22×30m full window',
@@ -321,7 +401,7 @@ const ratings: Record<string, StrategyRating> = {
   vol_spike_ema_trend: {
     stars: 2,
     verdict: 'weak',
-    note: 'BTC 15m-ზე ისტორიას მოერგო: +14% იმავე ფანჯარაზე. OOS არ აქვს. LIVE არა.',
+    note: 'BTC 15m-ზე ისტორიას მოერგო: +14% იმავე ფანჯარაზე. OOS არ აქვს.',
     pf: null,
     bookReturnPct: 13.82,
     sample: 'BTCUSDT 15m fitted 2y',
@@ -329,7 +409,7 @@ const ratings: Record<string, StrategyRating> = {
   bb20_2_break: {
     stars: 2,
     verdict: 'weak',
-    note: 'BTC 15m-ზე ისტორიას მოერგო: +11% იმავე ფანჯარაზე. OOS არ აქვს. LIVE არა.',
+    note: 'BTC 15m-ზე ისტორიას მოერგო: +11% იმავე ფანჯარაზე. OOS არ აქვს.',
     pf: null,
     bookReturnPct: 11.26,
     sample: 'BTCUSDT 15m fitted 2y',
@@ -441,5 +521,5 @@ export function formatBookReturn(value: number): string {
 export function ratingMeta(rate: StrategyRating): string {
   const pf = `PF ${formatPf(rate.pf)}`;
   const book = rate.bookReturnPct == null ? '' : ` · წიგნი ${formatBookReturn(rate.bookReturnPct)}`;
-  return `${pf}${book} · ${rate.sample} · არ არის LIVE`;
+  return `${pf}${book} · ${rate.sample}`;
 }

@@ -206,6 +206,9 @@ public sealed class DatabaseSeeder
         await UpsertSystemRiskAsync("BTC 15m Vol Spike", ["FITTED-VOL-SPIKE", "vol_spike_ema_trend"], FittedVolSpikeBook(), cancellationToken);
         await UpsertSystemRiskAsync("BTC 15m BB Break", ["FITTED-BB-BREAK", "bb20_2_break"], FittedBbBreakBook(), cancellationToken);
         await UpsertSystemRiskAsync("30m EMA Cross", ["BTC 30m EMA Cross", "BTC-30M-EMA-CROSS", "btc_ema20_ema50_long"], FittedEmaCrossBook(), cancellationToken);
+        await UpsertSystemRiskAsync("1d Time-Series Momentum", ["ts_momentum_28_5", "TS-MOMENTUM-28-5"], TsMomentumBook(), cancellationToken);
+        await UpsertSystemRiskAsync("1d BTC 10-day High", ["btc_daily_max_10", "BTC-DAILY-MAX-10"], TsMomentumBook(), cancellationToken);
+        await UpsertSystemRiskAsync("Flow Zone", ["flow_zone", "FLOW-ZONE"], TsMomentumBook(), cancellationToken);
         await EnsureOneActiveAsync(cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
         await SeedStrategiesAsync(cancellationToken);
@@ -215,19 +218,24 @@ public sealed class DatabaseSeeder
     {
         var admin = await _db.Users.FirstAsync(cancellationToken);
         var existing = await _db.Strategies.Include(s => s.Versions).ToListAsync(cancellationToken);
-        foreach (var row in Catalog.Where(item =>
-                     StrategyTemplateKeys.IsOperatorCatalog(item.Key)
-                     || StrategyTemplateKeys.IsResearchOnlyFamily(item.Key)
-                     || StrategyTemplateKeys.IsNearMiss(item.Key)))
+        foreach (var row in Catalog)
         {
             var strategy = existing.FirstOrDefault(s => MatchesCatalog(s, row.Key, row.Name));
             var crossSection = StrategyTemplateKeys.IsCrossSectionalReversal(row.Key);
             var emaCross = row.Key == StrategyTemplateKeys.BtcEma20Ema50Long;
+            var tsMomentum = row.Key is StrategyTemplateKeys.TsMomentum285 or StrategyTemplateKeys.BtcDailyMax10;
             var flat = row.Key == StrategyTemplateKeys.FlatRange;
-            var parameters = StrategyTemplates.DefaultsFor(row.Key, qualityOn: !row.Research && !flat && !StrategyTemplateKeys.IsHistoricallyFitted(row.Key)) with
+            var flow = row.Key == StrategyTemplateKeys.FlowZone;
+            var zigzag = row.Key == StrategyTemplateKeys.ZigZagFade;
+            var donchianV2 = row.Key == StrategyTemplateKeys.DonchianV2;
+            var binhv = row.Key == StrategyTemplateKeys.BinHv45;
+            var hlhb = row.Key == StrategyTemplateKeys.Hlhb;
+            var freqtradeLong = binhv || hlhb || row.Key is StrategyTemplateKeys.ClucMay72018 or StrategyTemplateKeys.CombinedBinHCluc;
+            var longOnly = emaCross || tsMomentum || freqtradeLong;
+            var parameters = StrategyTemplates.DefaultsFor(row.Key, qualityOn: !row.Research && !flat && !flow && !StrategyTemplateKeys.IsHistoricallyFitted(row.Key)) with
             {
-                AllowedSide = emaCross ? StrategySides.Long : StrategySides.Both,
-                Timeframe = emaCross ? "30m" : flat ? "1h" : StrategyTemplateKeys.IsHistoricallyFitted(row.Key) || crossSection ? "15m" : "5m"
+                AllowedSide = longOnly ? StrategySides.Long : StrategySides.Both,
+                Timeframe = binhv ? "1m" : hlhb ? "4h" : donchianV2 ? "1d" : zigzag ? "30m" : tsMomentum ? "1d" : emaCross ? "30m" : flat || flow ? "1h" : StrategyTemplateKeys.IsHistoricallyFitted(row.Key) || crossSection ? "15m" : "5m"
             };
             if (strategy is null)
             {
@@ -241,8 +249,8 @@ public sealed class DatabaseSeeder
                     AppliesToAllSymbols = emaCross || !fitted,
                     AllowedSymbolsCsv = emaCross || !fitted ? null : "BTCUSDT",
                     TemplateKey = row.Key,
-                    AllowedSide = emaCross ? StrategySides.Long : StrategySides.Both,
-                    IsEnabled = emaCross || crossSection || !row.Research,
+                    AllowedSide = longOnly ? StrategySides.Long : StrategySides.Both,
+                    IsEnabled = true,
                     ValidationStatus = row.Research
                         ? StrategyTemplates.ResearchStatus(row.Key)
                         : StrategyValidationStatuses.ValidationPending
@@ -253,7 +261,7 @@ public sealed class DatabaseSeeder
                     VersionNumber = 1,
                     DefinitionJson = StrategyTemplates.Build(strategy.Name, 1, parameters),
                     Symbol = "BTCUSDT",
-                    Timeframe = emaCross ? Timeframe.ThirtyMinutes : flat ? Timeframe.OneHour : fitted || crossSection ? Timeframe.FifteenMinutes : Timeframe.FiveMinutes
+                    Timeframe = binhv ? Timeframe.OneMinute : hlhb ? Timeframe.FourHours : donchianV2 ? Timeframe.OneDay : zigzag ? Timeframe.ThirtyMinutes : tsMomentum ? Timeframe.OneDay : emaCross ? Timeframe.ThirtyMinutes : flat || flow ? Timeframe.OneHour : fitted || crossSection ? Timeframe.FifteenMinutes : Timeframe.FiveMinutes
                 });
                 _db.Strategies.Add(strategy);
                 existing.Add(strategy);
@@ -283,17 +291,15 @@ public sealed class DatabaseSeeder
                 key = latest is null ? string.Empty : StrategyTemplates.Read(latest.DefinitionJson).TemplateKey;
             }
 
-            if (StrategyTemplateKeys.IsOperatorCatalog(key)
-                || StrategyTemplateKeys.IsResearchOnlyFamily(key)
-                || StrategyTemplateKeys.IsNearMiss(key))
+            if (StrategyTemplateKeys.IsKnown(key))
             {
+                strategy.IsEnabled = true;
+                strategy.IsArchived = false;
+                strategy.DeletedAt = null;
                 if (StrategyTemplateKeys.IsResearchOnlyFamily(key)
                     && !StrategyTemplateKeys.IsCrossSectionalReversal(key)
                     && !StrategyTemplateKeys.IsScalping(key))
                 {
-                    strategy.IsEnabled = false;
-                    strategy.IsArchived = false;
-                    strategy.DeletedAt = null;
                     if (string.IsNullOrWhiteSpace(strategy.ValidationStatus)
                         || strategy.ValidationStatus == StrategyValidationStatuses.ValidationPending)
                     {
@@ -340,6 +346,46 @@ public sealed class DatabaseSeeder
             return;
         }
 
+        if (row.Key is StrategyTemplateKeys.TsMomentum285 or StrategyTemplateKeys.BtcDailyMax10)
+        {
+            AlignTsMomentum(strategy, row, parameters);
+            return;
+        }
+
+        if (row.Key == StrategyTemplateKeys.FlowZone)
+        {
+            strategy.TemplateKey = row.Key;
+            strategy.Name = row.Name;
+            strategy.AllowedSide = StrategySides.Both;
+            strategy.AppliesToAllSymbols = true;
+            strategy.AllowedSymbolsCsv = null;
+            strategy.IsEnabled = true;
+            strategy.IsArchived = false;
+            strategy.DeletedAt = null;
+            strategy.Description = row.Description;
+            strategy.ValidationStatus = StrategyValidationStatuses.ValidationPending;
+            var clock = strategy.Versions.OrderByDescending(v => v.VersionNumber).FirstOrDefault();
+            if (clock is null || clock.IsImmutable)
+            {
+                strategy.Versions.Add(new StrategyVersion
+                {
+                    Strategy = strategy,
+                    VersionNumber = (clock?.VersionNumber ?? 0) + 1,
+                    DefinitionJson = StrategyTemplates.Build(strategy.Name, (clock?.VersionNumber ?? 0) + 1, parameters),
+                    Symbol = "BTCUSDT",
+                    Timeframe = Timeframe.OneHour
+                });
+            }
+            else if (clock.Timeframe != Timeframe.OneHour)
+            {
+                clock.DefinitionJson = StrategyTemplates.Build(strategy.Name, clock.VersionNumber, parameters);
+                clock.Timeframe = Timeframe.OneHour;
+                clock.UpdatedAt = DateTimeOffset.UtcNow;
+            }
+
+            return;
+        }
+
         if (StrategyTemplateKeys.IsHistoricallyFitted(row.Key))
         {
             AlignFittedBtc15m(strategy, row, parameters);
@@ -354,12 +400,7 @@ public sealed class DatabaseSeeder
             strategy.IsArchived = false;
             strategy.DeletedAt = null;
             strategy.ValidationStatus = StrategyTemplates.ResearchStatus(row.Key);
-            if (StrategyTemplateKeys.IsResearchOnlyFamily(row.Key)
-                && !StrategyTemplateKeys.IsCrossSectionalReversal(row.Key)
-                && !StrategyTemplateKeys.IsScalping(row.Key))
-            {
-                strategy.IsEnabled = false;
-            }
+            strategy.IsEnabled = true;
 
             if (StrategyTemplateKeys.IsCrossSectionalReversal(row.Key))
             {
@@ -527,10 +568,30 @@ public sealed class DatabaseSeeder
             "HISTORICALLY_FITTED_CANDIDATE. BTCUSDT 15m BOTH. RelVol spike > 1.5 with close vs EMA21. Use risk book BTC 15m Vol Spike (SL 2.50% / TP 5.00%). Not validated alpha. LIVE off.", true),
         (StrategyTemplateKeys.Bb202Break, "BTC 15m Bollinger Break",
             "HISTORICALLY_FITTED_CANDIDATE. BTCUSDT 15m BOTH. Close cross of Bollinger (20,2). Use risk book BTC 15m BB Break (SL 4.00% / TP 5.00%). Not validated alpha. LIVE off.", true),
+        (StrategyTemplateKeys.FlowZone, "Flow Zone",
+            "All USD-M coins, 1h, both sides. Buy the upper quarter of the last 24 hours when taker buy is the majority and open interest rose. Sell the lower quarter when taker sell is the majority and open interest rose. Missing taker or open interest sends no order. Not measured on the past. Not auto-started. Live exits stay on the 8% stop rail in the Flow Zone book.", true),
         (StrategyTemplateKeys.FlatRange, "Flat Range",
             "ფლეტზე წინა 24 საათის ზედა და ქვედა ზღვარი იკეტება. ლონგი ქვედა 20%-ში, შორტი ზედა 20%-ში. სტოპი შესვლის ზღვარია, ტეიკ-პროფიტი მოპირდაპირე ზღვარი. პოზიციის ზომა ისე ითვლება, რომ სტოპმა დაგეგმილი რისკი წაიღოს. 24 საათში იხურება.", false),
+        (StrategyTemplateKeys.MacContrarian710, "Contrarian SMA 7/10",
+            "MAc(7,10,0.01) on 5m. Fast SMA above the slow band is short. Fast SMA below the slow band is long. No stop.", true),
+        (StrategyTemplateKeys.ZigZagFade, "ZigZag Fade",
+            "Fade a ZigZag swing break. Default is the BTC 30m published set: length 14, deviation 2%, ATR 1.5. ETH deviation 6%. SOL deviation 5%.", true),
+        (StrategyTemplateKeys.DonchianV2, "Donchian 55/5",
+            "Donchian v2 daily. Entry 55, exit 5, ATR stop 1.5. No take profit.", true),
+        (StrategyTemplateKeys.BinHv45, "BinHV45",
+            "Freqtrade BinHV45. 1m LONG. Close under the prior Bollinger(40, 2) lower band with a short lower wick. No exit signal. ROI 1.25%, stop 5%. Not measured on this futures book.", true),
+        (StrategyTemplateKeys.ClucMay72018, "Cluc May 2018",
+            "Freqtrade ClucMay72018. 5m LONG. Close under EMA(50) and 98.5% of the typical-price lower band, volume below 20× the prior 30-bar mean. Exit at the middle band. ROI 1%, stop 5%.", true),
+        (StrategyTemplateKeys.CombinedBinHCluc, "Combined BinH Cluc",
+            "Freqtrade CombinedBinHAndCluc. 5m LONG. BinHV45 or Cluc entry. Middle-band exit only while in profit. ROI 5%, stop 5%.", true),
+        (StrategyTemplateKeys.Hlhb, "HLHB",
+            "Freqtrade hlhb. 4h LONG. RSI(10) of (open+close)/2 crosses 50 and EMA(5) crosses EMA(10) on the same bar, ADX above 25. Opposite cross exits. Hyperopt ROI and 32% stop are not copied.", true),
         (StrategyTemplateKeys.BtcEma20Ema50Long, "30m EMA Cross",
             "HISTORICALLY_FITTED_CANDIDATE. All USD-M coins, 30m LONG only. EMA20 cross above EMA50; exit on the cross back below. Use risk book 30m EMA Cross (R 0.50% / SL 1.00% / TP 20% cap). Not validated alpha. LIVE off.", true),
+        (StrategyTemplateKeys.TsMomentum285, "1d Time-Series Momentum",
+            "BTCUSDT daily LONG only. Buy when the 28-day return is in the top third of its own history and stay in while any of the next five days is funded. No short. VAL growth on this cache was -11%. Start it yourself on Bots in LIVE mode with an API key. Use risk book 1d Time-Series Momentum (1x, 8% stop rail, 2% planned risk). Not auto-started.", true),
+        (StrategyTemplateKeys.BtcDailyMax10, "1d BTC 10-day High",
+            "BTCUSDT daily LONG only. Buy the day after the close prints a 10-day high. Exit when the close is no longer that high. No short. On this cache IS growth was -1%, VAL +8%, OOS -2% after 12 bp. Start it yourself on Bots in LIVE mode with an API key. Use risk book 1d BTC 10-day High (1x, 8% stop rail, 2% planned risk). Not auto-started.", true),
         (StrategyTemplateKeys.ScalpEmaMomentum, "Scalp EMA Momentum",
             "RESEARCH_ONLY. Fast/slow EMA momentum on closed 1m–15m bars. Not in the operator catalog. LIVE off.", true),
         (StrategyTemplateKeys.ScalpVwapReclaim, "Scalp VWAP Reclaim",
@@ -645,6 +706,7 @@ public sealed class DatabaseSeeder
 
         existing.Name = name;
         existing.IsSystem = true;
+        existing.AllowLive = true;
     }
 
     private async Task EnsureOneActiveAsync(CancellationToken cancellationToken)
@@ -712,7 +774,7 @@ public sealed class DatabaseSeeder
             MaxConsecutiveLosses = 5,
             CooldownMinutes = 30,
             MinimumLiquidationSafetyBufferPercent = 1m,
-            AllowLive = false
+            AllowLive = true
         };
 
     private static void AlignFittedBtc15m(
@@ -777,7 +839,7 @@ public sealed class DatabaseSeeder
             MaxConsecutiveLosses = 5,
             CooldownMinutes = 30,
             MinimumLiquidationSafetyBufferPercent = 1m,
-            AllowLive = false,
+            AllowLive = true,
             IsActive = false
         };
 
@@ -794,7 +856,7 @@ public sealed class DatabaseSeeder
             MaxConsecutiveLosses = 5,
             CooldownMinutes = 30,
             MinimumLiquidationSafetyBufferPercent = 1m,
-            AllowLive = false,
+            AllowLive = true,
             IsActive = false
         };
 
@@ -850,6 +912,75 @@ public sealed class DatabaseSeeder
         latest.UpdatedAt = DateTimeOffset.UtcNow;
     }
 
+    private static void AlignTsMomentum(
+        Strategy strategy,
+        (string Key, string Name, string Description, bool Research) row,
+        StrategyTemplateParams parameters)
+    {
+        strategy.TemplateKey = row.Key;
+        strategy.Name = row.Name;
+        strategy.AllowedSide = StrategySides.Long;
+        strategy.AppliesToAllSymbols = false;
+        strategy.AllowedSymbolsCsv = "BTCUSDT";
+        strategy.IsEnabled = true;
+        strategy.IsArchived = false;
+        strategy.DeletedAt = null;
+        strategy.ValidationStatus = StrategyValidationStatuses.HistoricallyFittedCandidate;
+        if (string.IsNullOrWhiteSpace(strategy.Description) || strategy.Description != row.Description)
+        {
+            strategy.Description = row.Description;
+        }
+
+        var latest = strategy.Versions.OrderByDescending(v => v.VersionNumber).FirstOrDefault();
+        var current = latest is null ? null : StrategyTemplates.Read(latest.DefinitionJson);
+        var mismatch = latest is null
+            || current is null
+            || current.TemplateKey != parameters.TemplateKey
+            || current.Timeframe != "1d"
+            || current.AllowedSide != StrategySides.Long
+            || latest.Timeframe != Timeframe.OneDay;
+        if (!mismatch)
+        {
+            return;
+        }
+
+        var json = StrategyTemplates.Build(strategy.Name, (latest?.VersionNumber ?? 0) + (latest is { IsImmutable: true } or null ? 1 : 0), parameters);
+        if (latest is null || latest.IsImmutable)
+        {
+            strategy.Versions.Add(new StrategyVersion
+            {
+                Strategy = strategy,
+                VersionNumber = (latest?.VersionNumber ?? 0) + 1,
+                DefinitionJson = json,
+                Symbol = "BTCUSDT",
+                Timeframe = Timeframe.OneDay
+            });
+            return;
+        }
+
+        latest.DefinitionJson = StrategyTemplates.Build(strategy.Name, latest.VersionNumber, parameters);
+        latest.Timeframe = Timeframe.OneDay;
+        latest.Symbol = "BTCUSDT";
+        latest.UpdatedAt = DateTimeOffset.UtcNow;
+    }
+
+    private static RiskProfile TsMomentumBook() =>
+        new()
+        {
+            RiskPerTradePercent = 2m,
+            StopLossPercent = 8m,
+            TakeProfitPercent = 30m,
+            MaxLeverage = 1m,
+            MaxDailyLossPercent = 3m,
+            MaxPortfolioRiskPercent = 4m,
+            MaxSimultaneousPositions = 1,
+            MaxConsecutiveLosses = 5,
+            CooldownMinutes = 30,
+            MinimumLiquidationSafetyBufferPercent = 1m,
+            AllowLive = true,
+            IsActive = false
+        };
+
     private static RiskProfile FittedEmaCrossBook() =>
         new()
         {
@@ -863,7 +994,7 @@ public sealed class DatabaseSeeder
             MaxConsecutiveLosses = 5,
             CooldownMinutes = 30,
             MinimumLiquidationSafetyBufferPercent = 1m,
-            AllowLive = false,
+            AllowLive = true,
             IsActive = false
         };
 }

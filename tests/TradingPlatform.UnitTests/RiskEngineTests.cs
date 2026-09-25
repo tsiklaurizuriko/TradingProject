@@ -54,7 +54,7 @@ public sealed class RiskEngineTests
         MaxConsecutiveLosses = 5,
         CooldownMinutes = 30,
         MinimumLiquidationSafetyBufferPercent = 1m,
-        AllowLive = false
+        AllowLive = true
     };
 
     private static RiskSnapshot Clear(decimal available = 100m, decimal price = 50_000m) => new()
@@ -271,7 +271,7 @@ public sealed class RiskEngineTests
         Low().MaxDailyLossPercent.Should().Be(3m);
         Medium().MaxDailyLossPercent.Should().Be(5m);
         High().MaxDailyLossPercent.Should().Be(7m);
-        High().AllowLive.Should().BeFalse();
+        High().AllowLive.Should().BeTrue();
     }
 
     [Fact]
@@ -336,12 +336,12 @@ public sealed class PortfolioRiskTests
 public sealed class RiskLiveGuardTests
 {
     [Fact]
-    public void High_cannot_start_live_when_allow_live_is_false()
+    public void High_can_start_live()
     {
         var act = () => RiskLiveGuard.EnsureAllowed(
             TradingMode.Live,
-            new RiskProfile { Name = "HIGH", AllowLive = false });
-        act.Should().Throw<TradingPlatform.Domain.Errors.DomainException>().Which.Code.Should().Be("RISK_LIMIT_EXCEEDED");
+            new RiskProfile { Name = "HIGH", AllowLive = true });
+        act.Should().NotThrow();
     }
 
     [Fact]

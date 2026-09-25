@@ -31,8 +31,8 @@ import { TradingChartComponent } from '../../shared/chart/trading-chart';
       </header>
 
       <section class="kpi-row">
-        <app-metric-card icon="flask" label="Mode" value="RESEARCH" sub="Not paper. Not LIVE." />
-        <app-metric-card icon="plug" label="LIVE" value="OFF" valueClass="pnl-neg" sub="AllowLive stays false." />
+        <app-metric-card icon="flask" label="Mode" value="RESEARCH" sub="Bots can run Paper or Live." />
+        <app-metric-card icon="plug" label="LIVE" value="On" sub="Start a live bot from Bots." />
         <app-metric-card icon="shield" label="Paper promotion" value="none" sub="No VALIDATED_FOR_PAPER." />
         <app-metric-card icon="chart" label="PA LIVE" value="OFF" valueClass="pnl-neg" sub="Cup & Handle NOT_IMPLEMENTED." />
       </section>
@@ -105,7 +105,7 @@ import { TradingChartComponent } from '../../shared/chart/trading-chart';
       @if (view() === 'strategies') {
         <section class="panel">
           <h2>Scalping registry</h2>
-          <p class="tiny">Disabled. Out of the operator catalog. Create/Start cannot pick these for LIVE.</p>
+          <p class="tiny">Scalping templates. A bot can be started on Paper or Live from Bots.</p>
           <div class="strategies-grid">
             @for (row of summary()?.strategies ?? []; track row.templateKey) {
               <article class="card strategy-card">

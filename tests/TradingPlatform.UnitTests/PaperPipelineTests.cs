@@ -521,6 +521,11 @@ public sealed class PaperPipelineTests
         public Task<IReadOnlyList<FuturesPremiumIndex>> GetPremiumIndexAsync(
             CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<FuturesPremiumIndex>>([]);
+
+        public Task<(decimal? Previous, decimal? Latest)> GetOpenInterestPairAsync(
+            string symbol,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<(decimal?, decimal?)>((null, null));
     }
 
     private sealed class RecordingLiveConnector : IExchangeConnector, ILiveExchangeConnectorFactory

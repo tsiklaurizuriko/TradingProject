@@ -31,16 +31,6 @@ public static class CrossSectionalLiveBook
         var feature = string.Equals(template, StrategyTemplateKeys.CrossSectionalReversalReturn1h, StringComparison.Ordinal)
             ? CrossSectionalReversalCatalog.Feature1h
             : CrossSectionalReversalCatalog.Feature15m;
-        if (feature == CrossSectionalReversalCatalog.Feature15m && !flags.Return15mEnabled)
-        {
-            return new CrossSectionDecision(SignalType.NoAction, "Return 15m variant is off.");
-        }
-
-        if (feature == CrossSectionalReversalCatalog.Feature1h && !flags.Return1hEnabled)
-        {
-            return new CrossSectionDecision(SignalType.NoAction, "Return 1h variant is off.");
-        }
-
         var lookback = CrossSectionalReversalCatalog.LookbackBars(feature);
         var history = Math.Max(1, flags.HistoryBarsRequired);
         DateTimeOffset? clock = null;

@@ -144,9 +144,6 @@
       [trades]="modeTrades()"
     />
   </div>
-  <div class="dash-quick">
-    <app-quick-actions />
-  </div>
   <div class="dash-account">
     <app-allocation-chart [availableAbs]="available()" [usedAbs]="usedMargin()" [pnlAbs]="unrealized()" />
   </div>
@@ -163,6 +160,7 @@
       [bots]="modeBots()"
       [consecutiveLosses]="consecutiveLosses()"
       [locked]="riskLocked()"
+      [strategyResults]="strategyResults()"
     />
   </div>
 </div>

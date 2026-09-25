@@ -43,6 +43,11 @@ if (args.Any(a => string.Equals(a, "--universe", StringComparison.OrdinalIgnoreC
     return 2;
 }
 
+if (args.Any(a => string.Equals(a, "--imported-rules", StringComparison.OrdinalIgnoreCase)))
+{
+    return await ImportedRuleMeasure.RunAsync(candleCacheDir);
+}
+
 if (args.Any(a => string.Equals(a, "--price-action-alpha-audit", StringComparison.OrdinalIgnoreCase)))
 {
     return await PriceActionAlphaData.AuditAsync(root, candleCacheDir);
@@ -106,6 +111,21 @@ if (args.Any(a => string.Equals(a, "--extreme-move", StringComparison.OrdinalIgn
 if (args.Any(a => string.Equals(a, "--extreme-move-signals", StringComparison.OrdinalIgnoreCase)))
 {
     return await ExtremeMoveSignals.RunAsync(root, candleCacheDir);
+}
+
+if (args.Any(a => string.Equals(a, "--exhaustion-path", StringComparison.OrdinalIgnoreCase)))
+{
+    return ExhaustionPathStudy.Run(root, candleCacheDir);
+}
+
+if (args.Any(a => string.Equals(a, "--ts-momentum", StringComparison.OrdinalIgnoreCase)))
+{
+    return TimeSeriesMomentumStudy.Run(root, candleCacheDir);
+}
+
+if (args.Any(a => string.Equals(a, "--btc-daily-max", StringComparison.OrdinalIgnoreCase)))
+{
+    return BtcDailyMaxStudy.Run(root, candleCacheDir);
 }
 
 if (args.Any(a => string.Equals(a, "--flat-range", StringComparison.OrdinalIgnoreCase)))

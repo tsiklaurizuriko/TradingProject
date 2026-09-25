@@ -1337,57 +1337,85 @@ app-emergency-stop {
   color: var(--text-primary);
 }
 
-.risk-overview .section-head { margin-bottom: 8px; }
+.risk-overview .section-head { margin-bottom: 12px; }
+
+.risk-split {
+  display: grid;
+  grid-template-columns: minmax(200px, 0.72fr) minmax(0, 1.28fr);
+  gap: 8px 28px;
+  align-items: start;
+  min-width: 0;
+}
+
+.risk-metrics,
+.risk-book {
+  min-width: 0;
+}
 
 .risk-strategy-head {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
   gap: 8px;
-  margin: 10px 0 6px;
+  margin: 0 0 8px;
   font-size: 12px;
   color: var(--text-secondary);
 }
 
-.risk-strategy-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  max-height: 220px;
-  overflow: auto;
-  min-width: 0;
-  padding-right: 2px;
-}
-
-.risk-strategy {
+.risk-table-head,
+.risk-table-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1.4fr) 52px minmax(88px, auto) 64px 64px 72px;
   gap: 8px;
   align-items: baseline;
+}
+
+.risk-table-head {
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+}
+
+.risk-table-head span:not(:first-child),
+.risk-table-row span:not(:first-child),
+.risk-table-row strong {
+  text-align: right;
+}
+
+.risk-table-row {
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
   font-size: 12px;
   color: var(--text-secondary);
 }
+
+.risk-table-row:last-child { border-bottom: 0; }
 
 .risk-strategy-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.risk-strategy strong {
   color: var(--text-primary);
+}
+
+.risk-table-row strong,
+.risk-table-row .num {
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-.risk-strategy .num { text-align: right; white-space: nowrap; }
-.risk-strategy.is-full strong { color: #ffb020; }
+.risk-table-row strong { color: var(--text-primary); }
+.risk-table-row.is-full strong { color: #ffb020; }
+.risk-table-row .wl { display: inline-flex; justify-content: flex-end; gap: 3px; }
 
-.dash-risk {
-  overflow: auto;
+@media (max-width: 720px) {
+  .risk-split { grid-template-columns: 1fr; }
 }
 
-.fill-host, app-metric-card, app-goal-progress, app-market-watchlist, app-bot-table, app-position-table, app-trade-table, app-pnl-chart, app-allocation-chart, app-quick-actions, app-risk-overview {
+.fill-host, app-metric-card, app-goal-progress, app-market-watchlist, app-bot-table, app-position-table, app-trade-table, app-pnl-chart, app-allocation-chart, app-risk-overview {
   display: block;
   min-height: 0;
   min-width: 0;
@@ -1399,7 +1427,6 @@ app-emergency-stop {
 .dash-bots app-bot-table,
 .dash-positions app-position-table,
 .dash-trades app-trade-table,
-.dash-quick app-quick-actions,
 .dash-account app-allocation-chart,
 .dash-pnl app-pnl-chart,
 .dash-risk app-risk-overview {
