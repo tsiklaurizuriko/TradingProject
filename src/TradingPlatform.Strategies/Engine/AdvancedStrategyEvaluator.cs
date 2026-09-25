@@ -28,6 +28,7 @@ public static class AdvancedStrategyEvaluator
             StrategyTemplateKeys.TsMomentum285 => TsMomentum(candles, i, context),
             StrategyTemplateKeys.BtcDailyMax10 => BtcDailyMax(candles, i, context),
             StrategyTemplateKeys.FlowZone => FlowZone(candles, i, context),
+            StrategyTemplateKeys.SqueezeWatch => SqueezeWatch(candles, i, context),
             var pa when StrategyTemplateKeys.IsPriceAction(pa) =>
                 PriceActionStrategyEvaluator.Evaluate(p, candles, i, context, cache),
             var scalp when StrategyTemplateKeys.IsScalping(scalp) => ScalpingStrategyEvaluator.Evaluate(p, candles, i, context, cache),
@@ -728,6 +729,104 @@ public static class AdvancedStrategyEvaluator
         }
 
         return now > prior;
+    }
+
+    private static StrategySignalDetail SqueezeWatch(
+        IReadOnlyList<MarketCandle> candles,
+        int i,
+        StrategyContext context)
+    {
+        const string status = "LIVE_PROBE";
+        const int window = 24;
+        const decimal openInterestRise = 0.15m;
+        const decimal priceBand = 0.03m;
+        const decimal fundingExtreme = 0.001m;
+        if (context.HasOpenPosition)
+        {
+            return Detail(SignalType.Hold, "Position open. The 4% stop and 8% take own the exit.", candles, i, status: status);
+        }
+
+        if (i < window - 1)
+        {
+            return Detail(SignalType.NoAction, "Need 24 closed bars.", candles, i, status: status);
+        }
+
+        var then = candles[i - window + 1].Close;
+        var now = candles[i].Close;
+        if (then <= 0m)
+        {
+            return Detail(SignalType.NoAction, "Price window is empty.", candles, i, status: status);
+        }
+
+        var priceChange = (now - then) / then;
+        if (Math.Abs(priceChange) > priceBand)
+        {
+            return Detail(SignalType.NoAction, "Price already moved more than 3% in 24 hours.", candles, i, status: status);
+        }
+
+        var interest = OpenInterestChange(context.OpenInterest);
+        if (interest is null)
+        {
+            return Detail(SignalType.NoAction, "Open interest is missing. No order.", candles, i, status: status);
+        }
+
+        if (interest < openInterestRise)
+        {
+            return Detail(SignalType.NoAction, "Open interest did not rise 15% while price was quiet.", candles, i, status: status);
+        }
+
+        var funding = LatestFunding(context.FundingRate);
+        if (funding is null)
+        {
+            return Detail(SignalType.NoAction, "Funding is missing. No order.", candles, i, status: status);
+        }
+
+        if (funding <= -fundingExtreme)
+        {
+            return Detail(SignalType.Buy, "Price is quiet, open interest rose, funding is at or below -0.10%. Crowded shorts.", candles, i, status: status);
+        }
+
+        if (funding >= fundingExtreme)
+        {
+            return Detail(SignalType.Sell, "Price is quiet, open interest rose, funding is at or above +0.10%. Crowded longs.", candles, i, status: status);
+        }
+
+        return Detail(SignalType.NoAction, "Funding is not at a ±0.10% extreme.", candles, i, status: status);
+    }
+
+    private static decimal? OpenInterestChange(IReadOnlyList<decimal?>? openInterest)
+    {
+        if (openInterest is null || openInterest.Count < 2)
+        {
+            return null;
+        }
+
+        var previous = openInterest[0];
+        var latest = openInterest[^1];
+        if (previous is not { } prior || latest is not { } now || prior <= 0m || now <= 0m)
+        {
+            return null;
+        }
+
+        return (now - prior) / prior;
+    }
+
+    private static decimal? LatestFunding(IReadOnlyList<decimal?>? funding)
+    {
+        if (funding is null)
+        {
+            return null;
+        }
+
+        for (var k = funding.Count - 1; k >= 0; k--)
+        {
+            if (funding[k] is { } rate)
+            {
+                return rate;
+            }
+        }
+
+        return null;
     }
 
     private static StrategySignalDetail BtcDailyMax(

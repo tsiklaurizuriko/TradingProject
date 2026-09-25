@@ -86,6 +86,7 @@ const templateOptions = [
   { key: 'ts_momentum_28_5', label: '1d Time-Series Momentum' },
   { key: 'btc_daily_max_10', label: '1d BTC 10-day High' },
   { key: 'flow_zone', label: 'Flow Zone' },
+  { key: 'squeeze_watch', label: 'Squeeze Watch' },
   { key: 'flat_range', label: 'Flat Range' },
   { key: 'fadx_sma', label: 'ADX SMA Cross' },
   { key: 'triple_supertrend', label: 'Triple Supertrend' },
@@ -180,6 +181,8 @@ const templateLogic: Record<string, string> = {
     'ყველა მონეტა, 30 წუთი, მხოლოდ ყიდვა. EMA(20) კვეთს EMA(50)-ს ზემოთ. გასვლა უკუ გადაკვეთაზე. სტოპი 1%. TP 20% შორი ჭერია. არ არის validated.',
   flow_zone:
     'ყველა მონეტა, 1 საათი. ზედა მეოთხედში ძლიერი taker-ყიდვა და მზარდი ღია პოზიცია — ყიდვა. ქვედა მეოთხედში ძლიერი გაყიდვა და მზარდი პოზიცია — გაყიდვა. მონაცემი თუ არ მოდის, ორდერი არ იგზავნება. წარსულზე არ არის გაზომილი.',
+  squeeze_watch:
+    '1 საათი. 24 საათში ფასი 3%-ზე ნაკლებს იცვლება, open interest მინიმუმ 15%-ით იზრდება და funding −0.10%-ზე დაბალია — ყიდვა. იგივე სიმშვიდე და funding +0.10%-ზე მაღალია — გაყიდვა. მონაცემი თუ არ მოდის, ორდერი არ იგზავნება. რისკი 0.5%, სტოპი 4%, ტეიკი 8%, 2x, 3 პოზიცია.',
   btc_daily_max_10:
     'BTCUSDT, დღიური, მხოლოდ ყიდვა. დღე 10 დღის მაქსიმუმზე იხურება — მეორე დღეს ლონგი. შორტი არ არის. ამ ქეშზე IS −1%, VAL +8%, OOS −2%. Live ჩართვა Bots-ზეა. თავისით არ ეშვება. რისკის წიგნი 1x, სტოპი 8% მხოლოდ ღობეა.',
   ts_momentum_28_5:
@@ -215,7 +218,7 @@ const frozenKeys = new Set([
 ]);
 
 function isResearchOnly(key: string | undefined): boolean {
-  return !!key && !frozenKeys.has(key) && key !== 'ts_momentum_28_5' && key !== 'btc_daily_max_10' && key !== 'flow_zone';
+  return !!key && !frozenKeys.has(key) && key !== 'ts_momentum_28_5' && key !== 'btc_daily_max_10' && key !== 'flow_zone' && key !== 'squeeze_watch';
 }
 
 function isCrossSection(key: string | undefined): boolean {

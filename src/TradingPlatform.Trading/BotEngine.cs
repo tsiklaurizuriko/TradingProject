@@ -722,12 +722,28 @@ public sealed class BotEngine : IBotEngine
         else
         {
             IReadOnlyList<decimal?>? openInterest = null;
-            if (string.Equals(TemplateKey(bot), StrategyTemplateKeys.FlowZone, StringComparison.OrdinalIgnoreCase))
+            IReadOnlyList<decimal?>? funding = null;
+            var templateKey = TemplateKey(bot);
+            if (string.Equals(templateKey, StrategyTemplateKeys.FlowZone, StringComparison.OrdinalIgnoreCase))
             {
                 var pair = await _market.GetOpenInterestPairAsync(bot.Symbol, cancellationToken);
                 if (pair.Previous is { } previous && pair.Latest is { } latest)
                 {
                     openInterest = new decimal?[] { previous, latest };
+                }
+            }
+            else if (string.Equals(templateKey, StrategyTemplateKeys.SqueezeWatch, StringComparison.OrdinalIgnoreCase))
+            {
+                var day = await _market.GetOpenInterestDayAsync(bot.Symbol, cancellationToken);
+                if (day.DayAgo is { } dayAgo && day.Latest is { } latest)
+                {
+                    openInterest = new decimal?[] { dayAgo, latest };
+                }
+
+                var rate = await _market.GetLastFundingRateAsync(bot.Symbol, cancellationToken);
+                if (rate is { } fundingRate)
+                {
+                    funding = new decimal?[] { fundingRate };
                 }
             }
 
@@ -739,7 +755,8 @@ public sealed class BotEngine : IBotEngine
                 AverageEntryPrice = position?.AverageEntryPrice,
                 PositionSide = position?.Side ?? PositionSide.Long,
                 PositionOpenedAt = position?.OpenedAt,
-                OpenInterest = openInterest
+                OpenInterest = openInterest,
+                FundingRate = funding
             };
             var quote = _strategy.EvaluateDetailAt(definition, context, new CausalIndicatorCache(candles), candles.Count - 1);
             signalType = quote.Signal;

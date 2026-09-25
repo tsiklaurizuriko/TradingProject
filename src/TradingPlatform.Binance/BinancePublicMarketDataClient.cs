@@ -19,6 +19,9 @@ public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
     private static readonly Dictionary<string, (decimal Price, DateTimeOffset Until)> PriceCache = new(StringComparer.OrdinalIgnoreCase);
     private static IReadOnlyList<RankedUsdtSpotSymbol>? CachedUniverse;
     private static DateTimeOffset CacheUntil;
+    private static readonly object FundingGate = new();
+    private static Dictionary<string, decimal>? FundingCache;
+    private static DateTimeOffset FundingUntil;
 
     private readonly HttpClient _futures;
     private readonly ILogger<BinancePublicMarketDataClient> _logger;
@@ -159,6 +162,72 @@ public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
 
         points.Sort((a, b) => a.Ts.CompareTo(b.Ts));
         return (points[^2].Oi, points[^1].Oi);
+    }
+
+    public async Task<(decimal? DayAgo, decimal? Latest)> GetOpenInterestDayAsync(string symbol, CancellationToken cancellationToken = default)
+    {
+        var url = $"futures/data/openInterestHist?symbol={Uri.EscapeDataString(symbol)}&period=1h&limit=24";
+        var payload = await GetJsonOrNullAsync(url, cancellationToken);
+        if (payload is null || payload.Value.ValueKind != JsonValueKind.Array)
+        {
+            return (null, null);
+        }
+
+        var points = new List<(long Ts, decimal Oi)>();
+        foreach (var row in payload.Value.EnumerateArray())
+        {
+            if (!row.TryGetProperty("sumOpenInterest", out var oiEl) || !row.TryGetProperty("timestamp", out var tsEl))
+            {
+                continue;
+            }
+
+            var oi = Dec(oiEl);
+            var ts = tsEl.ValueKind == JsonValueKind.Number ? tsEl.GetInt64() : 0;
+            if (oi > 0m && ts > 0)
+            {
+                points.Add((ts, oi));
+            }
+        }
+
+        if (points.Count < 20)
+        {
+            return (null, null);
+        }
+
+        points.Sort((a, b) => a.Ts.CompareTo(b.Ts));
+        return (points[0].Oi, points[^1].Oi);
+    }
+
+    public async Task<decimal?> GetLastFundingRateAsync(string symbol, CancellationToken cancellationToken = default)
+    {
+        Dictionary<string, decimal>? map;
+        lock (FundingGate)
+        {
+            map = DateTimeOffset.UtcNow < FundingUntil ? FundingCache : null;
+        }
+
+        if (map is null)
+        {
+            var rows = await GetPremiumIndexAsync(cancellationToken);
+            if (rows.Count == 0)
+            {
+                return null;
+            }
+
+            map = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+            foreach (var row in rows)
+            {
+                map[row.Symbol] = row.LastFundingRate;
+            }
+
+            lock (FundingGate)
+            {
+                FundingCache = map;
+                FundingUntil = DateTimeOffset.UtcNow.AddSeconds(60);
+            }
+        }
+
+        return map.TryGetValue(symbol, out var rate) ? rate : null;
     }
 
     public async Task<decimal> GetLastPriceAsync(string symbol, CancellationToken cancellationToken = default)

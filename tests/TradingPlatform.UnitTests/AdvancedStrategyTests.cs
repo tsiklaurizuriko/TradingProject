@@ -339,6 +339,7 @@ public sealed class AdvancedStrategyTests
             + StrategyTemplateKeys.CrossSectionalReversal.Length
             + StrategyTemplateKeys.Range.Length
             + StrategyTemplateKeys.Flow.Length
+            + StrategyTemplateKeys.Positioning.Length
             + StrategyTemplateKeys.Imported.Length);
         StrategyTemplateKeys.AdvancedSix.Should().HaveCount(6);
         StrategyTemplateKeys.Scalping.Should().HaveCount(22);
@@ -355,6 +356,7 @@ public sealed class AdvancedStrategyTests
                 .Concat(StrategyTemplateKeys.CrossSectionalReversal)
                 .Concat(StrategyTemplateKeys.Range)
                 .Concat(StrategyTemplateKeys.Flow)
+                .Concat(StrategyTemplateKeys.Positioning)
                 .Concat(StrategyTemplateKeys.Imported));
     }
 
@@ -418,6 +420,55 @@ public sealed class AdvancedStrategyTests
         };
         return AdvancedStrategyEvaluator.Evaluate(parsed, candles, i, ctx, cache);
     }
+
+    [Fact]
+    public void Squeeze_watch_buys_crowded_shorts_and_sells_crowded_longs()
+    {
+        var candles = Enumerable.Range(0, 24)
+            .Select(i => QuietBar(DateTimeOffset.UnixEpoch.AddHours(i), 100m))
+            .ToList();
+        EvalSqueeze(candles, 100m, 120m, -0.0012m).Signal.Should().Be(SignalType.Buy);
+        EvalSqueeze(candles, 100m, 120m, 0.0012m).Signal.Should().Be(SignalType.Sell);
+        EvalSqueeze(candles, 100m, 120m, null).Signal.Should().Be(SignalType.NoAction);
+        var moved = candles.ToList();
+        moved[^1] = QuietBar(moved[^1].OpenTime, 110m);
+        EvalSqueeze(moved, 100m, 120m, -0.0012m).Signal.Should().Be(SignalType.NoAction);
+    }
+
+    private static StrategySignalDetail EvalSqueeze(
+        IReadOnlyList<MarketCandle> candles,
+        decimal openInterestThen,
+        decimal openInterestNow,
+        decimal? funding)
+    {
+        var parsed = StrategyTemplates.Validate(StrategyTemplates.DefaultsFor(StrategyTemplateKeys.SqueezeWatch, false));
+        return AdvancedStrategyEvaluator.Evaluate(
+            parsed,
+            candles,
+            candles.Count - 1,
+            new StrategyContext
+            {
+                ClosedCandles = candles,
+                CurrentPrice = candles[^1].Close,
+                HasOpenPosition = false,
+                OpenInterest = [openInterestThen, openInterestNow],
+                FundingRate = funding is { } rate ? [rate] : null
+            },
+            new CausalIndicatorCache(candles));
+    }
+
+    private static MarketCandle QuietBar(DateTimeOffset open, decimal close) =>
+        new()
+        {
+            Open = close,
+            High = close,
+            Low = close,
+            Close = close,
+            Volume = 1m,
+            IsClosed = true,
+            OpenTime = open,
+            CloseTime = open.AddHours(1)
+        };
 
     private static StrategySignalDetail EvalFlow(IReadOnlyList<MarketCandle> candles, IReadOnlyList<decimal?> openInterest)
     {

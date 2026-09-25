@@ -231,6 +231,7 @@ public sealed class DatabaseSeeder
             var tsMomentum = row.Key is StrategyTemplateKeys.TsMomentum285 or StrategyTemplateKeys.BtcDailyMax10;
             var flat = row.Key == StrategyTemplateKeys.FlatRange;
             var flow = row.Key == StrategyTemplateKeys.FlowZone;
+            var squeeze = row.Key == StrategyTemplateKeys.SqueezeWatch;
             var zigzag = row.Key == StrategyTemplateKeys.ZigZagFade;
             var donchianV2 = row.Key == StrategyTemplateKeys.DonchianV2;
             var binhv = row.Key == StrategyTemplateKeys.BinHv45;
@@ -238,10 +239,10 @@ public sealed class DatabaseSeeder
             var hour = row.Key is StrategyTemplateKeys.FAdxSma or StrategyTemplateKeys.TripleSupertrend;
             var freqtradeLong = binhv || hlhb || row.Key is StrategyTemplateKeys.ClucMay72018 or StrategyTemplateKeys.CombinedBinHCluc;
             var longOnly = emaCross || tsMomentum || freqtradeLong;
-            var parameters = StrategyTemplates.DefaultsFor(row.Key, qualityOn: !row.Research && !flat && !flow && !StrategyTemplateKeys.IsHistoricallyFitted(row.Key)) with
+                var parameters = StrategyTemplates.DefaultsFor(row.Key, qualityOn: !row.Research && !flat && !flow && !squeeze && !StrategyTemplateKeys.IsHistoricallyFitted(row.Key)) with
             {
                 AllowedSide = longOnly ? StrategySides.Long : StrategySides.Both,
-                Timeframe = binhv ? "1m" : hlhb ? "4h" : hour ? "1h" : donchianV2 ? "1d" : zigzag ? "30m" : tsMomentum ? "1d" : emaCross ? "30m" : flat || flow ? "1h" : StrategyTemplateKeys.IsHistoricallyFitted(row.Key) || crossSection ? "15m" : "5m"
+                Timeframe = binhv ? "1m" : hlhb ? "4h" : hour ? "1h" : donchianV2 ? "1d" : zigzag ? "30m" : tsMomentum ? "1d" : emaCross ? "30m" : flat || flow || squeeze ? "1h" : StrategyTemplateKeys.IsHistoricallyFitted(row.Key) || crossSection ? "15m" : "5m"
             };
             if (strategy is null)
             {
@@ -267,10 +268,11 @@ public sealed class DatabaseSeeder
                     VersionNumber = 1,
                     DefinitionJson = StrategyTemplates.Build(strategy.Name, 1, parameters),
                     Symbol = "BTCUSDT",
-                    Timeframe = binhv ? Timeframe.OneMinute : hlhb ? Timeframe.FourHours : hour ? Timeframe.OneHour : donchianV2 ? Timeframe.OneDay : zigzag ? Timeframe.ThirtyMinutes : tsMomentum ? Timeframe.OneDay : emaCross ? Timeframe.ThirtyMinutes : flat || flow ? Timeframe.OneHour : fitted || crossSection ? Timeframe.FifteenMinutes : Timeframe.FiveMinutes
+                    Timeframe = binhv ? Timeframe.OneMinute : hlhb ? Timeframe.FourHours : hour ? Timeframe.OneHour : donchianV2 ? Timeframe.OneDay : zigzag ? Timeframe.ThirtyMinutes : tsMomentum ? Timeframe.OneDay : emaCross ? Timeframe.ThirtyMinutes : flat || flow || squeeze ? Timeframe.OneHour : fitted || crossSection ? Timeframe.FifteenMinutes : Timeframe.FiveMinutes
                 });
                 _db.Strategies.Add(strategy);
                 existing.Add(strategy);
+                await _db.SaveChangesAsync(cancellationToken);
                 continue;
             }
 
@@ -590,6 +592,8 @@ public sealed class DatabaseSeeder
             "HISTORICALLY_FITTED_CANDIDATE. BTCUSDT 15m BOTH. Close cross of Bollinger (20,2). Use risk book BTC 15m BB Break (SL 4.00% / TP 5.00%). Not validated alpha. LIVE off.", true),
         (StrategyTemplateKeys.FlowZone, "Flow Zone",
             "All USD-M coins, 1h, both sides. Buy the upper quarter of the last 24 hours when taker buy is the majority and open interest rose. Sell the lower quarter when taker sell is the majority and open interest rose. Missing taker or open interest sends no order. Not measured on the past. Not auto-started. Live exits stay on the 8% stop rail in the Flow Zone book.", true),
+        (StrategyTemplateKeys.SqueezeWatch, "Squeeze Watch",
+            "1h, both sides. Price moved less than 3% over 24 hours, open interest rose at least 15%, and funding is at or below -0.10% — buy the crowded shorts. The same quiet price and open-interest rise with funding at or above +0.10% — sell the crowded longs. Missing funding or open interest sends no order. Book is risk 0.5%, stop 4%, take 8%, leverage 2x, 3 positions. Not measured on the past.", false),
         (StrategyTemplateKeys.FlatRange, "Flat Range",
             "ფლეტზე წინა 24 საათის ზედა და ქვედა ზღვარი იკეტება. ლონგი ქვედა 20%-ში, შორტი ზედა 20%-ში. სტოპი შესვლის ზღვარია, ტეიკ-პროფიტი მოპირდაპირე ზღვარი. პოზიციის ზომა ისე ითვლება, რომ სტოპმა დაგეგმილი რისკი წაიღოს. 24 საათში იხურება.", false),
         (StrategyTemplateKeys.MacContrarian710, "Contrarian SMA 7/10",
@@ -802,6 +806,7 @@ public sealed class DatabaseSeeder
         [StrategyTemplateKeys.TsMomentum285] = (2m, 8m, 30m, 1m, 1),
         [StrategyTemplateKeys.BtcDailyMax10] = (2m, 8m, 30m, 1m, 1),
         [StrategyTemplateKeys.FlowZone] = (0.5m, 8m, 30m, 1m, 5),
+        [StrategyTemplateKeys.SqueezeWatch] = (0.5m, 4m, 8m, 2m, 3),
         [StrategyTemplateKeys.FlatRange] = (0.5m, 2m, 4m, 3m, 5),
         [StrategyTemplateKeys.MacContrarian710] = (0.5m, 5m, 5m, 3m, 5),
         [StrategyTemplateKeys.ZigZagFade] = (0.5m, 4m, 8m, 3m, 5),

@@ -49,6 +49,7 @@ public static class StrategyTemplateKeys
     public const string TsMomentum285 = "ts_momentum_28_5";
     public const string BtcDailyMax10 = "btc_daily_max_10";
     public const string FlowZone = "flow_zone";
+    public const string SqueezeWatch = "squeeze_watch";
     public const string ScalpEmaMomentum = "scalp_ema_momentum";
     public const string ScalpVwapReclaim = "scalp_vwap_reclaim";
     public const string ScalpVwapReversion = "scalp_vwap_reversion";
@@ -233,7 +234,9 @@ public static class StrategyTemplateKeys
 
     public static readonly string[] Flow = [FlowZone];
 
-    public static readonly string[] All = [.. Frozen, .. Research, .. NearMiss, .. CrossSectionalReversal, .. Range, .. Flow, .. Imported];
+    public static readonly string[] Positioning = [SqueezeWatch];
+
+    public static readonly string[] All = [.. Frozen, .. Research, .. NearMiss, .. CrossSectionalReversal, .. Range, .. Flow, .. Positioning, .. Imported];
 
     /// <summary>
     /// Operator catalog: PAPER or weak guidance only. Avoid/blocked templates stay in the engine
@@ -255,6 +258,7 @@ public static class StrategyTemplateKeys
         TsMomentum285,
         BtcDailyMax10,
         FlowZone,
+        SqueezeWatch,
         FlatRange,
         MacContrarian710,
         ZigZagFade,
@@ -301,7 +305,7 @@ public static class StrategyTemplateKeys
             return ["1d"];
         }
 
-        if (template == FlowZone)
+        if (template is FlowZone or SqueezeWatch)
         {
             return ["1h"];
         }
@@ -419,7 +423,7 @@ public static class StrategyTemplateKeys
     {
         TakerFlowMomentum or ScalpTakerFlow => ["OHLCV", "TakerFlow"],
         OiPriceMomentum or OiPriceVolumeRegime or OiBreakoutConfirmation or ScalpPriceOi => ["OHLCV", "OpenInterest"],
-        FundingOiRegime or FundingOiReversal or ScalpFundingOi => ["OHLCV", "Funding", "OpenInterest"],
+        FundingOiRegime or FundingOiReversal or ScalpFundingOi or SqueezeWatch => ["OHLCV", "Funding", "OpenInterest"],
         FundingBasisRv or FundingBasisVwap => ["OHLCV", "Funding", "MarkPrice", "IndexPrice", "Basis"],
         FundingPriceMomentum or FundingExtremeMomentumExhaustion => ["OHLCV", "Funding"],
         BasisMeanReversion or ScalpBasis => ["OHLCV", "MarkPrice", "IndexPrice", "Basis"],
@@ -437,7 +441,7 @@ public static class StrategyTemplateKeys
         LiqSweepReversal or FailedBreakoutReversal or FundingOiReversal => "REVERSAL",
         OiPriceMomentum or FundingOiRegime or FundingBasisRv or TakerFlowMomentum or OiPriceVolumeRegime or XsRelativeStrength
             or FundingPriceMomentum or FundingExtremeMomentumExhaustion or BasisMeanReversion or FundingBasisVwap
-            or OiBreakoutConfirmation => "FUTURES / FLOW",
+            or OiBreakoutConfirmation or SqueezeWatch => "FUTURES / FLOW",
         RegimeStrategyRouter => "ROUTER",
         BollingerReversion or FlatRange or BinHv45 or ClucMay72018 or CombinedBinHCluc => "MEAN REVERSION",
         DonchianBreakout => "BREAKOUT / TREND",
@@ -676,7 +680,7 @@ public static class StrategyTemplates
                 AllowedSide = StrategySides.Long,
                 VolumeFilterEnabled = false
             },
-            StrategyTemplateKeys.FlowZone => core with
+            StrategyTemplateKeys.FlowZone or StrategyTemplateKeys.SqueezeWatch => core with
             {
                 Timeframe = "1h",
                 AllowedSide = StrategySides.Both,
@@ -1079,6 +1083,7 @@ public static class StrategyTemplates
         StrategyTemplateKeys.TsMomentum285 => "1d Time-Series Momentum",
         StrategyTemplateKeys.BtcDailyMax10 => "1d BTC 10-day High",
         StrategyTemplateKeys.FlowZone => "Flow Zone",
+        StrategyTemplateKeys.SqueezeWatch => "Squeeze Watch",
         StrategyTemplateKeys.ScalpEmaMomentum => "Scalp EMA Momentum",
         StrategyTemplateKeys.ScalpVwapReclaim => "Scalp VWAP Reclaim",
         StrategyTemplateKeys.ScalpVwapReversion => "Scalp VWAP Reversion",
@@ -1178,6 +1183,7 @@ public static class StrategyTemplates
         StrategyTemplateKeys.TsMomentum285 => "BTCUSDT, დღიური, მხოლოდ ყიდვა. 28 დღის ამონაგები საკუთარი ისტორიის ზედა მესამედშია — ლონგი. ხუთი დღე რჩება, შორტი არ არის. VAL-ზე ზრდა −11% იყო. Live ჩართვა Bots-ზეა, როცა LIVE რეჟიმი და API გასაღები გაქვს. თავისით არ ეშვება. რისკის წიგნი 1x, სტოპი 8% მხოლოდ ღობეა.",
         StrategyTemplateKeys.BtcDailyMax10 => "BTCUSDT, დღიური, მხოლოდ ყიდვა. დღე 10 დღის მაქსიმუმზე იხურება — მეორე დღეს ლონგი. შორტი არ არის. ამ ქეშზე IS −1%, VAL +8%, OOS −2% 12 bp ხარჯის შემდეგ. Live ჩართვა Bots-ზეა. თავისით არ ეშვება. რისკის წიგნი 1x, სტოპი 8% მხოლოდ ღობეა.",
         StrategyTemplateKeys.FlowZone => "ყველა მონეტა, 1 საათი. ბოლო 24 საათის ზედა მეოთხედში და taker-ის ყიდვა ბარის 62%-ზე მეტია და ღია პოზიცია იზრდება — ყიდვა. ქვედა მეოთხედში, ძლიერი გაყიდვა და პოზიციის ზრდა — გაყიდვა. Taker ან ღია პოზიცია თუ არ მოდის, ორდერი არ იგზავნება. წარსულზე არ არის გაზომილი. Live-ზე გასვლას სტოპი ფლობს.",
+        StrategyTemplateKeys.SqueezeWatch => "1 საათი, ორივე მხარე. 24 საათში ფასი 3%-ზე ნაკლებს იცვლება, open interest მინიმუმ 15%-ით იზრდება და funding −0.10%-ზე დაბალია — ყიდვა (გადატვირთული შორტი). იგივე სიმშვიდე და open interest, funding +0.10%-ზე მაღალია — გაყიდვა (გადატვირთული ლონგი). Funding ან open interest თუ არ მოდის, ორდერი არ იგზავნება. რისკი 0.5%, სტოპი 4%, ტეიკი 8%, 2x, ერთდროულად 3.",
         StrategyTemplateKeys.ScalpEmaMomentum => "RESEARCH_ONLY scalping hypothesis: fast/slow EMA momentum on closed 1m–15m bars. Not a profit claim.",
         StrategyTemplateKeys.ScalpVwapReclaim => "RESEARCH_ONLY scalping hypothesis: session VWAP reclaim after a dip. Isolated book owns SL/TP.",
         StrategyTemplateKeys.ScalpVwapReversion => "RESEARCH_ONLY scalping hypothesis: ATR-scaled VWAP deviation fade. Isolated book owns SL/TP.",

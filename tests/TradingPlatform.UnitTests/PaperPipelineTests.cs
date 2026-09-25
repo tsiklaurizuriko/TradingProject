@@ -526,6 +526,14 @@ public sealed class PaperPipelineTests
             string symbol,
             CancellationToken cancellationToken = default) =>
             Task.FromResult<(decimal?, decimal?)>((null, null));
+
+        public Task<(decimal? DayAgo, decimal? Latest)> GetOpenInterestDayAsync(
+            string symbol,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<(decimal?, decimal?)>((null, null));
+
+        public Task<decimal?> GetLastFundingRateAsync(string symbol, CancellationToken cancellationToken = default) =>
+            Task.FromResult<decimal?>(null);
     }
 
     private sealed class RecordingLiveConnector : IExchangeConnector, ILiveExchangeConnectorFactory

@@ -50,6 +50,12 @@ public interface IPublicMarketDataClient
 
     /// <summary>Last two hourly open-interest prints. Null when Binance does not return them.</summary>
     Task<(decimal? Previous, decimal? Latest)> GetOpenInterestPairAsync(string symbol, CancellationToken cancellationToken = default);
+
+    /// <summary>Open interest about 24 hours ago and the latest hourly print. Null when the series is short.</summary>
+    Task<(decimal? DayAgo, decimal? Latest)> GetOpenInterestDayAsync(string symbol, CancellationToken cancellationToken = default);
+
+    /// <summary>Current 8-hour funding rate from the premium index. Null when the symbol is missing.</summary>
+    Task<decimal?> GetLastFundingRateAsync(string symbol, CancellationToken cancellationToken = default);
 }
 
 public interface IMarketDataCache

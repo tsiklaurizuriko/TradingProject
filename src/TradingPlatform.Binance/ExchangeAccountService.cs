@@ -900,6 +900,14 @@ public sealed class ExchangeAccountService : IExchangeAccountService
             return;
         }
 
+        // A bot cannot own a fill that closed before it existed. Flow Zone on every
+        // coin was adopting the account's older round-trips and relabeling them.
+        var born = bot.StartedAt ?? bot.CreatedAt;
+        if (trip.ClosedAt < born)
+        {
+            return;
+        }
+
         var correlationId = string.IsNullOrWhiteSpace(trip.CloseTradeId)
             ? BinanceClosedFill.TradeKey(trip.Symbol + trip.ClosedAt.ToUnixTimeMilliseconds())
             : BinanceClosedFill.TradeKey(trip.CloseTradeId);
@@ -909,7 +917,8 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                 trip.ClosedAt,
                 cancellationToken))
             .Where(item =>
-                item.ClosedAt is { } closed
+                item.BotId == bot.Id
+                && item.ClosedAt is { } closed
                 && item.OpenedAt <= trip.ClosedAt
                 && trip.OpenedAt <= closed
                 && item.Quantity == trip.Quantity)

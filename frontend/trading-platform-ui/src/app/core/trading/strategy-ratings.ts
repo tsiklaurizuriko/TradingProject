@@ -102,6 +102,14 @@ const ratings: Record<string, StrategyRating> = {
     bookReturnPct: null,
     sample: 'საჯარო turtle',
   },
+  squeeze_watch: {
+    stars: 2,
+    verdict: 'weak',
+    note: 'საჯარო ფიუჩერსების აღწერაა: მშვიდ ფასზე მზარდი open interest და უკიდურესი funding. ამ freqtrade რეპოების ფაილი არ არის.',
+    pf: null,
+    bookReturnPct: null,
+    sample: 'საჯარო funding + OI',
+  },
   flow_zone: {
     stars: 1,
     verdict: 'weak',
