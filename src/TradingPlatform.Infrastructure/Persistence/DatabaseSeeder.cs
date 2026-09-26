@@ -279,6 +279,7 @@ public sealed class DatabaseSeeder
             AlignCatalogStrategy(strategy, row, parameters);
         }
 
+        await AlignBotTimeframesAsync(cancellationToken);
         await RetireHiddenStrategiesAsync(existing, cancellationToken);
         await AttachStrategyRiskAsync(cancellationToken);
         await ApplyPublishedRiskAsync(cancellationToken);
@@ -356,6 +357,53 @@ public sealed class DatabaseSeeder
         || string.Equals(strategy.Name, name, StringComparison.OrdinalIgnoreCase)
         || (templateKey == StrategyTemplateKeys.EmaRsiTrend
             && string.Equals(strategy.Name, "EMA RSI Strategy", StringComparison.OrdinalIgnoreCase));
+
+    private async Task AlignBotTimeframesAsync(CancellationToken cancellationToken)
+    {
+        var bots = await _db.Bots
+            .Include(bot => bot.StrategyVersion)
+            .ThenInclude(version => version.Strategy)
+            .Where(bot => bot.DeletedAt == null && bot.StrategyVersion != null && bot.StrategyVersion.Strategy != null)
+            .ToListAsync(cancellationToken);
+        foreach (var bot in bots)
+        {
+            var frames = StrategyTemplateKeys.TimeframesFor(bot.StrategyVersion.Strategy.TemplateKey);
+            if (frames.Count != 1 || !TimeframeExtensions.TryParseInterval(frames[0], out var timeframe))
+            {
+                continue;
+            }
+
+            if (bot.Timeframe != timeframe)
+            {
+                bot.Timeframe = timeframe;
+            }
+
+            if (bot.StrategyVersion.Timeframe != timeframe)
+            {
+                bot.StrategyVersion.Timeframe = timeframe;
+                bot.StrategyVersion.UpdatedAt = DateTimeOffset.UtcNow;
+            }
+        }
+
+        var strategies = await _db.Strategies.Include(strategy => strategy.Versions)
+            .Where(strategy => strategy.DeletedAt == null)
+            .ToListAsync(cancellationToken);
+        foreach (var strategy in strategies)
+        {
+            var frames = StrategyTemplateKeys.TimeframesFor(strategy.TemplateKey);
+            if (frames.Count != 1 || !TimeframeExtensions.TryParseInterval(frames[0], out var timeframe))
+            {
+                continue;
+            }
+
+            var latest = strategy.Versions.OrderByDescending(version => version.VersionNumber).FirstOrDefault();
+            if (latest is not null && latest.Timeframe != timeframe)
+            {
+                latest.Timeframe = timeframe;
+                latest.UpdatedAt = DateTimeOffset.UtcNow;
+            }
+        }
+    }
 
     private static void AlignCatalogStrategy(
         Strategy strategy,
@@ -500,15 +548,20 @@ public sealed class DatabaseSeeder
                 VersionNumber = versionNumber,
                 DefinitionJson = StrategyTemplates.Build(strategy.Name, versionNumber, parameters),
                 Symbol = "BTCUSDT",
-                Timeframe = Timeframe.FiveMinutes
+                Timeframe = CatalogTimeframe(parameters)
             });
             return;
         }
 
         latest.DefinitionJson = StrategyTemplates.Build(strategy.Name, latest.VersionNumber, parameters);
-        latest.Timeframe = Timeframe.FiveMinutes;
+        latest.Timeframe = CatalogTimeframe(parameters);
         latest.UpdatedAt = DateTimeOffset.UtcNow;
     }
+
+    private static Timeframe CatalogTimeframe(StrategyTemplateParams parameters) =>
+        TimeframeExtensions.TryParseInterval(parameters.Timeframe, out var timeframe)
+            ? timeframe
+            : Timeframe.FiveMinutes;
 
     private static bool LooksLegacyDefinition(string json) =>
         json.Contains("\"entry\"", StringComparison.OrdinalIgnoreCase)

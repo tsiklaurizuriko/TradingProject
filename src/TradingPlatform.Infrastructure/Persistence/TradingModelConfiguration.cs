@@ -6,6 +6,7 @@ using TradingPlatform.Domain.Common;
 using TradingPlatform.Domain.Exchanges;
 using TradingPlatform.Domain.Identity;
 using TradingPlatform.Domain.Market;
+using TradingPlatform.Domain.News;
 using TradingPlatform.Domain.Operations;
 using TradingPlatform.Domain.Orders;
 using TradingPlatform.Domain.Positions;
@@ -25,6 +26,7 @@ internal static class TradingModelConfiguration
         ConfigureTrading(model);
         ConfigureMarket(model);
         ConfigureOps(model);
+        ConfigureNews(model);
     }
 
     private static void Money(Microsoft.EntityFrameworkCore.Metadata.Builders.PropertyBuilder<decimal> property) =>
@@ -305,6 +307,75 @@ internal static class TradingModelConfiguration
         {
             b.ToTable("SystemSettings");
             b.HasIndex(x => x.Key).IsUnique();
+        });
+    }
+
+    private static void ConfigureNews(ModelBuilder model)
+    {
+        model.Entity<NewsArticle>(b =>
+        {
+            b.ToTable("NewsArticles");
+            b.HasIndex(x => new { x.Provider, x.ProviderArticleId }).IsUnique();
+            b.HasIndex(x => x.CanonicalUrl);
+            b.Property(x => x.Provider).HasMaxLength(64).IsRequired();
+            b.Property(x => x.ProviderArticleId).HasMaxLength(512).IsRequired();
+            b.Property(x => x.CanonicalUrl).HasMaxLength(1024).IsRequired();
+            b.Property(x => x.Title).HasMaxLength(1024).IsRequired();
+            b.Property(x => x.Source).HasMaxLength(256).IsRequired();
+        });
+        model.Entity<StoredNewsEvent>(b =>
+        {
+            b.ToTable("NewsEvents");
+            b.HasIndex(x => x.DedupKey).IsUnique();
+            b.Property(x => x.DedupKey).HasMaxLength(64).IsRequired();
+            b.Property(x => x.PrimaryAsset).HasMaxLength(32);
+            b.Property(x => x.MarketScope).HasMaxLength(32).IsRequired();
+            b.Property(x => x.Direction).HasMaxLength(32).IsRequired();
+            b.Property(x => x.EventType).HasMaxLength(64).IsRequired();
+        });
+        model.Entity<NewsEventAsset>(b =>
+        {
+            b.ToTable("NewsEventAssets");
+            b.HasIndex(x => new { x.StoredNewsEventId, x.Asset }).IsUnique();
+            b.Property(x => x.Asset).HasMaxLength(32).IsRequired();
+            b.Property(x => x.Symbol).HasMaxLength(32).IsRequired();
+            b.HasOne(x => x.StoredNewsEvent).WithMany(x => x.Assets).HasForeignKey(x => x.StoredNewsEventId);
+        });
+        model.Entity<NewsTradingSignal>(b =>
+        {
+            b.ToTable("NewsTradingSignals");
+            b.HasIndex(x => new { x.StoredNewsEventId, x.Symbol }).IsUnique();
+            b.Property(x => x.Symbol).HasMaxLength(32).IsRequired();
+            b.Property(x => x.Direction).HasMaxLength(16).IsRequired();
+            b.Property(x => x.StrategyName).HasMaxLength(64).IsRequired();
+            b.Property(x => x.RiskDecision).HasMaxLength(32).IsRequired();
+            b.Property(x => x.OrderDecision).HasMaxLength(32).IsRequired();
+            b.Property(x => x.OrderClientId).HasMaxLength(64);
+            b.Property(x => x.ExchangeOrderId).HasMaxLength(64);
+            Money(b.Property(x => x.EntryPrice));
+            Money(b.Property(x => x.Quantity));
+            Money(b.Property(x => x.Notional));
+            Money(b.Property(x => x.Leverage));
+            Money(b.Property(x => x.Margin));
+            Money(b.Property(x => x.StopLossPrice));
+            Money(b.Property(x => x.TakeProfitPrice));
+            b.HasOne(x => x.StoredNewsEvent).WithMany().HasForeignKey(x => x.StoredNewsEventId);
+        });
+        model.Entity<NewsSignalOutcome>(b =>
+        {
+            b.ToTable("NewsSignalOutcomes");
+            b.HasIndex(x => new { x.NewsTradingSignalId, x.Horizon }).IsUnique();
+            b.Property(x => x.Horizon).HasMaxLength(8).IsRequired();
+            Money(b.Property(x => x.ReferencePrice));
+            b.Property(x => x.FuturePrice).HasPrecision(DecimalConventions.PricePrecision, DecimalConventions.PriceScale);
+            b.Property(x => x.ReturnPercent).HasPrecision(DecimalConventions.PricePrecision, DecimalConventions.PriceScale);
+            b.HasOne(x => x.NewsTradingSignal).WithMany(x => x.Outcomes).HasForeignKey(x => x.NewsTradingSignalId);
+        });
+        model.Entity<NewsTradingSession>(b =>
+        {
+            b.ToTable("NewsTradingSessions");
+            b.Property(x => x.Mode).HasMaxLength(16).IsRequired();
+            b.Property(x => x.LastStatus).HasMaxLength(500);
         });
     }
 }

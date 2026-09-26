@@ -93,6 +93,37 @@ public static class PortfolioRisk
         return floored;
     }
 
+    public static decimal CeilToStep(decimal quantity, decimal stepSize, int? quantityPrecision = null)
+    {
+        if (quantity <= 0m)
+        {
+            return 0m;
+        }
+
+        decimal ceiled;
+        if (stepSize <= 0m)
+        {
+            ceiled = decimal.Round(quantity, 8, MidpointRounding.AwayFromZero);
+        }
+        else
+        {
+            ceiled = Math.Ceiling(quantity / stepSize) * stepSize;
+        }
+
+        if (quantityPrecision is >= 0)
+        {
+            var rounded = decimal.Round(ceiled, quantityPrecision.Value, MidpointRounding.AwayFromZero);
+            if (rounded + 0m < ceiled && stepSize > 0m)
+            {
+                rounded = decimal.Round(ceiled + stepSize, quantityPrecision.Value, MidpointRounding.AwayFromZero);
+            }
+
+            ceiled = rounded;
+        }
+
+        return ceiled;
+    }
+
     public static int? EffectiveQuantityPrecision(int quantityPrecision, decimal stepSize)
     {
         if (quantityPrecision > 0)

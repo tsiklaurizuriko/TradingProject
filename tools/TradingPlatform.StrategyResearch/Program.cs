@@ -4,6 +4,7 @@ using TradingPlatform.Backtesting;
 using TradingPlatform.Backtesting.Validation;
 using TradingPlatform.Domain.Market;
 using TradingPlatform.Domain.Trading;
+using TradingPlatform.News;
 using TradingPlatform.Research;
 using TradingPlatform.Strategies.Engine;
 using TradingPlatform.Strategies.Indicators;
@@ -27,6 +28,14 @@ var timeframes = (timeframeRaw ?? (isPhase2 ? "5m,15m,1h" : "1h"))
     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 var days = ParseInt(args, "--days", isPhase2 ? 365 : 90);
 var root = FindRepoRoot();
+if (args.Any(a => string.Equals(a, "--news-research", StringComparison.OrdinalIgnoreCase)))
+{
+    return await NewsResearch.RunAsync(root, Arg(args, "--symbol"), Arg(args, "--timeframe") ?? "1h", Arg(args, "--news-stage") ?? "A", CancellationToken.None);
+}
+if (args.Any(a => string.Equals(a, "--news-live", StringComparison.OrdinalIgnoreCase)))
+{
+    return await NewsLiveAnalyzer.RunAsync(root, CancellationToken.None);
+}
 var candleCacheDir = Path.Combine(root, "artifacts", "strategy-validation-cache");
 var outDir = Path.Combine(root, "artifacts", "strategy-research", isPhase2 ? "phase-2" : "phase-1");
 Directory.CreateDirectory(outDir);

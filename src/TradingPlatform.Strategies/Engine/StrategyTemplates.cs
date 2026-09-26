@@ -305,7 +305,7 @@ public static class StrategyTemplateKeys
             return ["1d"];
         }
 
-        if (template is FlowZone or SqueezeWatch)
+        if (template is FlowZone or SqueezeWatch or FlatRange)
         {
             return ["1h"];
         }

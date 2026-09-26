@@ -10,6 +10,7 @@ using TradingPlatform.Domain.Errors;
 using TradingPlatform.Domain.Exchanges;
 using TradingPlatform.Domain.Identity;
 using TradingPlatform.Domain.Market;
+using TradingPlatform.Domain.News;
 using TradingPlatform.Domain.Operations;
 using TradingPlatform.Domain.Orders;
 using TradingPlatform.Domain.Positions;
@@ -60,6 +61,12 @@ public sealed class TradingDbContext : DbContext, IUnitOfWork
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
+    public DbSet<NewsArticle> NewsArticles => Set<NewsArticle>();
+    public DbSet<StoredNewsEvent> NewsEvents => Set<StoredNewsEvent>();
+    public DbSet<NewsEventAsset> NewsEventAssets => Set<NewsEventAsset>();
+    public DbSet<NewsTradingSignal> NewsTradingSignals => Set<NewsTradingSignal>();
+    public DbSet<NewsSignalOutcome> NewsSignalOutcomes => Set<NewsSignalOutcome>();
+    public DbSet<NewsTradingSession> NewsTradingSessions => Set<NewsTradingSession>();
 
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {

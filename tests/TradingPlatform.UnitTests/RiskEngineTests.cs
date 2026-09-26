@@ -144,6 +144,49 @@ public sealed class RiskEngineTests
     }
 
     [Fact]
+    public void Closer_take_profit_is_allowed()
+    {
+        var profile = Low();
+        profile.StopLossPercent = 5m;
+        profile.TakeProfitPercent = 1.25m;
+
+        var plan = RiskEngine.Plan(profile, 42.51m, 1m, PositionSide.Long, new RiskSizingHints
+        {
+            StepSize = 1m,
+            MinQuantity = 1m,
+            MinNotional = 5m,
+            QuantityPrecision = 0
+        });
+
+        plan.Allowed.Should().BeTrue();
+        plan.PositionNotional.Should().BeGreaterThanOrEqualTo(5m);
+        plan.TakeProfitPercent.Should().Be(1.25m);
+    }
+
+    [Fact]
+    public void Raises_to_exchange_minimum_inside_portfolio_cap()
+    {
+        var profile = Low();
+        profile.StopLossPercent = 8m;
+        profile.TakeProfitPercent = 30m;
+        profile.MaxLeverage = 1m;
+
+        var plan = RiskEngine.Plan(profile, 42.51m, 1m, PositionSide.Long, new RiskSizingHints
+        {
+            StepSize = 1m,
+            MinQuantity = 1m,
+            MinNotional = 5m,
+            QuantityPrecision = 0,
+            TakerFeePercent = 0m,
+            SlippagePercent = 0m
+        });
+
+        plan.Allowed.Should().BeTrue();
+        plan.PositionNotional.Should().Be(5m);
+        (plan.ActualRiskAmount / 42.51m * 100m).Should().BeLessThanOrEqualTo(4m);
+    }
+
+    [Fact]
     public void Rejects_when_isolated_margin_exceeds_available()
     {
         var tight = High();

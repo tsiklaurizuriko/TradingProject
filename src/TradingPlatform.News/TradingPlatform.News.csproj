@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>TradingPlatform.News</RootNamespace>
+    <AssemblyName>TradingPlatform.News</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\TradingPlatform.Application\TradingPlatform.Application.csproj" />
+    <ProjectReference Include="..\TradingPlatform.Backtesting\TradingPlatform.Backtesting.csproj" />
+    <ProjectReference Include="..\TradingPlatform.Domain\TradingPlatform.Domain.csproj" />
+    <ProjectReference Include="..\TradingPlatform.Research\TradingPlatform.Research.csproj" />
+    <ProjectReference Include="..\TradingPlatform.Strategies\TradingPlatform.Strategies.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Http" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Options" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
+  </ItemGroup>
+</Project>

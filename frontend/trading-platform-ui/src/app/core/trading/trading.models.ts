@@ -1049,6 +1049,42 @@ export interface ScalpingRejectDto {
   reason: string;
 }
 
+export interface NewsDeskRow {
+  name: string;
+  status: string;
+}
+
+export interface NewsFeedItem {
+  publishedAt: string;
+  source: string;
+  title: string;
+  url: string;
+  coin: string | null;
+  outcome: string;
+}
+
+export interface NewsDeskDto {
+  enabled: boolean;
+  running: boolean;
+  mode: string;
+  universeCount: number;
+  articles: number;
+  events: number;
+  latestNews: string | null;
+  signal: string | null;
+  newsScore: number | null;
+  marketScore: number | null;
+  finalScore: number | null;
+  risk: string | null;
+  order: string | null;
+  entry: number | null;
+  quantity: number | null;
+  stopLoss: number | null;
+  takeProfit: number | null;
+  reason: string | null;
+  items?: NewsFeedItem[];
+}
+
 export interface ScalpingResearchSummaryDto {
   confirmation: string;
   liveOff: boolean;

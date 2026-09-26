@@ -29,6 +29,7 @@ import {
   TradeDto,
   PerformanceDto,
   ScalpingResearchSummaryDto,
+  NewsDeskDto,
   ScalpingCoverageDto,
   ScalpingResearchRunDto,
   PriceActionResearchSummaryDto,
@@ -567,6 +568,18 @@ export class TradingService {
 
   scalpingResearch(): Promise<ScalpingResearchSummaryDto> {
     return firstValueFrom(this.http.get<ScalpingResearchSummaryDto>(`${environment.apiBaseUrl}/trading/research/scalping`));
+  }
+
+  newsDesk(): Promise<NewsDeskDto> {
+    return firstValueFrom(this.http.get<NewsDeskDto>(`${environment.apiBaseUrl}/trading/research/news`));
+  }
+
+  startNewsTrading(): Promise<unknown> {
+    return firstValueFrom(this.http.post(`${environment.apiBaseUrl}/trading/research/news/start`, {}));
+  }
+
+  stopNewsTrading(): Promise<unknown> {
+    return firstValueFrom(this.http.post(`${environment.apiBaseUrl}/trading/research/news/stop`, {}));
   }
 
   scalpingCoverage(): Promise<ScalpingCoverageDto[]> {

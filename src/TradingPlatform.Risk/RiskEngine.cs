@@ -123,11 +123,6 @@ public sealed class RiskEngine : IRiskEngine
             return Denied("Risk, stop loss, and take profit percents must be greater than zero.");
         }
 
-        if (profile.TakeProfitPercent <= profile.StopLossPercent)
-        {
-            return Denied("Take profit must be farther than stop loss.");
-        }
-
         var exchangeCap = sizing is { ExchangeMaxLeverage: > 0m } ? sizing.ExchangeMaxLeverage : profile.MaxLeverage;
         var leverage = Math.Max(1m, Math.Min(profile.MaxLeverage, exchangeCap));
         var bankruptcyPercent = 100m / leverage;
@@ -143,6 +138,8 @@ public sealed class RiskEngine : IRiskEngine
         var slipPercent = sizing is { SlippagePercent: > 0m } ? sizing.SlippagePercent : DefaultSlippagePercent;
         var riskAmount = available * (profile.RiskPerTradePercent / 100m);
         var quantity = PortfolioRisk.QuantityFromRiskUsdt(riskAmount, price, profile.StopLossPercent);
+        var raisedToMinimum = false;
+        var portfolioCap = profile.MaxPortfolioRiskPercent > 0m ? profile.MaxPortfolioRiskPercent : 4m;
         if (sizing is { StepSize: > 0m } || sizing is { MinQuantity: > 0m } || sizing is { MinNotional: > 0m } || sizing is { QuantityPrecision: >= 0 })
         {
             var precision = sizing?.QuantityPrecision
@@ -152,7 +149,28 @@ public sealed class RiskEngine : IRiskEngine
             var minNotional = sizing?.MinNotional ?? 0m;
             if ((minQty > 0m && quantity < minQty) || (minNotional > 0m && quantity * price < minNotional))
             {
-                return Denied("Calculated position size is below exchange minimum and cannot be traded within the configured risk.");
+                var floor = minQty;
+                if (minNotional > 0m)
+                {
+                    floor = Math.Max(floor, minNotional / price);
+                }
+
+                var raised = PortfolioRisk.CeilToStep(floor, sizing?.StepSize ?? 0m, precision);
+                var raisedRisk = raised * price * (profile.StopLossPercent / 100m);
+                var raisedPercent = available > 0m ? raisedRisk / available * 100m : 0m;
+                var raisedMargin = PortfolioRisk.IsolatedMargin(raised * price, leverage);
+                var raisedFee = raised * price * (feePercent / 100m);
+                if (raised <= 0m
+                    || (minQty > 0m && raised < minQty)
+                    || (minNotional > 0m && raised * price < minNotional)
+                    || raisedMargin + raisedFee > available
+                    || openRiskPercent + raisedPercent > portfolioCap)
+                {
+                    return Denied("Calculated position size is below exchange minimum and cannot be traded within the configured risk.");
+                }
+
+                quantity = raised;
+                raisedToMinimum = true;
             }
         }
 
@@ -168,15 +186,14 @@ public sealed class RiskEngine : IRiskEngine
             return Denied("Isolated margin plus fee exceeds available balance.");
         }
 
-        if (estimatedTotal > riskAmount * EstimatedTotalRiskTolerance)
+        if (!raisedToMinimum && estimatedTotal > riskAmount * EstimatedTotalRiskTolerance)
         {
             return Denied("Estimated total risk including fees and slippage exceeds the configured risk tolerance.");
         }
 
         var newRiskPercent = available > 0m ? actualRisk / available * 100m : 0m;
         var projected = openRiskPercent + newRiskPercent;
-        var maxPortfolio = profile.MaxPortfolioRiskPercent > 0m ? profile.MaxPortfolioRiskPercent : 4m;
-        if (projected > maxPortfolio)
+        if (projected > portfolioCap)
         {
             return Denied("Projected portfolio planned risk for this strategy exceeds the configured maximum.");
         }

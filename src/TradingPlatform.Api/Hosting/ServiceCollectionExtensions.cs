@@ -15,6 +15,7 @@ using TradingPlatform.Binance;
 using TradingPlatform.Execution;
 using TradingPlatform.Infrastructure;
 using TradingPlatform.MarketData;
+using TradingPlatform.News;
 using TradingPlatform.Risk;
 using TradingPlatform.Strategies;
 using TradingPlatform.Trading;
@@ -58,6 +59,8 @@ public static class ServiceCollectionExtensions
         services.AddExecution();
         services.AddMarketData();
         services.AddTrading(configuration);
+        services.AddNews(configuration);
+        services.AddHostedService<NewsLiveWorker>();
         services.AddBacktesting();
         services.AddBinance(configuration);
         services.AddSingleton<ITradingRealtimePublisher, SignalRTradingRealtimePublisher>();

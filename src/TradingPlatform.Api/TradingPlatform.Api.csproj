@@ -12,6 +12,7 @@
     <ProjectReference Include="..\TradingPlatform.Execution\TradingPlatform.Execution.csproj" />
     <ProjectReference Include="..\TradingPlatform.Infrastructure\TradingPlatform.Infrastructure.csproj" />
     <ProjectReference Include="..\TradingPlatform.MarketData\TradingPlatform.MarketData.csproj" />
+    <ProjectReference Include="..\TradingPlatform.News\TradingPlatform.News.csproj" />
     <ProjectReference Include="..\TradingPlatform.Risk\TradingPlatform.Risk.csproj" />
     <ProjectReference Include="..\TradingPlatform.Strategies\TradingPlatform.Strategies.csproj" />
     <ProjectReference Include="..\TradingPlatform.Trading\TradingPlatform.Trading.csproj" />

@@ -77,6 +77,11 @@ import { Component, Input } from '@angular/core';
         @case ('admin') {
           <circle cx="12" cy="8" r="4" /><path d="M4 20a8 8 0 0 1 16 0" />
         }
+        @case ('news') {
+          <path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3Z" />
+          <path d="M8 4v13a3 3 0 0 1-3 3" />
+          <path d="M9 9h7" /><path d="M9 13h7" />
+        }
         @case ('search') {
           <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
         }

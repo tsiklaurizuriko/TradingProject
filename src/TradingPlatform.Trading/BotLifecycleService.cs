@@ -1951,11 +1951,6 @@ public sealed class TradingQueryService : ITradingQueryService
             throw new DomainException(ErrorCodes.ValidationFailed, "Stop loss and take profit percents must be greater than zero.");
         }
 
-        if (request.TakeProfitPercent <= request.StopLossPercent)
-        {
-            throw new DomainException(ErrorCodes.ValidationFailed, "Take profit must be farther than stop loss.");
-        }
-
         if (request.MaxLeverage < 1m || request.MaxLeverage > 20m)
         {
             throw new DomainException(ErrorCodes.ValidationFailed, "Isolated leverage must be between 1x and 20x.");

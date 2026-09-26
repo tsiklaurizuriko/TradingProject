@@ -615,11 +615,6 @@ public sealed class BacktestReplay
             {
                 sized.TakeProfitPercent = takeProfitPercentOverride.Value;
             }
-
-            if (sized.TakeProfitPercent <= sized.StopLossPercent)
-            {
-                sized.TakeProfitPercent = sized.StopLossPercent + 0.01m;
-            }
         }
 
         var evaluation = engine.Evaluate(

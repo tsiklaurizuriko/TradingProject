@@ -968,7 +968,7 @@ public sealed class BotEngine : IBotEngine
         }
 
         snapshot = snapshot with { Side = signalType == SignalType.Sell ? PositionSide.Short : PositionSide.Long };
-        if (describedStop is decimal stop && lastPrice > 0m)
+        if (StrategyTemplateKeys.IsFlatRange(definition.Template) && describedStop is decimal stop && lastPrice > 0m)
         {
             var stopPct = Math.Abs(lastPrice - stop) / lastPrice * 100m;
             var takePct = describedTake is decimal take
