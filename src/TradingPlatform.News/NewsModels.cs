@@ -73,6 +73,7 @@ public enum MarketScope
 public sealed class RawNewsItem
 {
     public string Id { get; set; } = string.Empty;
+    public string Provider { get; set; } = string.Empty;
     public string Source { get; set; } = string.Empty;
     public string SourceUrl { get; set; } = string.Empty;
     public DateTimeOffset PublishedAtUtc { get; set; }
@@ -106,10 +107,12 @@ public sealed record NewsAssetContext(string Symbol, string BaseAsset, string? P
 public sealed class NewsArticleRef
 {
     public string Id { get; set; } = string.Empty;
+    public string Provider { get; set; } = string.Empty;
     public string Source { get; set; } = string.Empty;
     public string SourceUrl { get; set; } = string.Empty;
     public DateTimeOffset PublishedAtUtc { get; set; }
     public string Title { get; set; } = string.Empty;
+    public string Summary { get; set; } = string.Empty;
 }
 
 public sealed class NewsEvent

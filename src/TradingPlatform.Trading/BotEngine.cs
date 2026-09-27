@@ -755,6 +755,7 @@ public sealed class BotEngine : IBotEngine
                 AverageEntryPrice = position?.AverageEntryPrice,
                 PositionSide = position?.Side ?? PositionSide.Long,
                 PositionOpenedAt = position?.OpenedAt,
+                Symbol = bot.Symbol,
                 OpenInterest = openInterest,
                 FundingRate = funding
             };
@@ -774,14 +775,11 @@ public sealed class BotEngine : IBotEngine
 
         if (signalType is SignalType.NoAction or SignalType.Hold)
         {
-            bot.LastError = reason;
-            return;
-        }
+            if (bot.LastError is null || !bot.LastError.Contains("protection is incomplete", StringComparison.Ordinal))
+            {
+                bot.LastError = reason;
+            }
 
-        if (bot.Mode == TradingMode.Live && position is not null && !StrategyTemplateKeys.IsImported(definition.Template))
-        {
-            bot.LastError =
-                $"Live Isolated SL/TP own the exit. Strategy {signalType}: {reason}";
             return;
         }
 
@@ -933,7 +931,7 @@ public sealed class BotEngine : IBotEngine
             var opposite = (position.Side == PositionSide.Long && signalType == SignalType.Sell)
                 || (position.Side == PositionSide.Short && signalType == SignalType.Buy);
             var flatten = signalType is SignalType.Exit || opposite;
-            if (StrategyTemplateKeys.IsImported(definition.Template) && flatten)
+            if (flatten)
             {
                 await ClosePositionAsync(position.Id, cancellationToken);
                 if (signalType is SignalType.Exit)
@@ -946,9 +944,7 @@ public sealed class BotEngine : IBotEngine
             }
             else
             {
-                bot.LastError = flatten
-                    ? $"Stop or take owns the exit. Strategy {signalType}: {reason}"
-                    : reason;
+                bot.LastError = reason;
                 return;
             }
         }
@@ -1617,13 +1613,13 @@ public sealed class BotEngine : IBotEngine
         }
 
         bot.LastError =
-            $"Live Isolated {bot.Symbol} protection is incomplete. SL {(stops.StopPlaced ? "working" : stops.StopError)} / TP {(stops.TakePlaced ? "working" : stops.TakeError)}. Automatic close is disabled; the missing order will be retried.";
+            $"Live Isolated {bot.Symbol} protection is incomplete. SL {(stops.StopPlaced ? "working" : stops.StopError)} / TP {(stops.TakePlaced ? "working" : stops.TakeError)}. The missing order will be retried. The strategy can still close the position.";
         _logger.LogCritical(
-            "Live Isolated {Symbol} has no working STOP for bot {BotId}: {Error}. The project will not auto-close the position.",
+            "Live Isolated {Symbol} has no working STOP for bot {BotId}: {Error}. Strategy exit still runs; the missing order will be retried while the position stays open.",
             bot.Symbol,
             bot.Id,
             stops.StopError);
-        return new OverlayProtectResult(position, true);
+        return new OverlayProtectResult(position, false);
     }
 
     private async Task<ProtectiveStopsResult> AttachLiveProtectiveStopsAsync(

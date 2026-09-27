@@ -1,5 +1,8 @@
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.EntityFrameworkCore;
 using TradingPlatform.Domain.News;
+using TradingPlatform.News;
 
 namespace TradingPlatform.Infrastructure.Persistence;
 
@@ -92,53 +95,350 @@ public sealed class NewsDatabase
     public async Task<StoredNewsEvent?> LatestEventAsync(CancellationToken cancellationToken) =>
         await _db.NewsEvents.OrderByDescending(row => row.PublishedAtUtc).FirstOrDefaultAsync(cancellationToken);
 
-    public async Task<IReadOnlyList<NewsFeedRow>> RecentFeedAsync(int take, CancellationToken cancellationToken)
+    public async Task SaveIngestionAsync(
+        IReadOnlyList<NewsEvent> events,
+        IReadOnlyList<NewsProviderReport> reports,
+        CancellationToken cancellationToken)
+    {
+        var inserted = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var deduplicated = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in events)
+        {
+            var existing = await _db.NewsEvents.Include(row => row.Assets).FirstOrDefaultAsync(row => row.DedupKey == item.EventId, cancellationToken);
+            if (existing is null)
+            {
+                existing = new StoredNewsEvent
+                {
+                    DedupKey = item.EventId,
+                    PrimaryAsset = item.PrimaryAsset,
+                    MarketScope = item.MarketScope.ToString(),
+                    Direction = item.Direction.ToString(),
+                    Impact = item.ImpactScore,
+                    Confidence = item.ConfidenceScore,
+                    EventType = item.EventType.ToString(),
+                    PublishedAtUtc = item.PublishedAtUtc,
+                    ArticleIds = string.Join(',', item.OriginalArticles.Select(article => Fit(article.Id, 512))),
+                    Assets = item.AffectedAssets.Select(asset => new NewsEventAsset
+                    {
+                        Asset = asset.BaseAsset,
+                        Symbol = asset.Symbol ?? asset.BaseAsset + "USDT",
+                        Relevance = asset.Relevance,
+                        IsPrimary = asset.IsPrimary
+                    }).ToList()
+                };
+                _db.NewsEvents.Add(existing);
+                await _db.SaveChangesAsync(cancellationToken);
+            }
+            else if (Richer(existing, item))
+            {
+                existing.Direction = item.Direction.ToString();
+                existing.Impact = item.ImpactScore;
+                existing.Confidence = item.ConfidenceScore;
+                existing.EventType = item.EventType.ToString();
+                existing.PrimaryAsset = item.PrimaryAsset;
+                existing.MarketScope = item.MarketScope.ToString();
+                if (existing.Assets.Count == 0)
+                {
+                    foreach (var asset in item.AffectedAssets)
+                    {
+                        existing.Assets.Add(new NewsEventAsset
+                        {
+                            Asset = asset.BaseAsset,
+                            Symbol = asset.Symbol ?? asset.BaseAsset + "USDT",
+                            Relevance = asset.Relevance,
+                            IsPrimary = asset.IsPrimary
+                        });
+                    }
+                }
+            }
+
+            foreach (var article in item.OriginalArticles)
+            {
+                var provider = string.IsNullOrWhiteSpace(article.Provider) ? "unknown" : article.Provider;
+                var canonical = NewsEventClusterer.NavigableUrl(article.SourceUrl);
+                if (string.IsNullOrWhiteSpace(canonical))
+                {
+                    canonical = article.SourceUrl ?? string.Empty;
+                }
+
+                canonical = Fit(canonical, 1024);
+                var providerArticleId = Fit(article.Id, 512);
+                var sightingExists = await _db.NewsArticleSightings.AnyAsync(
+                    row => row.Provider == provider && row.ProviderArticleId == providerArticleId,
+                    cancellationToken);
+                var stored = string.IsNullOrWhiteSpace(canonical)
+                    ? null
+                    : await _db.NewsArticles.FirstOrDefaultAsync(row => row.CanonicalUrl == canonical, cancellationToken);
+                if (stored is null && !string.IsNullOrWhiteSpace(article.SourceUrl))
+                {
+                    stored = await _db.NewsArticles.FirstOrDefaultAsync(row => row.CanonicalUrl == article.SourceUrl, cancellationToken);
+                }
+
+                if (stored is null)
+                {
+                    var publisher = string.IsNullOrWhiteSpace(article.Source) ? provider : article.Source;
+                    stored = new NewsArticle
+                    {
+                        Provider = provider,
+                        Publisher = publisher,
+                        ProviderArticleId = providerArticleId,
+                        CanonicalUrl = canonical,
+                        Title = Fit(article.Title, 1024),
+                        Summary = Fit(string.IsNullOrWhiteSpace(article.Summary) ? article.Title : article.Summary, 4000),
+                        Source = publisher,
+                        PublishedAtUtc = article.PublishedAtUtc,
+                        ReceivedAtUtc = item.DetectedAtUtc,
+                        StoredNewsEventId = existing.Id
+                    };
+                    _db.NewsArticles.Add(stored);
+                    await _db.SaveChangesAsync(cancellationToken);
+                    AddCount(inserted, provider);
+                }
+                else
+                {
+                    stored.StoredNewsEventId ??= existing.Id;
+                    if (string.IsNullOrWhiteSpace(stored.Publisher))
+                    {
+                        stored.Publisher = article.Source;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(article.Summary)
+                        && (string.IsNullOrWhiteSpace(stored.Summary) || stored.Summary == stored.Title))
+                    {
+                        stored.Summary = Fit(article.Summary, 4000);
+                    }
+
+                    AddCount(deduplicated, provider);
+                }
+
+                if (!sightingExists)
+                {
+                    _db.NewsArticleSightings.Add(new NewsArticleSighting
+                    {
+                        NewsArticleId = stored.Id,
+                        Provider = provider,
+                        ProviderArticleId = providerArticleId,
+                        ReceivedAtUtc = item.DetectedAtUtc
+                    });
+                    await _db.SaveChangesAsync(cancellationToken);
+                }
+            }
+        }
+
+        foreach (var report in reports)
+        {
+            var row = await _db.NewsProviderHealth.FirstOrDefaultAsync(
+                item => item.Provider == report.Provider,
+                cancellationToken);
+            if (row is null)
+            {
+                row = new NewsProviderHealth { Provider = report.Provider };
+                _db.NewsProviderHealth.Add(row);
+            }
+
+            if (!report.Enabled)
+            {
+                row.Enabled = false;
+                var message = Fit(report.Error ?? NewsProviderCatalog.CredentialsMissing, 1000);
+                if (!string.Equals(row.LastError, message, StringComparison.Ordinal))
+                {
+                    row.LastError = message;
+                    row.LastErrorUtc = report.AttemptedAtUtc;
+                }
+
+                continue;
+            }
+
+            row.Enabled = true;
+            row.LastAttemptUtc = report.AttemptedAtUtc;
+            row.NextEligibleUtc = report.NextEligibleUtc;
+            if (report.Succeeded)
+            {
+                row.LastSuccessUtc = report.AttemptedAtUtc;
+                row.FetchedCount = report.Fetched;
+                row.InsertedCount = inserted.GetValueOrDefault(report.Provider);
+                row.DeduplicatedCount = deduplicated.GetValueOrDefault(report.Provider);
+                row.RejectedCount = report.Rejected;
+            }
+
+            if (!report.Succeeded || !string.IsNullOrWhiteSpace(report.Error))
+            {
+                row.LastError = Fit(report.Error ?? "Provider failed.", 1000);
+                row.LastErrorUtc = report.AttemptedAtUtc;
+            }
+        }
+
+        await _db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<NewsProviderHealth>> ProviderHealthAsync(CancellationToken cancellationToken) =>
+        await _db.NewsProviderHealth.AsNoTracking().OrderBy(row => row.Provider).ToListAsync(cancellationToken);
+
+    public Task<IReadOnlyList<NewsFeedRow>> RecentFeedAsync(int take, CancellationToken cancellationToken) =>
+        RecentFeedAsync(take, new NewsMarketStrategyOptions(), DateTimeOffset.UtcNow, cancellationToken);
+
+    public async Task<IReadOnlyList<NewsFeedRow>> RecentFeedAsync(int take, NewsMarketStrategyOptions strategy, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var articles = await _db.NewsArticles.AsNoTracking()
             .OrderByDescending(row => row.PublishedAtUtc)
             .Take(take)
             .ToListAsync(cancellationToken);
+        var articleIds = articles.Select(row => row.Id).ToList();
+        var sightings = await _db.NewsArticleSightings.AsNoTracking()
+            .Where(row => articleIds.Contains(row.NewsArticleId))
+            .ToListAsync(cancellationToken);
+        var eventIds = articles
+            .Where(row => row.StoredNewsEventId.HasValue)
+            .Select(row => row.StoredNewsEventId!.Value)
+            .Distinct()
+            .ToList();
         var events = await _db.NewsEvents.AsNoTracking()
-            .OrderByDescending(row => row.PublishedAtUtc)
-            .Take(80)
+            .Where(row => eventIds.Contains(row.Id))
             .ToListAsync(cancellationToken);
         var signals = await _db.NewsTradingSignals.AsNoTracking()
-            .OrderByDescending(row => row.SignalTimeUtc)
-            .Take(80)
+            .Where(row => eventIds.Contains(row.StoredNewsEventId))
             .ToListAsync(cancellationToken);
         var rows = new List<NewsFeedRow>(articles.Count);
         foreach (var article in articles)
         {
-            var matched = string.IsNullOrEmpty(article.ProviderArticleId)
+            var matched = article.StoredNewsEventId is Guid eventId
+                ? events.FirstOrDefault(item => item.Id == eventId)
+                : null;
+            matched ??= string.IsNullOrEmpty(article.ProviderArticleId)
                 ? null
-                : events.FirstOrDefault(item =>
-                    item.ArticleIds.Contains(article.ProviderArticleId, StringComparison.Ordinal));
+                : await _db.NewsEvents.AsNoTracking().FirstOrDefaultAsync(
+                    item => item.ArticleIds.Contains(article.ProviderArticleId),
+                    cancellationToken);
             var signal = matched is null
                 ? null
                 : signals.FirstOrDefault(item => item.StoredNewsEventId == matched.Id);
-            var coin = matched?.PrimaryAsset;
-            var outcome = signal is null
-                ? matched is null
-                    ? "Read. Not matched to a coin."
-                    : matched.Direction + ". Impact " + matched.Impact.ToString("0.00") + ". Not sent to risk."
-                : signal.Direction + ". " + (string.IsNullOrWhiteSpace(signal.Reason) ? signal.RiskReason : signal.Reason);
+            var providers = sightings
+                .Where(item => item.NewsArticleId == article.Id)
+                .Select(item => item.Provider)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(item => item, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (providers.Count == 0 && !string.IsNullOrWhiteSpace(article.Provider))
+            {
+                providers.Add(article.Provider);
+            }
+
+            var publisher = string.IsNullOrWhiteSpace(article.Publisher) ? article.Source : article.Publisher;
+            var evaluated = signal is not null;
+            var detail = evaluated
+                ? NewsStop.Explain(signal!)
+                : NewsStop.Pending(matched, strategy, now);
             rows.Add(new NewsFeedRow(
                 article.PublishedAtUtc,
-                string.IsNullOrWhiteSpace(article.Source) ? article.Provider : article.Source,
+                publisher,
+                string.Join(", ", providers),
                 article.Title,
                 article.CanonicalUrl,
-                string.IsNullOrWhiteSpace(coin) ? null : coin,
-                outcome));
+                string.IsNullOrWhiteSpace(matched?.PrimaryAsset) ? null : matched!.PrimaryAsset,
+                matched is null ? null : matched.EventType + " · " + matched.Direction,
+                matched?.Impact,
+                matched?.Confidence,
+                evaluated,
+                detail));
         }
 
         return rows;
+    }
+
+    public async Task<IReadOnlyList<RawNewsItem>> RecentArticlesAsync(DateTimeOffset since, CancellationToken cancellationToken)
+    {
+        var rows = await _db.NewsArticles.AsNoTracking()
+            .Where(row => row.PublishedAtUtc >= since)
+            .OrderByDescending(row => row.PublishedAtUtc)
+            .Take(80)
+            .ToListAsync(cancellationToken);
+        return rows.Select(row => new RawNewsItem
+        {
+            Id = row.ProviderArticleId,
+            Provider = row.Provider,
+            Source = string.IsNullOrWhiteSpace(row.Publisher) ? row.Source : row.Publisher,
+            SourceUrl = row.CanonicalUrl,
+            PublishedAtUtc = row.PublishedAtUtc,
+            RetrievedAtUtc = row.ReceivedAtUtc,
+            Title = row.Title,
+            Summary = row.Summary == row.Title ? string.Empty : row.Summary
+        }).ToList();
+    }
+
+    private static bool Richer(StoredNewsEvent existing, NewsEvent item)
+    {
+        var actionable = item.Direction is EventDirection.Bullish or EventDirection.Bearish;
+        if (!actionable)
+        {
+            return false;
+        }
+
+        var weak = existing.Direction is "Unknown" or "Neutral" or "Mixed" or "";
+        return weak || item.ImpactScore > existing.Impact + 0.05;
+    }
+
+    private static void AddCount(Dictionary<string, int> counts, string provider)
+    {
+        counts[provider] = counts.GetValueOrDefault(provider) + 1;
+    }
+
+    private static string Fit(string value, int max)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length <= max)
+        {
+            return value ?? string.Empty;
+        }
+
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)))[..12];
+        var keep = Math.Max(0, max - 13);
+        return value[..keep] + "-" + hash;
     }
 }
 
 public sealed record NewsFeedRow(
     DateTimeOffset PublishedAt,
-    string Source,
+    string Publisher,
+    string Providers,
     string Title,
     string Url,
     string? Coin,
-    string Outcome);
+    string? Classification,
+    double? Impact,
+    double? Confidence,
+    bool Evaluated,
+    string Detail);
+
+public sealed record NewsProviderHealthRow(
+    string Provider,
+    bool Enabled,
+    string Status,
+    DateTimeOffset? LastAttemptUtc,
+    DateTimeOffset? LastSuccessUtc,
+    string? LastError,
+    DateTimeOffset? LastErrorUtc,
+    DateTimeOffset? NextEligibleUtc,
+    int Fetched,
+    int Inserted,
+    int Deduplicated,
+    int Rejected)
+{
+    public static string Describe(NewsProviderHealth row, DateTimeOffset now)
+    {
+        if (!row.Enabled)
+        {
+            return "Disabled";
+        }
+
+        if (row.LastErrorUtc is not null && (row.LastSuccessUtc is null || row.LastErrorUtc > row.LastSuccessUtc))
+        {
+            return "Failing";
+        }
+
+        if (row.NextEligibleUtc is DateTimeOffset next && next > now)
+        {
+            return "Waiting";
+        }
+
+        return row.LastSuccessUtc is null ? "Pending" : "Working";
+    }
+}

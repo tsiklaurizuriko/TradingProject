@@ -1214,14 +1214,24 @@ public sealed class TradingQueryService : ITradingQueryService
     {
         var tradingMode = string.Equals(mode, "Live", StringComparison.OrdinalIgnoreCase) ? TradingMode.Live : TradingMode.Paper;
         var modeLabel = tradingMode == TradingMode.Live ? "Live" : "Paper";
+        var rawTrades = await _store.GetPerformanceTradesAsync(tradingMode, cancellationToken);
         var rows = IsolatedOccupancy.UniqueClosedTrips(
-            await _store.GetPerformanceTradesAsync(tradingMode, cancellationToken),
+            rawTrades,
             t => t.Symbol,
             t => t.Quantity,
             t => t.OpenedAt,
             t => t.ClosedAt,
             t => t.CorrelationId,
             t => t.Fees);
+        var strategyTrades = IsolatedOccupancy.UniqueClosedTrips(
+            rawTrades,
+            t => t.Symbol,
+            t => t.Quantity,
+            t => t.OpenedAt,
+            t => t.ClosedAt,
+            t => t.CorrelationId,
+            t => t.Fees,
+            t => t.StrategyName);
         var bots = (await GetBotsAsync(cancellationToken))
             .Where(b => string.Equals(b.Mode, modeLabel, StringComparison.OrdinalIgnoreCase))
             .ToList();
@@ -1239,7 +1249,7 @@ public sealed class TradingQueryService : ITradingQueryService
             ? IsolatedOccupancy.UniqueCoins(positions, live.OpenPositions, liveAuth)
             : positions.Count;
 
-        var strategyResults = BuildStrategyResults(rows, positions, bots);
+        var strategyResults = BuildStrategyResults(strategyTrades, positions, bots);
         return BuildPerformance(
             modeLabel,
             rows,

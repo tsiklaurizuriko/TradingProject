@@ -411,6 +411,38 @@ public sealed class IsolatedOccupancyTests
             t => t.Fees).Should().HaveCount(2);
     }
 
+    [Fact]
+    public void UniqueClosedTrips_keeps_both_strategies_when_each_recorded_the_same_close()
+    {
+        var opened = DateTimeOffset.Parse("2026-09-27T02:50:08Z");
+        var rows = new[]
+        {
+            new StrategyTrip("ESPUSDT", 10m, -0.35m, opened, opened.AddMinutes(90), "BNT-flow", "Flow Zone"),
+            new StrategyTrip("ESPUSDT", 10m, -0.30m, opened.AddSeconds(1), opened.AddMinutes(92), "BNT-squeeze", "Squeeze Watch")
+        };
+
+        var unique = IsolatedOccupancy.UniqueClosedTrips(
+            rows,
+            t => t.Symbol,
+            t => t.Quantity,
+            t => t.OpenedAt,
+            t => t.ClosedAt,
+            t => t.CorrelationId,
+            t => 0m,
+            t => t.Strategy);
+
+        unique.Select(row => row.Strategy).Should().BeEquivalentTo(["Flow Zone", "Squeeze Watch"]);
+    }
+
+    private sealed record StrategyTrip(
+        string Symbol,
+        decimal Quantity,
+        decimal PnL,
+        DateTimeOffset OpenedAt,
+        DateTimeOffset ClosedAt,
+        string CorrelationId,
+        string Strategy);
+
     private sealed record Trip(
         string Symbol,
         decimal Quantity,

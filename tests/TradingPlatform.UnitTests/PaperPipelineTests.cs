@@ -323,7 +323,7 @@ public sealed class PaperPipelineTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task Live_open_position_is_never_automatically_flattened(bool protectiveStopPlaced)
+    public async Task Live_strategy_exit_flattens_and_stop_take_stay_on_the_exchange(bool protectiveStopPlaced)
     {
         var options = new DbContextOptionsBuilder<TradingDbContext>()
             .UseInMemoryDatabase($"live-exit-{Guid.NewGuid():N}")
@@ -446,11 +446,9 @@ public sealed class PaperPipelineTests
 
         await engine.EvaluateRunningBotsAsync();
 
-        liveOrders.Placed.Should().BeEmpty();
-        (await db.Positions.CountAsync(p => p.ClosedAt == null)).Should().Be(1);
-        bot.LastError.Should().Contain(protectiveStopPlaced
-            ? "Live Isolated SL/TP own the exit"
-            : "Automatic close is disabled");
+        liveOrders.Placed.Should().Contain(order => order.Side == OrderSide.Sell);
+        (await db.Positions.CountAsync(p => p.ClosedAt == null)).Should().Be(0);
+        bot.LastError.Should().NotContain("SL/TP own the exit");
     }
 
     private static List<MarketCandle> CrossingCandles()

@@ -36,6 +36,15 @@ public sealed class NewsMarketConfirmationTests
     }
 
     [Fact]
+    public void Stored_market_report_keeps_the_stop_sentence_after_the_score_header()
+    {
+        var decision = Evaluate(Direction: EventDirection.Bullish, up: true, expandVolume: false, takerFraction: 0);
+        NewsStop.Brief(decision.Reason).Should().StartWith("Stopped at");
+        NewsStop.Explain("NO_TRADE", decision.Reason, "No trade.", "NotEvaluated", "NOT_RUNNING", false)
+            .Should().StartWith("Stopped at");
+    }
+
+    [Fact]
     public void Bullish_news_against_a_bearish_market_is_no_trade()
     {
         var decision = Evaluate(Direction: EventDirection.Bullish, up: false);

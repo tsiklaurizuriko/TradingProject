@@ -83,13 +83,39 @@ public static class NewsEventClusterer
 
     public static string CanonicalUrl(string? url)
     {
-        if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        if (!TryParts(url, out var scheme, out var host, out var path))
         {
             return string.Empty;
         }
 
-        var host = uri.Host.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? uri.Host[4..] : uri.Host;
-        return host.ToLowerInvariant() + uri.AbsolutePath.TrimEnd('/').ToLowerInvariant();
+        return host + path;
+    }
+
+    public static string NavigableUrl(string? url)
+    {
+        if (!TryParts(url, out var scheme, out var host, out var path))
+        {
+            return url?.Trim() ?? string.Empty;
+        }
+
+        return scheme + "://" + host + path;
+    }
+
+    private static bool TryParts(string? url, out string scheme, out string host, out string path)
+    {
+        scheme = string.Empty;
+        host = string.Empty;
+        path = string.Empty;
+        if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        scheme = uri.Scheme.ToLowerInvariant();
+        host = uri.Host.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? uri.Host[4..] : uri.Host;
+        host = host.ToLowerInvariant();
+        path = uri.AbsolutePath.TrimEnd('/').ToLowerInvariant();
+        return true;
     }
 
     public static string NormalizeTitle(string title)
@@ -138,17 +164,22 @@ public static class NewsEventClusterer
             OriginalArticles = cluster.Select(item => new NewsArticleRef
             {
                 Id = item.Id,
+                Provider = item.Provider,
                 Source = item.Source,
                 SourceUrl = item.SourceUrl,
                 PublishedAtUtc = item.PublishedAtUtc,
-                Title = item.Title
+                Title = item.Title,
+                Summary = NewsText.Excerpt(item.Summary)
             }).ToList()
         };
     }
 
     private static string Hash(RawNewsItem item)
     {
-        var text = item.Source + "|" + CanonicalUrl(item.SourceUrl) + "|" + item.PublishedAtUtc.UtcDateTime.ToString("O");
+        var url = CanonicalUrl(item.SourceUrl);
+        var text = url.Length > 0
+            ? "url|" + url
+            : item.Source + "|" + (item.OriginalSourceId ?? item.Id) + "|" + item.PublishedAtUtc.UtcDateTime.ToString("O");
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(text));
         return Convert.ToHexString(bytes)[..16];
     }

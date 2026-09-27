@@ -5,6 +5,7 @@ namespace TradingPlatform.Domain.News;
 public sealed class NewsArticle : Entity
 {
     public string Provider { get; set; } = string.Empty;
+    public string Publisher { get; set; } = string.Empty;
     public string ProviderArticleId { get; set; } = string.Empty;
     public string CanonicalUrl { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
@@ -12,6 +13,33 @@ public sealed class NewsArticle : Entity
     public string Source { get; set; } = string.Empty;
     public DateTimeOffset PublishedAtUtc { get; set; }
     public DateTimeOffset ReceivedAtUtc { get; set; }
+    public Guid? StoredNewsEventId { get; set; }
+    public StoredNewsEvent? StoredNewsEvent { get; set; }
+    public ICollection<NewsArticleSighting> Sightings { get; set; } = new List<NewsArticleSighting>();
+}
+
+public sealed class NewsArticleSighting : Entity
+{
+    public Guid NewsArticleId { get; set; }
+    public NewsArticle? NewsArticle { get; set; }
+    public string Provider { get; set; } = string.Empty;
+    public string ProviderArticleId { get; set; } = string.Empty;
+    public DateTimeOffset ReceivedAtUtc { get; set; }
+}
+
+public sealed class NewsProviderHealth : Entity
+{
+    public string Provider { get; set; } = string.Empty;
+    public bool Enabled { get; set; } = true;
+    public DateTimeOffset? LastAttemptUtc { get; set; }
+    public DateTimeOffset? LastSuccessUtc { get; set; }
+    public string? LastError { get; set; }
+    public DateTimeOffset? LastErrorUtc { get; set; }
+    public DateTimeOffset? NextEligibleUtc { get; set; }
+    public int FetchedCount { get; set; }
+    public int InsertedCount { get; set; }
+    public int DeduplicatedCount { get; set; }
+    public int RejectedCount { get; set; }
 }
 
 public sealed class StoredNewsEvent : Entity

@@ -7,16 +7,47 @@ public interface INewsClassifier
     NewsEvent Classify(NewsEvent clustered);
 }
 
+public static class NewsText
+{
+    public static string Excerpt(string? value)
+    {
+        var plain = StripHtml(value);
+        return plain.Length <= 2000 ? plain : plain[..2000];
+    }
+
+    public static string Readable(NewsEvent item) =>
+        StripHtml(string.Join('\n', item.OriginalArticles.Select(article => article.Title + "\n" + article.Summary)));
+
+    public static string StripHtml(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var text = System.Text.RegularExpressions.Regex.Replace(value, "<[^>]+>", " ");
+        text = text.Replace("&amp;", "&", StringComparison.OrdinalIgnoreCase)
+            .Replace("&lt;", "<", StringComparison.OrdinalIgnoreCase)
+            .Replace("&gt;", ">", StringComparison.OrdinalIgnoreCase)
+            .Replace("&quot;", "\"", StringComparison.OrdinalIgnoreCase)
+            .Replace("&#39;", "'", StringComparison.Ordinal)
+            .Replace("&nbsp;", " ", StringComparison.OrdinalIgnoreCase);
+        return System.Text.RegularExpressions.Regex.Replace(text, "\\s+", " ").Trim();
+    }
+}
+
 public sealed class RuleNewsClassifier : INewsClassifier
 {
     private static readonly (string[] Words, NewsEventType Type, EventDirection Direction, double Weight)[] Rules =
     [
         (["etf"], NewsEventType.Etf, EventDirection.Bullish, 0.9),
         (["sec", "securities and exchange"], NewsEventType.Sec, EventDirection.Unknown, 0.8),
-        (["hack", "exploit", "stolen"], NewsEventType.Hack, EventDirection.Bearish, 0.9),
-        (["security incident", "breach"], NewsEventType.SecurityIncident, EventDirection.Bearish, 0.85),
-        (["listing"], NewsEventType.Listing, EventDirection.Bullish, 0.6),
-        (["delisting"], NewsEventType.Delisting, EventDirection.Bearish, 0.7),
+        (["hack", "exploit", "stolen", "drained"], NewsEventType.Hack, EventDirection.Bearish, 0.9),
+        (["security incident", "breach", "outage", "suspends withdrawals", "withdrawal halt"], NewsEventType.SecurityIncident, EventDirection.Bearish, 0.9),
+        (["listing"], NewsEventType.Listing, EventDirection.Bullish, 0.9),
+        (["delisting"], NewsEventType.Delisting, EventDirection.Bearish, 0.9),
+        (["trading halt", "halts trading", "halted trading"], NewsEventType.Regulation, EventDirection.Bearish, 0.85),
+        (["depeg", "de-peg", "lost its peg"], NewsEventType.Stablecoin, EventDirection.Bearish, 0.9),
         (["partnership"], NewsEventType.Partnership, EventDirection.Bullish, 0.55),
         (["upgrade", "hard fork"], NewsEventType.ProtocolUpgrade, EventDirection.Unknown, 0.5),
         (["unlock"], NewsEventType.TokenUnlock, EventDirection.Bearish, 0.6),
@@ -33,15 +64,16 @@ public sealed class RuleNewsClassifier : INewsClassifier
         (["adoption", "integrates"], NewsEventType.Adoption, EventDirection.Bullish, 0.55)
     ];
 
-    private static readonly string[] BullishWords = ["approval", "approved", "surge", "inflow", "bullish", "rate cut", "beats"];
-    private static readonly string[] BearishWords = ["hack", "ban", "lawsuit", "bankruptcy", "outflow", "bearish", "rate hike", "exploit", "stolen"];
+    private static readonly string[] BullishWords = ["approval", "approved", "surge", "inflow", "bullish", "rate cut", "beats", "rallies", "rally", "soars", "surges"];
+    private static readonly string[] BearishWords = ["hack", "ban", "lawsuit", "bankruptcy", "outflow", "bearish", "rate hike", "exploit", "stolen", "rejected", "denied", "plunges", "plunge", "crashes", "crash", "tumbles"];
+    private static readonly string[] RejectionWords = ["rejected", "denied", "not approved", "delayed", "postponed", "blocked"];
 
     public NewsEvent Classify(NewsEvent clustered)
     {
-        var text = string.Join(' ', clustered.OriginalArticles.Select(article => article.Title)).ToLowerInvariant();
-        var matched = Rules.Where(rule => rule.Words.Any(word => text.Contains(word, StringComparison.Ordinal))).ToList();
-        var bullish = BullishWords.Count(word => text.Contains(word, StringComparison.Ordinal));
-        var bearish = BearishWords.Count(word => text.Contains(word, StringComparison.Ordinal));
+        var text = NewsText.Readable(clustered).ToLowerInvariant();
+        var matched = Rules.Where(rule => rule.Words.Any(word => Has(text, word))).ToList();
+        var bullish = BullishWords.Count(word => Has(text, word));
+        var bearish = BearishWords.Count(word => Has(text, word));
         if (matched.Count == 0 && bullish == 0 && bearish == 0)
         {
             clustered.EventType = NewsEventType.Other;
@@ -56,6 +88,10 @@ public sealed class RuleNewsClassifier : INewsClassifier
 
         var type = matched.Count == 0 ? NewsEventType.Other : matched.OrderByDescending(rule => rule.Weight).First().Type;
         var direction = DirectionOf(bullish, bearish, matched);
+        if (direction == EventDirection.Bullish && RejectionWords.Any(word => Has(text, word)))
+        {
+            direction = EventDirection.Bearish;
+        }
         var quality = SourceQuality(clustered);
         var weight = matched.Count == 0 ? 0.4 : matched.Max(rule => rule.Weight);
         clustered.EventType = type;
@@ -70,8 +106,38 @@ public sealed class RuleNewsClassifier : INewsClassifier
                 ? ExpectedHorizon.Days
                 : ExpectedHorizon.Hours;
         clustered.ExpectedHorizonMinutes = clustered.ExpectedHorizon == ExpectedHorizon.Days ? 1440 : 240;
-        clustered.Reason = "Rule classification from title evidence.";
+        clustered.Reason = "Rule classification from the article text.";
         return clustered;
+    }
+
+    private static bool Has(string text, string term)
+    {
+        var index = 0;
+        while ((index = text.IndexOf(term, index, StringComparison.Ordinal)) >= 0)
+        {
+            var before = index == 0 ? ' ' : text[index - 1];
+            var afterIndex = index + term.Length;
+            var after = afterIndex >= text.Length ? ' ' : text[afterIndex];
+            if (!char.IsLetterOrDigit(before) && !char.IsLetterOrDigit(after) && !Negated(text, index))
+            {
+                return true;
+            }
+
+            index += Math.Max(1, term.Length);
+        }
+
+        return false;
+    }
+
+    private static bool Negated(string text, int index)
+    {
+        var start = Math.Max(0, index - 24);
+        var window = text[start..index];
+        return window.Contains("not ", StringComparison.Ordinal)
+            || window.Contains("no ", StringComparison.Ordinal)
+            || window.Contains("n't ", StringComparison.Ordinal)
+            || window.Contains("without ", StringComparison.Ordinal)
+            || window.Contains("never ", StringComparison.Ordinal);
     }
 
     private static EventDirection DirectionOf(
@@ -111,9 +177,27 @@ public sealed class RuleNewsClassifier : INewsClassifier
             return 0.95;
         }
 
-        if (sources.Any(source => source.Contains("coindesk") || source.Contains("bloomberg") || source.Contains("the block")))
+        if (sources.Any(source => source.Contains("coindesk")
+            || source.Contains("bloomberg")
+            || source.Contains("the block")
+            || source.Contains("cointelegraph")
+            || source.Contains("decrypt")
+            || source.Contains("dl news")
+            || source.Contains("bitcoin magazine")
+            || source.Contains("blockworks")
+            || source.Contains("defiant")
+            || source.Contains("unchained")
+            || source.Contains("protos")
+            || source.Contains("crypto briefing")
+            || source.Contains("a16z")
+            || source.Contains("binance")
+            || source.Contains("ethereum")
+            || source.Contains("solana")
+            || source.Contains("blockstream")
+            || source.Contains("bitcoin core")
+            || source.Contains("bitcoin.org")))
         {
-            return 0.8;
+            return 0.85;
         }
 
         return Math.Clamp(0.35 + (0.05 * item.SourceCount), 0.35, 0.7);

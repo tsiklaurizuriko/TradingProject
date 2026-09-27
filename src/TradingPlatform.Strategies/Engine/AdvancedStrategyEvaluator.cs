@@ -560,7 +560,12 @@ public static class AdvancedStrategyEvaluator
     {
         if (context.HasOpenPosition)
         {
-            return Detail(SignalType.Hold, "Position open; Isolated book owns SL/TP/time-exit.", candles, i, status: "HISTORICALLY_FITTED_CANDIDATE");
+            if (FittedTimeExit(candles, i, context))
+            {
+                return Detail(SignalType.Exit, "192-bar time exit, 48 hours.", candles, i, status: "HISTORICALLY_FITTED_CANDIDATE");
+            }
+
+            return Detail(SignalType.Hold, "Position open. Stop, take, and the 192-bar exit still apply.", candles, i, status: "HISTORICALLY_FITTED_CANDIDATE");
         }
 
         if (i < 1)
@@ -604,7 +609,12 @@ public static class AdvancedStrategyEvaluator
     {
         if (context.HasOpenPosition)
         {
-            return Detail(SignalType.Hold, "Position open; Isolated book owns SL/TP/time-exit.", candles, i, status: "HISTORICALLY_FITTED_CANDIDATE");
+            if (FittedTimeExit(candles, i, context))
+            {
+                return Detail(SignalType.Exit, "192-bar time exit, 48 hours.", candles, i, status: "HISTORICALLY_FITTED_CANDIDATE");
+            }
+
+            return Detail(SignalType.Hold, "Position open. Stop, take, and the 192-bar exit still apply.", candles, i, status: "HISTORICALLY_FITTED_CANDIDATE");
         }
 
         if (i < 1)
@@ -633,6 +643,9 @@ public static class AdvancedStrategyEvaluator
         return Detail(SignalType.NoAction, "No Bollinger (20,2) break.", candles, i);
     }
 
+    private static bool FittedTimeExit(IReadOnlyList<MarketCandle> candles, int i, StrategyContext context) =>
+        context.PositionOpenedAt is { } opened && candles[i].CloseTime >= opened.AddHours(48);
+
     private static StrategySignalDetail FlowZone(
         IReadOnlyList<MarketCandle> candles,
         int i,
@@ -641,7 +654,7 @@ public static class AdvancedStrategyEvaluator
         const string status = "LIVE_PROBE";
         const int window = 24;
         const decimal edge = 0.25m;
-        const decimal crowd = 0.25m;
+        const decimal takerMajority = 0.62m;
         if (i < window - 1)
         {
             return Detail(SignalType.NoAction, "Need 24 closed bars.", candles, i, status: status);
@@ -675,17 +688,18 @@ public static class AdvancedStrategyEvaluator
             return Detail(SignalType.NoAction, "Taker buy volume is missing. No order.", candles, i, status: status);
         }
 
+        var buyShare = (imbalance.Value + 1m) / 2m;
         var interest = OpenInterestRose(context.OpenInterest);
         if (context.HasOpenPosition)
         {
-            if (IsLong(context) && (imbalance < 0m || place < 0.5m))
+            if (IsLong(context) && (place < 1m - edge || buyShare <= takerMajority))
             {
-                return Detail(SignalType.Exit, "Buy flow left the upper half.", candles, i, status: status);
+                return Detail(SignalType.Exit, "Buy flow left the upper quarter.", candles, i, status: status);
             }
 
-            if (!IsLong(context) && (imbalance > 0m || place > 0.5m))
+            if (!IsLong(context) && (place > edge || buyShare >= 1m - takerMajority))
             {
-                return Detail(SignalType.Exit, "Sell flow left the lower half.", candles, i, status: status);
+                return Detail(SignalType.Exit, "Sell flow left the lower quarter.", candles, i, status: status);
             }
 
             return Detail(SignalType.Hold, "Flow zone is still on.", candles, i, status: status);
@@ -701,14 +715,14 @@ public static class AdvancedStrategyEvaluator
             return Detail(SignalType.NoAction, "Open interest is not rising.", candles, i, status: status);
         }
 
-        if (place >= 1m - edge && imbalance >= crowd && bar.Close > bar.Open)
+        if (place >= 1m - edge && buyShare > takerMajority && bar.Close > bar.Open)
         {
-            return Detail(SignalType.Buy, "Upper zone, taker buy is the majority, open interest rose.", candles, i, status: status);
+            return Detail(SignalType.Buy, "Upper zone, taker buy is above 62%, open interest rose.", candles, i, status: status);
         }
 
-        if (place <= edge && imbalance <= -crowd && bar.Close < bar.Open)
+        if (place <= edge && buyShare < 1m - takerMajority && bar.Close < bar.Open)
         {
-            return Detail(SignalType.Sell, "Lower zone, taker sell is the majority, open interest rose.", candles, i, status: status);
+            return Detail(SignalType.Sell, "Lower zone, taker sell is above 62%, open interest rose.", candles, i, status: status);
         }
 
         return Detail(SignalType.NoAction, "Price, taker flow, and open interest do not agree.", candles, i, status: status);

@@ -318,10 +318,28 @@ internal static class TradingModelConfiguration
             b.HasIndex(x => new { x.Provider, x.ProviderArticleId }).IsUnique();
             b.HasIndex(x => x.CanonicalUrl);
             b.Property(x => x.Provider).HasMaxLength(64).IsRequired();
+            b.Property(x => x.Publisher).HasMaxLength(256).IsRequired();
             b.Property(x => x.ProviderArticleId).HasMaxLength(512).IsRequired();
             b.Property(x => x.CanonicalUrl).HasMaxLength(1024).IsRequired();
             b.Property(x => x.Title).HasMaxLength(1024).IsRequired();
             b.Property(x => x.Source).HasMaxLength(256).IsRequired();
+            b.HasOne(x => x.StoredNewsEvent).WithMany().HasForeignKey(x => x.StoredNewsEventId);
+        });
+        model.Entity<NewsArticleSighting>(b =>
+        {
+            b.ToTable("NewsArticleSightings");
+            b.HasIndex(x => new { x.Provider, x.ProviderArticleId }).IsUnique();
+            b.Property(x => x.Provider).HasMaxLength(64).IsRequired();
+            b.Property(x => x.ProviderArticleId).HasMaxLength(512).IsRequired();
+            b.HasOne(x => x.NewsArticle).WithMany(x => x.Sightings).HasForeignKey(x => x.NewsArticleId);
+        });
+        model.Entity<NewsProviderHealth>(b =>
+        {
+            b.ToTable("NewsProviderHealth");
+            b.HasIndex(x => x.Provider).IsUnique();
+            b.Property(x => x.Provider).HasMaxLength(64).IsRequired();
+            b.Property(x => x.Enabled).HasDefaultValue(true);
+            b.Property(x => x.LastError).HasMaxLength(1000);
         });
         model.Entity<StoredNewsEvent>(b =>
         {

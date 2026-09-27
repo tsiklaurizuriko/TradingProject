@@ -37,11 +37,29 @@ public sealed class NewsOptions
 
     public string? CoinGeckoApiKey { get; set; }
 
+    public string? CoinDeskApiKey { get; set; }
+
     public string? CryptoPanicToken { get; set; }
+
+    /// <summary>CryptoPanic path segment: growth or enterprise. The free developer plan ended 2026-04-01.</summary>
+    public string CryptoPanicPlan { get; set; } = "growth";
 
     public string? FredApiKey { get; set; }
 
+    public Dictionary<string, int> ProviderPollMinutes { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public List<NewsFeedOption> RssFeeds { get; set; } = [];
+
+    public List<NewsFeedOption> OfficialFeeds { get; set; } = [];
+
     public NewsMarketStrategyOptions Strategy { get; set; } = new();
+}
+
+public sealed class NewsFeedOption
+{
+    public string Publisher { get; set; } = string.Empty;
+
+    public string Url { get; set; } = string.Empty;
 }
 
 public sealed class NewsMarketStrategyOptions

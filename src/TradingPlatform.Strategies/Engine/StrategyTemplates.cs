@@ -310,6 +310,11 @@ public static class StrategyTemplateKeys
             return ["1h"];
         }
 
+        if (template is VolSpikeEmaTrend or Bb202Break)
+        {
+            return ["15m"];
+        }
+
         if (template == MacContrarian710)
         {
             return ["5m"];
@@ -1182,7 +1187,7 @@ public static class StrategyTemplates
         StrategyTemplateKeys.BtcEma20Ema50Long => "ყველა მონეტა, 30 წუთი, მხოლოდ ყიდვა. EMA(20) დახურულ ბარზე კვეთს EMA(50)-ს ზემოთ. გასვლა უკუ გადაკვეთაზე. სტოპი 1%. Take profit 20% შორი ჭერია, რადგან რისკის წიგნს მიზანი სჭირდება. არ არის validated.",
         StrategyTemplateKeys.TsMomentum285 => "BTCUSDT, დღიური, მხოლოდ ყიდვა. 28 დღის ამონაგები საკუთარი ისტორიის ზედა მესამედშია — ლონგი. ხუთი დღე რჩება, შორტი არ არის. VAL-ზე ზრდა −11% იყო. Live ჩართვა Bots-ზეა, როცა LIVE რეჟიმი და API გასაღები გაქვს. თავისით არ ეშვება. რისკის წიგნი 1x, სტოპი 8% მხოლოდ ღობეა.",
         StrategyTemplateKeys.BtcDailyMax10 => "BTCUSDT, დღიური, მხოლოდ ყიდვა. დღე 10 დღის მაქსიმუმზე იხურება — მეორე დღეს ლონგი. შორტი არ არის. ამ ქეშზე IS −1%, VAL +8%, OOS −2% 12 bp ხარჯის შემდეგ. Live ჩართვა Bots-ზეა. თავისით არ ეშვება. რისკის წიგნი 1x, სტოპი 8% მხოლოდ ღობეა.",
-        StrategyTemplateKeys.FlowZone => "ყველა მონეტა, 1 საათი. ბოლო 24 საათის ზედა მეოთხედში და taker-ის ყიდვა ბარის 62%-ზე მეტია და ღია პოზიცია იზრდება — ყიდვა. ქვედა მეოთხედში, ძლიერი გაყიდვა და პოზიციის ზრდა — გაყიდვა. Taker ან ღია პოზიცია თუ არ მოდის, ორდერი არ იგზავნება. წარსულზე არ არის გაზომილი. Live-ზე გასვლას სტოპი ფლობს.",
+        StrategyTemplateKeys.FlowZone => "ყველა მონეტა, 1 საათი. ბოლო 24 საათის ზედა მეოთხედში და taker-ის ყიდვა ბარის 62%-ზე მეტია და ღია პოზიცია იზრდება — ყიდვა. ქვედა მეოთხედში, ძლიერი გაყიდვა და პოზიციის ზრდა — გაყიდვა. Taker ან ღია პოზიცია თუ არ მოდის, ორდერი არ იგზავნება. გასვლას სიგნალი აკეთებს, როცა ნაკადი ზონას ტოვებს. სტოპი და ტეიკი მხოლოდ ღობეა, თუ ბოტი გაითიშა. წარსულზე არ არის გაზომილი.",
         StrategyTemplateKeys.SqueezeWatch => "1 საათი, ორივე მხარე. 24 საათში ფასი 3%-ზე ნაკლებს იცვლება, open interest მინიმუმ 15%-ით იზრდება და funding −0.10%-ზე დაბალია — ყიდვა (გადატვირთული შორტი). იგივე სიმშვიდე და open interest, funding +0.10%-ზე მაღალია — გაყიდვა (გადატვირთული ლონგი). Funding ან open interest თუ არ მოდის, ორდერი არ იგზავნება. რისკი 0.5%, სტოპი 4%, ტეიკი 8%, 2x, ერთდროულად 3.",
         StrategyTemplateKeys.ScalpEmaMomentum => "RESEARCH_ONLY scalping hypothesis: fast/slow EMA momentum on closed 1m–15m bars. Not a profit claim.",
         StrategyTemplateKeys.ScalpVwapReclaim => "RESEARCH_ONLY scalping hypothesis: session VWAP reclaim after a dip. Isolated book owns SL/TP.",

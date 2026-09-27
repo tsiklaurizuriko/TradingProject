@@ -1056,11 +1056,31 @@ export interface NewsDeskRow {
 
 export interface NewsFeedItem {
   publishedAt: string;
-  source: string;
+  publisher: string;
+  providers: string;
   title: string;
   url: string;
   coin: string | null;
-  outcome: string;
+  classification: string | null;
+  impact: number | null;
+  confidence: number | null;
+  evaluated: boolean;
+  detail: string;
+}
+
+export interface NewsProviderHealthItem {
+  provider: string;
+  enabled: boolean;
+  status: string;
+  lastAttemptUtc: string | null;
+  lastSuccessUtc: string | null;
+  lastError: string | null;
+  lastErrorUtc: string | null;
+  nextEligibleUtc: string | null;
+  fetched: number;
+  inserted: number;
+  deduplicated: number;
+  rejected: number;
 }
 
 export interface NewsDeskDto {
@@ -1083,6 +1103,7 @@ export interface NewsDeskDto {
   takeProfit: number | null;
   reason: string | null;
   items?: NewsFeedItem[];
+  providers?: NewsProviderHealthItem[];
 }
 
 export interface ScalpingResearchSummaryDto {

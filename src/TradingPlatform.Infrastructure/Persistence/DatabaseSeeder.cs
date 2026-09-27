@@ -490,7 +490,7 @@ public sealed class DatabaseSeeder
         }
 
         strategy.TemplateKey = row.Key;
-        strategy.AllowedSide = StrategySides.Both;
+        strategy.AllowedSide = parameters.AllowedSide;
         strategy.AppliesToAllSymbols = true;
         if (!row.Research)
         {
@@ -644,7 +644,7 @@ public sealed class DatabaseSeeder
         (StrategyTemplateKeys.Bb202Break, "BTC 15m Bollinger Break",
             "HISTORICALLY_FITTED_CANDIDATE. BTCUSDT 15m BOTH. Close cross of Bollinger (20,2). Use risk book BTC 15m BB Break (SL 4.00% / TP 5.00%). Not validated alpha. LIVE off.", true),
         (StrategyTemplateKeys.FlowZone, "Flow Zone",
-            "All USD-M coins, 1h, both sides. Buy the upper quarter of the last 24 hours when taker buy is the majority and open interest rose. Sell the lower quarter when taker sell is the majority and open interest rose. Missing taker or open interest sends no order. Not measured on the past. Not auto-started. Live exits stay on the 8% stop rail in the Flow Zone book.", true),
+            "All USD-M coins, 1h, both sides. Buy the upper quarter of the last 24 hours when taker buy is the majority and open interest rose. Sell the lower quarter when taker sell is the majority and open interest rose. Missing taker or open interest sends no order. The signal closes the position when that flow leaves the zone. The 8% stop and 30% take are only the rail if the bot is off. Not measured on the past. Not auto-started.", true),
         (StrategyTemplateKeys.SqueezeWatch, "Squeeze Watch",
             "1h, both sides. Price moved less than 3% over 24 hours, open interest rose at least 15%, and funding is at or below -0.10% — buy the crowded shorts. The same quiet price and open-interest rise with funding at or above +0.10% — sell the crowded longs. Missing funding or open interest sends no order. Book is risk 0.5%, stop 4%, take 8%, leverage 2x, 3 positions. Not measured on the past.", false),
         (StrategyTemplateKeys.FlatRange, "Flat Range",
@@ -668,7 +668,7 @@ public sealed class DatabaseSeeder
         (StrategyTemplateKeys.TripleSupertrend, "Triple Supertrend",
             "Freqtrade FSupertrendStrategy. 1h BOTH. Long when Supertrend 8/4, 9/7 and 8/1 are up. Short when 16/1, 18/3 and 18/6 are down. Exit long on 18/3 down, exit short on 9/7 up. Take 10%, stop 26.5%, leverage 1x.", true),
         (StrategyTemplateKeys.BtcEma20Ema50Long, "30m EMA Cross",
-            "HISTORICALLY_FITTED_CANDIDATE. All USD-M coins, 30m LONG only. EMA20 cross above EMA50; exit on the cross back below. Use risk book 30m EMA Cross (R 0.50% / SL 1.00% / TP 20% cap). Not validated alpha. LIVE off.", true),
+            "HISTORICALLY_FITTED_CANDIDATE. All USD-M coins, 30m LONG only. EMA20 cross above EMA50; exit on the cross back below. Use risk book 30m EMA Cross (R 0.50% / SL 1.00% / TP 3% cap). Not validated alpha. LIVE off.", true),
         (StrategyTemplateKeys.TsMomentum285, "1d Time-Series Momentum",
             "BTCUSDT daily LONG only. Buy when the 28-day return is in the top third of its own history and stay in while any of the next five days is funded. No short. VAL growth on this cache was -11%. Start it yourself on Bots in LIVE mode with an API key. Use risk book 1d Time-Series Momentum (1x, 8% stop rail, 2% planned risk). Not auto-started.", true),
         (StrategyTemplateKeys.BtcDailyMax10, "1d BTC 10-day High",
@@ -904,6 +904,10 @@ public sealed class DatabaseSeeder
         existing.Name = name;
         existing.IsSystem = true;
         existing.AllowLive = true;
+        if (string.Equals(name, "30m EMA Cross", StringComparison.OrdinalIgnoreCase) && existing.TakeProfitPercent == 20m)
+        {
+            existing.TakeProfitPercent = template.TakeProfitPercent;
+        }
     }
 
     private async Task EnsureOneActiveAsync(CancellationToken cancellationToken)
@@ -1183,7 +1187,7 @@ public sealed class DatabaseSeeder
         {
             RiskPerTradePercent = 0.5m,
             StopLossPercent = 1m,
-            TakeProfitPercent = 20m,
+            TakeProfitPercent = 3m,
             MaxLeverage = 3m,
             MaxDailyLossPercent = 3m,
             MaxPortfolioRiskPercent = 4m,

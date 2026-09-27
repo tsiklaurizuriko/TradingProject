@@ -62,6 +62,8 @@ public sealed class TradingDbContext : DbContext, IUnitOfWork
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
     public DbSet<NewsArticle> NewsArticles => Set<NewsArticle>();
+    public DbSet<NewsArticleSighting> NewsArticleSightings => Set<NewsArticleSighting>();
+    public DbSet<NewsProviderHealth> NewsProviderHealth => Set<NewsProviderHealth>();
     public DbSet<StoredNewsEvent> NewsEvents => Set<StoredNewsEvent>();
     public DbSet<NewsEventAsset> NewsEventAssets => Set<NewsEventAsset>();
     public DbSet<NewsTradingSignal> NewsTradingSignals => Set<NewsTradingSignal>();

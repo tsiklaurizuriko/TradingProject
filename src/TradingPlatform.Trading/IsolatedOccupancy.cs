@@ -189,7 +189,8 @@ public static class IsolatedOccupancy
         Func<T, DateTimeOffset> openedAt,
         Func<T, DateTimeOffset?> closedAt,
         Func<T, string?> correlationId,
-        Func<T, decimal>? fees = null)
+        Func<T, decimal>? fees = null,
+        Func<T, string?>? strategy = null)
     {
         var chosen = new List<T>(rows.Count);
         foreach (var row in rows)
@@ -202,6 +203,7 @@ public static class IsolatedOccupancy
 
             var index = chosen.FindIndex(existing =>
                 closedAt(existing) is not null
+                && SameStrategy(strategy, existing, row)
                 && SameIsolatedTrip(
                     symbol(existing),
                     quantity(existing),
@@ -224,6 +226,16 @@ public static class IsolatedOccupancy
         }
 
         return chosen;
+    }
+
+    private static bool SameStrategy<T>(Func<T, string?>? strategy, T left, T right)
+    {
+        if (strategy is null)
+        {
+            return true;
+        }
+
+        return string.Equals(strategy(left)?.Trim(), strategy(right)?.Trim(), StringComparison.OrdinalIgnoreCase);
     }
 
     public static bool SameIsolatedTrip(

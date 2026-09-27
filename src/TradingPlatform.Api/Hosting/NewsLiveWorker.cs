@@ -17,8 +17,8 @@ using TradingPlatform.Trading;
 namespace TradingPlatform.Api.Hosting;
 
 /// <summary>
-/// Reads one broad news feed, maps coins, and scores the current market.
-/// It does not place orders.
+/// Polls each news provider on its own interval, then scores new events on the trading cadence.
+/// A provider failure is recorded and does not stop the others. It does not place orders unless news trading is running.
 /// </summary>
 public sealed class NewsLiveWorker : BackgroundService
 {
@@ -27,6 +27,10 @@ public sealed class NewsLiveWorker : BackgroundService
     private readonly IHostEnvironment _environment;
     private readonly IOptionsMonitor<NewsOptions> _options;
     private readonly ILogger<NewsLiveWorker> _logger;
+    private readonly NewsPollSchedule _schedule = new();
+    private readonly List<NewsEvent> _pending = [];
+    private bool _scheduleSeeded;
+    private DateTimeOffset _nextTradeUtc = DateTimeOffset.MinValue;
 
     public NewsLiveWorker(
         IServiceScopeFactory scopes,
@@ -66,7 +70,7 @@ public sealed class NewsLiveWorker : BackgroundService
                 _logger.LogWarning(ex, "News collection failed. No order was sent.");
             }
 
-            await Delay(TimeSpan.FromMinutes(Math.Max(1, options.PollMinutes)), stoppingToken);
+            await Delay(NextWait(options), stoppingToken);
         }
     }
 
@@ -79,23 +83,97 @@ public sealed class NewsLiveWorker : BackgroundService
         var from = now.AddHours(-6);
         var http = _http.CreateClient("news");
         http.Timeout = TimeSpan.FromSeconds(30);
-        var collector = new NewsCollector(options, Providers(options, http), store, catalog);
-        var events = await collector.CollectAsync(from, now, cancellationToken);
         using var scope = _scopes.CreateScope();
         var database = new NewsDatabase(scope.ServiceProvider.GetRequiredService<TradingDbContext>());
-        var session = await database.GetOrCreateSessionAsync(cancellationToken);
-        session.LastStatus = events.Count == 0
-            ? string.Join("; ", collector.Errors.DefaultIfEmpty("No articles in the last 6 hours."))
-            : "Fetched " + events.Count + " events.";
-        if (session.LastStatus.Length > 500)
+        if (!_scheduleSeeded)
         {
-            session.LastStatus = session.LastStatus[..500];
+            foreach (var health in await database.ProviderHealthAsync(cancellationToken))
+            {
+                if (health.LastAttemptUtc is DateTimeOffset last)
+                {
+                    _schedule.Remember(health.Provider, last);
+                }
+
+                if (health.NextEligibleUtc is DateTimeOffset next)
+                {
+                    _schedule.DelayUntil(health.Provider, next);
+                }
+            }
+
+            _scheduleSeeded = true;
         }
 
-        await database.SaveAsync(cancellationToken);
+        var due = new List<INewsProvider>();
+        foreach (var provider in NewsProviderCatalog.Create(options, http))
+        {
+            var interval = TimeSpan.FromMinutes(NewsProviderCatalog.PollIntervalMinutes(options, provider.ScheduleKey));
+            if (_schedule.TryBegin(provider.Name, now, interval))
+            {
+                due.Add(provider);
+            }
+        }
+
+        NewsCollectionResult collected;
+        try
+        {
+            var collector = new NewsCollector(options, due, store, catalog);
+            collected = await collector.CollectDetailedAsync(from, now, cancellationToken);
+        }
+        finally
+        {
+            var finished = DateTimeOffset.UtcNow;
+            foreach (var provider in due)
+            {
+                _schedule.Complete(provider.Name, finished);
+            }
+        }
+
+        foreach (var failure in collected.Providers.Where(item => !item.Succeeded))
+        {
+            _logger.LogWarning("News provider {Provider} failed: {Error}", failure.Provider, failure.Error);
+        }
+
+        var schedules = due.ToDictionary(provider => provider.Name, provider => provider.ScheduleKey, StringComparer.Ordinal);
+        var reports = collected.Providers.Select(item => WithNextPoll(options, item, schedules.GetValueOrDefault(item.Provider, item.Provider))).Concat(NewsProviderCatalog.DisabledCredentialReports(options, now)).ToList();
+        if (collected.Events.Count > 0 || reports.Count > 0)
+        {
+            await database.SaveIngestionAsync(collected.Events, reports, cancellationToken);
+            _pending.AddRange(collected.Events);
+            if (collected.Providers.Count > 0)
+            {
+                var sessionStatus = await database.GetOrCreateSessionAsync(cancellationToken);
+                sessionStatus.LastStatus = string.Join("; ", collected.Providers.Select(report => report.Succeeded
+                    ? report.Provider + " fetched " + report.Fetched + ", rejected " + report.Rejected
+                    : report.Provider + " failed: " + report.Error));
+                if (sessionStatus.LastStatus.Length > 500)
+                {
+                    sessionStatus.LastStatus = sessionStatus.LastStatus[..500];
+                }
+
+                await database.SaveAsync(cancellationToken);
+            }
+        }
+
+        if (now < _nextTradeUtc)
+        {
+            return;
+        }
+
+        var remembered = new NewsPipeline(options, catalog: catalog).Build(
+            await database.RecentArticlesAsync(now.AddMinutes(-options.Strategy.MaxNewsAgeMinutes), cancellationToken));
+        if (remembered.Count > 0)
+        {
+            await database.SaveIngestionAsync(remembered, [], cancellationToken);
+            _pending.AddRange(remembered);
+        }
+
+        var events = _pending
+            .GroupBy(item => item.EventId, StringComparer.Ordinal)
+            .Select(group => group.First())
+            .ToList();
+        var session = await database.GetOrCreateSessionAsync(cancellationToken);
         var risk = scope.ServiceProvider.GetRequiredService<IRiskEngine>();
         var profile = await scope.ServiceProvider.GetRequiredService<ITradingStore>().GetConservativeRiskAsync(cancellationToken);
-        await PersistEventsAsync(database, events, cancellationToken);
         var scoped = events
             .Where(item => item.MarketScope != MarketScope.Global || item.AffectedAssets.Count > 0)
             .ToList();
@@ -122,56 +200,12 @@ public sealed class NewsLiveWorker : BackgroundService
 
         await NewsLiveAnalyzer.WriteAsync(root, report, options.Strategy.Timeframes.Execution, cancellationToken);
         var candidates = report.Decisions.Count(item => item.Signal != NewsMarketSignals.NoTrade);
+        _pending.Clear();
+        _nextTradeUtc = DateTimeOffset.UtcNow.AddMinutes(Math.Max(1, options.PollMinutes));
         _logger.LogInformation(
             "News cycle stored {Events} events and {Candidates} signals in the database. Approved live signals are sent to Binance USD-M.",
             events.Count,
             candidates);
-    }
-
-    private static async Task PersistEventsAsync(NewsDatabase database, IReadOnlyList<NewsEvent> events, CancellationToken cancellationToken)
-    {
-        foreach (var item in events)
-        {
-            foreach (var article in item.OriginalArticles)
-            {
-                await database.AddArticleIfNewAsync(new NewsArticle
-                {
-                    Provider = article.Source,
-                    ProviderArticleId = article.Id,
-                    CanonicalUrl = article.SourceUrl,
-                    Title = article.Title,
-                    Summary = article.Title,
-                    Source = article.Source,
-                    PublishedAtUtc = article.PublishedAtUtc,
-                    ReceivedAtUtc = item.DetectedAtUtc
-                }, cancellationToken);
-            }
-
-            if (await database.EventExistsAsync(item.EventId, cancellationToken))
-            {
-                continue;
-            }
-
-            await database.AddEventAsync(new StoredNewsEvent
-            {
-                DedupKey = item.EventId,
-                PrimaryAsset = item.PrimaryAsset,
-                MarketScope = item.MarketScope.ToString(),
-                Direction = item.Direction.ToString(),
-                Impact = item.ImpactScore,
-                Confidence = item.ConfidenceScore,
-                EventType = item.EventType.ToString(),
-                PublishedAtUtc = item.PublishedAtUtc,
-                ArticleIds = string.Join(',', item.OriginalArticles.Select(article => article.Id)),
-                Assets = item.AffectedAssets.Select(asset => new NewsEventAsset
-                {
-                    Asset = asset.BaseAsset,
-                    Symbol = asset.Symbol ?? asset.BaseAsset + "USDT",
-                    Relevance = asset.Relevance,
-                    IsPrimary = asset.IsPrimary
-                }).ToList()
-            }, cancellationToken);
-        }
     }
 
     private static async Task PersistSignalsAsync(
@@ -264,6 +298,7 @@ public sealed class NewsLiveWorker : BackgroundService
                 handoff = handoff with { OrderDecision = fill is null ? "NOT_SENT" : fill.Status.ToString() };
             }
 
+            var why = NewsStop.Explain(direction, decision.Reason, handoff.RiskReason, handoff.RiskDecision, handoff.OrderDecision, exchangeId is not null);
             await database.AddSignalAsync(new NewsTradingSignal
             {
                 StoredNewsEventId = stored.Id,
@@ -279,10 +314,10 @@ public sealed class NewsLiveWorker : BackgroundService
                     ?? source.AffectedAssets.FirstOrDefault(asset => string.Equals(asset.BaseAsset, decision.Symbol.Replace("USDT", "", StringComparison.OrdinalIgnoreCase), StringComparison.OrdinalIgnoreCase))?.Relevance
                     ?? 0,
                 StrategyName = NewsTradeAdapter.StrategyName,
-                Reason = decision.Reason,
+                Reason = why,
                 MarketDetail = decision.Reason,
                 RiskDecision = handoff.RiskDecision,
-                RiskReason = handoff.RiskReason,
+                RiskReason = why,
                 EntryPrice = price,
                 Quantity = handoff.Quantity,
                 Notional = handoff.Notional,
@@ -359,35 +394,40 @@ public sealed class NewsLiveWorker : BackgroundService
         return result;
     }
 
-    private static IReadOnlyList<INewsProvider> Providers(NewsOptions options, HttpClient http)
+    private NewsProviderReport WithNextPoll(NewsOptions options, NewsProviderReport report, string scheduleKey)
     {
-        var names = options.Providers.Length == 0 ? ["gdelt"] : options.Providers;
-        var providers = new List<INewsProvider>();
-        foreach (var name in names)
+        var interval = TimeSpan.FromMinutes(NewsProviderCatalog.PollIntervalMinutes(options, scheduleKey));
+        var wait = !report.Succeeded && NewsBackoff.IsRateLimited(report.Error)
+            ? NewsBackoff.Delay(report.Provider, interval)
+            : interval;
+        var next = report.AttemptedAtUtc.Add(wait);
+        if (wait > interval)
         {
-            if (name.Equals("gdelt", StringComparison.OrdinalIgnoreCase))
-            {
-                providers.Add(new GdeltNewsProvider(http));
-            }
-            else if (name.Equals("coingecko", StringComparison.OrdinalIgnoreCase))
-            {
-                providers.Add(new CoinGeckoNewsProvider(http, options));
-            }
-            else if (name.Equals("cryptopanic", StringComparison.OrdinalIgnoreCase))
-            {
-                providers.Add(new CryptoPanicNewsProvider(http, options));
-            }
-            else if (name.Equals("fred", StringComparison.OrdinalIgnoreCase))
-            {
-                providers.Add(new FredMacroReleaseProvider(http, options));
-            }
-            else if (name.Equals("rss", StringComparison.OrdinalIgnoreCase))
-            {
-                providers.Add(new RssNewsProvider(http));
-            }
+            _schedule.DelayUntil(report.Provider, next);
         }
 
-        return providers;
+        return report with { Enabled = true, NextEligibleUtc = next };
+    }
+
+    private TimeSpan NextWait(NewsOptions options)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var untilTrade = _nextTradeUtc <= now ? TimeSpan.Zero : _nextTradeUtc - now;
+        var providers = NewsProviderCatalog.ScheduledSources(options)
+            .Select(source => (source.Name, TimeSpan.FromMinutes(NewsProviderCatalog.PollIntervalMinutes(options, source.ScheduleKey))));
+        var untilProvider = _schedule.TimeUntilNext(now, providers);
+        var wait = untilTrade < untilProvider ? untilTrade : untilProvider;
+        if (wait < TimeSpan.FromSeconds(15))
+        {
+            wait = TimeSpan.FromSeconds(15);
+        }
+
+        if (wait > TimeSpan.FromMinutes(5))
+        {
+            wait = TimeSpan.FromMinutes(5);
+        }
+
+        return wait;
     }
 
     private static async Task Delay(TimeSpan delay, CancellationToken cancellationToken)

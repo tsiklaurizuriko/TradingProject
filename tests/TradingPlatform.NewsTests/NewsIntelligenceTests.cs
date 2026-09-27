@@ -21,6 +21,7 @@ public sealed class NewsIntelligenceTests
         var item = CoinGeckoNewsProvider.Parse(json, Retrieved).Single();
         item.PublishedAtUtc.Should().Be(new DateTimeOffset(2026, 1, 1, 9, 59, 0, TimeSpan.Zero));
         item.RelatedProviderIds.Should().Contain("bitcoin");
+        item.Provider.Should().Be("coingecko");
         item.Source.Should().Be("CoinDesk");
         item.SourceUrl.Should().Be("https://www.coindesk.com/a?x=1");
         var catalog = SampleCatalog();
@@ -40,6 +41,48 @@ public sealed class NewsIntelligenceTests
         events.Should().HaveCount(2);
         events.Single(item => item.EventType == NewsEventType.Etf).SourceCount.Should().Be(2);
         events.Single(item => item.EventType == NewsEventType.Etf).OriginalArticles.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public void Summary_text_classifies_a_major_source_above_the_trade_gate()
+    {
+        var item = new RawNewsItem
+        {
+            Id = "ct:1",
+            Provider = "Cointelegraph",
+            Source = "Cointelegraph",
+            SourceUrl = "https://cointelegraph.com/news/sec-etf",
+            PublishedAtUtc = Retrieved,
+            RetrievedAtUtc = Retrieved,
+            Title = "Markets wrap",
+            Summary = "<p>The SEC approved a spot Bitcoin ETF after months of review.</p>"
+        };
+        var mapped = new NewsPipeline(new NewsOptions(), catalog: SampleCatalog()).Build([item]).Single();
+        mapped.EventType.Should().Be(NewsEventType.Etf);
+        mapped.Direction.Should().Be(EventDirection.Bullish);
+        mapped.PrimaryAsset.Should().Be("BTC");
+        mapped.ImpactScore.Should().BeGreaterThanOrEqualTo(0.70);
+        mapped.ConfidenceScore.Should().BeGreaterThanOrEqualTo(0.75);
+    }
+
+    [Fact]
+    public void Rejected_etf_is_bearish_and_bank_is_not_a_ban()
+    {
+        var rejected = Classify("Cointelegraph", "Bitcoin ETF was not approved");
+        rejected.Direction.Should().Be(EventDirection.Bearish);
+        var bank = Classify("Cointelegraph", "Bank adds bitcoin custody");
+        bank.EventType.Should().NotBe(NewsEventType.Regulation);
+        bank.Direction.Should().NotBe(EventDirection.Bearish);
+    }
+
+    private static NewsEvent Classify(string source, string title)
+    {
+        var item = new NewsEvent
+        {
+            SourceCount = 1,
+            OriginalArticles = [new NewsArticleRef { Source = source, Title = title }]
+        };
+        return new RuleNewsClassifier().Classify(item);
     }
 
     [Fact]
@@ -256,7 +299,7 @@ public sealed class NewsIntelligenceTests
     {
         public string Name => "boom";
 
-        public Task<IReadOnlyList<RawNewsItem>> GetNewsAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken) =>
+        public Task<NewsProviderBatch> FetchAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Provider must not be called.");
     }
 }

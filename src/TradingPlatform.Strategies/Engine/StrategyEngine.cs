@@ -122,6 +122,8 @@ public sealed class StrategyContext
     public bool HasOpenPosition { get; init; }
     public PositionSide PositionSide { get; init; } = PositionSide.Long;
     public DateTimeOffset? PositionOpenedAt { get; init; }
+    /// <summary>Binance contract id, for rules that differ by coin. Empty outside a live bot.</summary>
+    public string Symbol { get; init; } = "";
     /// <summary>Optional higher-timeframe cache. LIVE and frozen templates leave this null.</summary>
     public CausalIndicatorCache? HigherTimeframeCache { get; init; }
     /// <summary>Open interest aligned to ClosedCandles. Null means historical OI is unavailable.</summary>
@@ -181,6 +183,8 @@ public interface IStrategyEngine
                 CurrentPrice = take == 0 ? context.CurrentPrice : prefix[take - 1].Close,
                 HasOpenPosition = context.HasOpenPosition,
                 PositionSide = context.PositionSide,
+                PositionOpenedAt = context.PositionOpenedAt,
+                Symbol = context.Symbol,
                 HigherTimeframeCache = context.HigherTimeframeCache,
                 OpenInterest = Prefix(context.OpenInterest, take),
                 FundingRate = Prefix(context.FundingRate, take),

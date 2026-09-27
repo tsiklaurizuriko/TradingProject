@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using TradingPlatform.Infrastructure.Persistence;
@@ -11,9 +12,11 @@ using TradingPlatform.Infrastructure.Persistence;
 namespace TradingPlatform.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(TradingDbContext))]
-    partial class TradingDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260926183647_NewsSourceProvenance")]
+    partial class NewsSourceProvenance
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1073,11 +1076,6 @@ namespace TradingPlatform.Infrastructure.Persistence.Migrations
                     b.Property<int>("DeduplicatedCount")
                         .HasColumnType("integer");
 
-                    b.Property<bool>("Enabled")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("boolean")
-                        .HasDefaultValue(true);
-
                     b.Property<int>("FetchedCount")
                         .HasColumnType("integer");
 
@@ -1095,9 +1093,6 @@ namespace TradingPlatform.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<DateTimeOffset?>("LastSuccessUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTimeOffset?>("NextEligibleUtc")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Provider")

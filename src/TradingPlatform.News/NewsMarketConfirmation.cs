@@ -53,32 +53,32 @@ public static class NewsMarketConfirmation
         var age = (decisionTime - item.PublishedAtUtc).TotalMinutes;
         if (item.PublishedAtUtc > decisionTime)
         {
-            return Reject(asset, item, "Future news is not visible at the decision time.");
+            return Reject(asset, item, "Stopped at time: Future news is not visible at the decision time.");
         }
 
         if (age > strategy.MaxNewsAgeMinutes)
         {
-            return Reject(asset, item, "News age " + age.ToString("0", CultureInfo.InvariantCulture) + "m exceeds the configured maximum.");
+            return Reject(asset, item, "Stopped at age: " + age.ToString("0", CultureInfo.InvariantCulture) + "m exceeds " + strategy.MaxNewsAgeMinutes.ToString(CultureInfo.InvariantCulture) + "m.");
         }
 
         if (item.Direction is EventDirection.Neutral or EventDirection.Unknown or EventDirection.Mixed)
         {
-            return Reject(asset, item, "News direction " + item.Direction + " is ignored.");
+            return Reject(asset, item, "Stopped at direction: " + item.Direction + " is ignored.");
         }
 
         if (item.ConfidenceScore < strategy.MinNewsConfidence)
         {
-            return Reject(asset, item, "News confidence is below the configured minimum.");
+            return Reject(asset, item, "Stopped at confidence: " + item.ConfidenceScore.ToString("0.00", CultureInfo.InvariantCulture) + " is below " + strategy.MinNewsConfidence.ToString("0.00", CultureInfo.InvariantCulture) + ".");
         }
 
         if (item.ImpactScore < strategy.MinNewsImpact)
         {
-            return Reject(asset, item, "News impact is below the configured minimum.");
+            return Reject(asset, item, "Stopped at impact: " + item.ImpactScore.ToString("0.00", CultureInfo.InvariantCulture) + " is below " + strategy.MinNewsImpact.ToString("0.00", CultureInfo.InvariantCulture) + ".");
         }
 
         if (relevance < strategy.MinRelevance)
         {
-            return Reject(asset, item, "Asset relevance " + relevance.ToString("0.00", CultureInfo.InvariantCulture) + " is below the configured minimum.");
+            return Reject(asset, item, "Stopped at relevance: " + relevance.ToString("0.00", CultureInfo.InvariantCulture) + " is below " + strategy.MinRelevance.ToString("0.00", CultureInfo.InvariantCulture) + ".");
         }
 
         var decay = NewsFeatureProvider.DecayWeight(options.DecayLambdaPerMinute, item.PublishedAtUtc, decisionTime);
@@ -101,12 +101,22 @@ public static class NewsMarketConfirmation
         var header = Describe(item, asset, age, decay, scores, notes);
         if (opposed >= strategy.ConflictMarketScore)
         {
-            return Reject(asset, item, header + "RESULT:\nNO_TRADE\n\nReason:\n" + (bullish ? "Bullish" : "Bearish") + " news but strong opposing market confirmation.");
+            return Reject(asset, item, Stop(header, "Stopped at market conflict: " + (bullish ? "Bullish" : "Bearish") + " news but strong opposing market confirmation. Opposing score " + opposed.ToString("0.0", CultureInfo.InvariantCulture) + "."));
         }
 
-        if (newsScore < strategy.MinNewsScore || marketScore < strategy.MinMarketScore || total < strategy.MinTotalScore)
+        if (newsScore < strategy.MinNewsScore)
         {
-            return Reject(asset, item, header + "RESULT:\nNO_TRADE\n\nReason:\nNews or market confirmation score is below the configured minimum.");
+            return Reject(asset, item, Stop(header, "Stopped at news score: " + newsScore.ToString("0.0", CultureInfo.InvariantCulture) + " is below the configured minimum of " + strategy.MinNewsScore.ToString(CultureInfo.InvariantCulture) + "."));
+        }
+
+        if (marketScore < strategy.MinMarketScore)
+        {
+            return Reject(asset, item, Stop(header, "Stopped at market score: " + marketScore.ToString("0.0", CultureInfo.InvariantCulture) + " is below the configured minimum of " + strategy.MinMarketScore.ToString(CultureInfo.InvariantCulture) + "."));
+        }
+
+        if (total < strategy.MinTotalScore)
+        {
+            return Reject(asset, item, Stop(header, "Stopped at total score: " + total.ToString("0.0", CultureInfo.InvariantCulture) + " is below the configured minimum of " + strategy.MinTotalScore.ToString(CultureInfo.InvariantCulture) + ". News " + newsScore.ToString("0.0", CultureInfo.InvariantCulture) + ", market " + marketScore.ToString("0.0", CultureInfo.InvariantCulture) + "."));
         }
 
         var signal = bullish ? NewsMarketSignals.LongCandidate : NewsMarketSignals.ShortCandidate;
@@ -347,6 +357,9 @@ public static class NewsMarketConfirmation
             ["marketScore"] = (decimal)market,
             ["finalScore"] = (decimal)total
         };
+
+    private static string Stop(string header, string reason) =>
+        header + "RESULT:\nNO_TRADE\n\nReason:\n" + reason;
 
     private static NewsMarketDecision Reject(NewsAssetContext asset, NewsEvent item, string reason) =>
         new(

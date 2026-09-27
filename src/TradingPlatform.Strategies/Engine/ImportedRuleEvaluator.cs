@@ -79,6 +79,7 @@ public static class ImportedRuleEvaluator
         CausalIndicatorCache cache)
     {
         var length = Math.Max(2, p.SwingLength);
+        var deviation = ZigZagDeviationPercent(context.Symbol, p.PriceChangeThreshold);
         var highs = cache.ConfirmedSwingHigh(length);
         var lows = cache.ConfirmedSwingLow(length);
         var atr = cache.Atr(p.AtrPeriod);
@@ -90,7 +91,7 @@ public static class ImportedRuleEvaluator
         var prevClose = candles[i - 1].Close;
         var mid = high is { } h && low is { } l ? (h + l) / 2m : (decimal?)null;
         var deviationOk = high is { } swingHigh && low is { } swingLow && mid is > 0m
-            && (swingHigh - swingLow) / mid.Value * 100m >= p.PriceChangeThreshold;
+            && (swingHigh - swingLow) / mid.Value * 100m >= deviation;
         var shortFade = deviationOk && high is { } fadeHigh && prevHigh is { } priorHigh
             && close > fadeHigh && prevClose <= priorHigh;
         var longFade = deviationOk && low is { } fadeLow && prevLow is { } priorLow
@@ -134,6 +135,21 @@ public static class ImportedRuleEvaluator
         }
 
         return Detail(SignalType.NoAction, "ZigZag fade breakout is not confirmed.", candles, i);
+    }
+
+    private static decimal ZigZagDeviationPercent(string? symbol, decimal fallback)
+    {
+        if (string.Equals(symbol, "ETHUSDT", StringComparison.OrdinalIgnoreCase))
+        {
+            return 6m;
+        }
+
+        if (string.Equals(symbol, "SOLUSDT", StringComparison.OrdinalIgnoreCase))
+        {
+            return 5m;
+        }
+
+        return fallback;
     }
 
     /// <summary>
@@ -200,8 +216,8 @@ public static class ImportedRuleEvaluator
     }
 
     /// <summary>
-    /// freqtrade BinHV45. Close Bollinger(40, 2), sample std. Published buy_params 7 / 17 / 25 per mille.
-    /// No exit signal. minimal_roi 1.25%, stoploss 5%. Long only.
+    /// freqtrade BinHV45. Close Bollinger(40, 2). Published gates are 0.008, 0.0175 and a wick under 0.25 of the band.
+    /// No separate exit signal. minimal_roi 1.25%, stoploss 5%. Long only.
     /// </summary>
     private static StrategySignalDetail BinHv45(
         IReadOnlyList<MarketCandle> candles,
@@ -216,9 +232,9 @@ public static class ImportedRuleEvaluator
             binhv: true,
             cluc: false,
             exitOnMiddle: false,
-            bbRatio: 0.007m,
-            closeRatio: 0.017m,
-            tailRatio: 0.025m,
+            bbRatio: 0.008m,
+            closeRatio: 0.0175m,
+            tailRatio: 0.25m,
             stopPct: 0.05m,
             roiPct: 0.0125m,
             exitProfitOnly: false,

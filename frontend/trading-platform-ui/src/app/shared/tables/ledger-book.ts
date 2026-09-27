@@ -113,24 +113,48 @@ export type LedgerBookTab = 'positions' | 'open' | 'history' | 'fills' | 'closed
     </section>
   `,
   styles: `
-    :host { display: block; min-height: 0; height: 100%; }
+    :host { display: flex; flex-direction: column; min-height: 0; height: 100%; }
     .ledger-book {
       display: flex;
       flex-direction: column;
-      min-height: 360px;
+      flex: 1;
+      min-height: 0;
       height: 100%;
+      overflow: hidden;
     }
     .ledger-book-head { flex-wrap: wrap; gap: 10px; }
-    .ledger-subtabs { margin: 0 12px 8px; align-self: flex-start; }
+    .ledger-subtabs { margin: 0 12px 8px; align-self: flex-start; flex-shrink: 0; }
     .ledger-coin-filter { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
-    .ledger-book .table-scroll { flex: 1; min-height: 220px; }
+    .ledger-book > app-position-table,
+    .ledger-book > app-trade-table,
+    .ledger-book > .table-scroll,
+    .ledger-book > app-empty-state {
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+    .ledger-book > app-position-table,
+    .ledger-book > app-trade-table {
+      display: flex;
+      flex-direction: column;
+    }
+    .ledger-book > .table-scroll { overflow: auto; }
     :host ::ng-deep .is-embedded.panel {
       background: transparent;
       border: 0;
       box-shadow: none;
       padding: 0;
+      flex: 1 1 auto;
       height: auto;
       min-height: 0;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    :host ::ng-deep .is-embedded .table-scroll {
+      flex: 1 1 auto;
+      min-height: 0;
+      max-height: none;
+      overflow: auto;
     }
   `,
 })

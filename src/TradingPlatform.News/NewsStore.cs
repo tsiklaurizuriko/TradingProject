@@ -77,8 +77,7 @@ public sealed class NewsPipeline
         foreach (var item in clustered)
         {
             _classifier.Classify(item);
-            var text = string.Join(' ', item.OriginalArticles.Select(article => article.Title));
-            _catalog.Bind(item, text);
+            _catalog.Bind(item, NewsText.Readable(item));
             if (item.AffectedAssets.Count == 0 && IsMacro(item))
             {
                 item.MarketScope = MarketScope.Global;
@@ -107,6 +106,25 @@ public sealed class NewsPipeline
         NewsEventClusterer.Cluster([item], new NewsOptions { DeduplicationEnabled = true })[0];
 }
 
+public sealed record NewsProviderReport(
+    string Provider,
+    bool Succeeded,
+    string? Error,
+    int Fetched,
+    int Rejected,
+    DateTimeOffset AttemptedAtUtc,
+    bool Enabled = true,
+    DateTimeOffset? NextEligibleUtc = null);
+
+public sealed class NewsCollectionResult
+{
+    public IReadOnlyList<NewsEvent> Events { get; init; } = [];
+
+    public IReadOnlyList<NewsProviderReport> Providers { get; init; } = [];
+
+    public IReadOnlyList<string> Errors { get; init; } = [];
+}
+
 public sealed class NewsCollector
 {
     private readonly NewsOptions _options;
@@ -127,59 +145,86 @@ public sealed class NewsCollector
     public async Task<IReadOnlyList<NewsEvent>> CollectAsync(
         DateTimeOffset from,
         DateTimeOffset to,
+        CancellationToken cancellationToken) =>
+        (await CollectDetailedAsync(from, to, cancellationToken)).Events;
+
+    public async Task<NewsCollectionResult> CollectDetailedAsync(
+        DateTimeOffset from,
+        DateTimeOffset to,
         CancellationToken cancellationToken)
     {
         if (!_options.Enabled)
         {
-            return [];
+            return new NewsCollectionResult();
         }
 
         if (!string.Equals(_options.Mode, "Live", StringComparison.OrdinalIgnoreCase))
         {
             var stored = await _store.LoadEventsAsync(cancellationToken);
-            return stored.Count > 0 ? stored : _pipeline.Build(await _store.LoadRawAsync(cancellationToken));
+            var events = stored.Count > 0 ? stored : _pipeline.Build(await _store.LoadRawAsync(cancellationToken));
+            return new NewsCollectionResult { Events = events };
         }
 
         var raw = new List<RawNewsItem>();
-        var errors = new List<string>();
+        var reports = new List<NewsProviderReport>();
         foreach (var provider in _providers)
         {
             if (_options.Providers.Length > 0
-                && !_options.Providers.Contains(provider.Name, StringComparer.OrdinalIgnoreCase))
+                && !_options.Providers.Contains(provider.Name, StringComparer.OrdinalIgnoreCase)
+                && !_options.Providers.Contains(provider.ScheduleKey, StringComparer.OrdinalIgnoreCase))
             {
                 continue;
             }
 
-            IReadOnlyList<RawNewsItem> batch;
+            var attempted = DateTimeOffset.UtcNow;
+            NewsProviderBatch batch;
             try
             {
-                batch = await provider.GetNewsAsync(from, to, cancellationToken);
+                batch = await provider.FetchAsync(from, to, cancellationToken);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                errors.Add(provider.Name + ": " + ex.Message);
+                throw;
+            }
+            catch (Exception ex)
+            {
+                reports.Add(new NewsProviderReport(provider.Name, false, ex.Message, 0, 0, attempted));
                 continue;
             }
 
-            if (batch.Count == 0)
+            foreach (var item in batch.Items)
             {
-                errors.Add(provider.Name + " returned no articles.");
+                if (string.IsNullOrWhiteSpace(item.Provider))
+                {
+                    item.Provider = provider.Name;
+                }
             }
 
-            raw.AddRange(batch);
+            raw.AddRange(batch.Items);
+            reports.Add(new NewsProviderReport(
+                provider.Name,
+                true,
+                batch.Warning,
+                batch.Items.Count,
+                batch.Rejected,
+                attempted));
             if (_options.CacheEnabled)
             {
-                await _store.SaveRawAsync(provider.Name, from, batch, cancellationToken);
+                await _store.SaveRawAsync(provider.Name, from, batch.Items, cancellationToken);
             }
         }
 
+        var errors = reports
+            .Where(report => !report.Succeeded || !string.IsNullOrWhiteSpace(report.Error))
+            .Select(report => report.Provider + ": " + report.Error)
+            .ToList();
         Errors = errors;
-        var events = _pipeline.Build(raw);
+        var built = _pipeline.Build(raw);
         if (_options.CacheEnabled)
         {
-            await _store.SaveEventsAsync(events, cancellationToken);
+            await _store.SaveEventsAsync(built, cancellationToken);
         }
 
-        return events;
+        return new NewsCollectionResult { Events = built, Providers = reports, Errors = errors };
     }
 }

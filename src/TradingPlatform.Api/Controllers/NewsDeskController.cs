@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using TradingPlatform.Domain.News;
 using TradingPlatform.Infrastructure.Persistence;
 using TradingPlatform.News;
 
@@ -49,8 +50,9 @@ public sealed class NewsDeskController : ControllerBase
             latest?.Quantity,
             latest?.StopLossPrice,
             latest?.TakeProfitPrice,
-            latest?.RiskReason ?? session.LastStatus,
-            await store.RecentFeedAsync(30, cancellationToken));
+            latest is null ? session.LastStatus : NewsStop.Explain(latest),
+            await store.RecentFeedAsync(30, _news.Strategy, DateTimeOffset.UtcNow, cancellationToken),
+            HealthRows(_news, await store.ProviderHealthAsync(cancellationToken), DateTimeOffset.UtcNow));
     }
 
     [HttpPost("start")]
@@ -77,6 +79,61 @@ public sealed class NewsDeskController : ControllerBase
         await store.SaveAsync(cancellationToken);
         return Ok(new { running = false });
     }
+
+    private static List<NewsProviderHealthRow> HealthRows(NewsOptions options, IReadOnlyList<NewsProviderHealth> stored, DateTimeOffset now)
+    {
+        var wanted = new List<(string Name, string? Disabled)>();
+        foreach (var source in NewsProviderCatalog.ScheduledSources(options))
+        {
+            wanted.Add((source.Name, null));
+        }
+
+        foreach (var report in NewsProviderCatalog.DisabledCredentialReports(options, now))
+        {
+            if (wanted.All(item => item.Name != report.Provider))
+            {
+                wanted.Add((report.Provider, report.Error));
+            }
+        }
+
+        wanted.Sort((left, right) => StringComparer.OrdinalIgnoreCase.Compare(left.Name, right.Name));
+        var rows = new List<NewsProviderHealthRow>(wanted.Count);
+        foreach (var item in wanted)
+        {
+            var row = stored.FirstOrDefault(health => health.Provider == item.Name);
+            if (row is null)
+            {
+                var enabled = item.Disabled is null;
+                rows.Add(new NewsProviderHealthRow(Label(item.Name), enabled, enabled ? "Pending" : "Disabled", null, null, item.Disabled, null, null, 0, 0, 0, 0));
+                continue;
+            }
+
+            rows.Add(new NewsProviderHealthRow(
+                Label(row.Provider),
+                row.Enabled,
+                NewsProviderHealthRow.Describe(row, now),
+                row.LastAttemptUtc,
+                row.LastSuccessUtc,
+                row.LastError,
+                row.LastErrorUtc,
+                row.NextEligibleUtc,
+                row.FetchedCount,
+                row.InsertedCount,
+                row.DeduplicatedCount,
+                row.RejectedCount));
+        }
+
+        return rows;
+    }
+
+    private static string Label(string name) => name.ToLowerInvariant() switch
+    {
+        "coindesk" => "CoinDesk API",
+        "coingecko" => "CoinGecko",
+        "cryptopanic" => "CryptoPanic",
+        "fred" => "FRED",
+        _ => name
+    };
 
     private static string RepoRoot(string start)
     {
@@ -114,4 +171,5 @@ public sealed record NewsTradingDeskDto(
     decimal? StopLoss,
     decimal? TakeProfit,
     string? Reason,
-    IReadOnlyList<NewsFeedRow> Items);
+    IReadOnlyList<NewsFeedRow> Items,
+    IReadOnlyList<NewsProviderHealthRow> Providers);
