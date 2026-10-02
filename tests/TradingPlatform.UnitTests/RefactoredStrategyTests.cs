@@ -19,7 +19,10 @@ public sealed class RefactoredStrategyTests
         {
             StrategyTemplateKeys.IsKnown(key).Should().BeTrue();
             StrategyTemplateKeys.IsOperatorCatalog(key).Should().BeFalse();
+            StrategyTemplateKeys.IsResearchWorkflow(key).Should().BeTrue();
             StrategyTemplates.ResearchStatus(key).Should().Be("NOT_VALIDATED");
+            StrategyTemplates.DisplayName(key).Should().Contain("v2");
+            StrategyTemplateKeys.TimeframesFor(key).Should().NotBeEmpty();
             StrategyTemplateKeys.Normalize(key).Should().Be(key);
         }
 

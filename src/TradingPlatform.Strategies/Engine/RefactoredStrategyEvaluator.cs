@@ -96,61 +96,67 @@ public static class RefactoredStrategyEvaluator
             return Detail(SignalType.Hold, "Impulse long is open. Trail is 2.5 ATR.", candles, i, stop: trail);
         }
 
-        var impulseAt = -1;
-        for (var k = i - 1; k >= ready; k--)
+        var maxAge = Math.Max(1, p.MaxImpulseAgeBars);
+        var oldest = Math.Max(ready, i - maxAge);
+        var impulseAt = FindImpulse(candles, atr, p, window, i - 1, oldest);
+        if (impulseAt == -2)
         {
-            if (k - window < 0 || candles[k - window].Close <= 0m || atr[k] is not { } atrK || atrK <= 0m)
-            {
-                continue;
-            }
-
-            var ret = (candles[k].Close - candles[k - window].Close) / candles[k - window].Close;
-            var atrPct = atrK / candles[k].Close;
-            var volume = PriorMean(candles, k, p.RelativeVolumePeriod, c => c.Volume);
-            if (ret <= 0m || ret < p.PriceDisplacementAtr * atrPct)
-            {
-                continue;
-            }
-
-            if (volume is not { } mean || mean <= 0m || !StrategyExecutionRules.VolumeUsable(candles[k].Volume) || candles[k].Volume < mean * p.MinimumRelativeVolume)
-            {
-                if (volume is null || volume <= 0m || !StrategyExecutionRules.VolumeUsable(candles[k].Volume))
-                {
-                    return Detail(SignalType.NoAction, "Impulse volume is missing or not usable. No order.", candles, i);
-                }
-
-                continue;
-            }
-
-            impulseAt = k;
-            break;
+            return Detail(SignalType.NoAction, "Impulse volume is missing or not usable. No order.", candles, i);
         }
 
         if (impulseAt < 0)
         {
+            var staleFloor = Math.Max(ready, oldest - maxAge);
+            var stale = oldest > ready ? FindImpulse(candles, atr, p, window, oldest - 1, staleFloor) : -1;
+            if (stale >= 0)
+            {
+                return Detail(
+                    SignalType.NoAction,
+                    $"Impulse setup expired. impulse_index={stale} impulse_age={i - stale} max_age={maxAge} pullback=0 expired=1. No order.",
+                    candles,
+                    i,
+                    snapshot: ImpulseSnapshot(stale, i - stale, pullback: false, expired: true));
+            }
+
             return Detail(SignalType.NoAction, "No confirmed impulse before this bar.", candles, i);
         }
 
-        var touched = false;
+        var age = i - impulseAt;
+        var touchedAt = -1;
         decimal swing = decimal.MaxValue;
-        for (var k = impulseAt; k < i; k++)
+        for (var k = impulseAt + 1; k < i; k++)
         {
             swing = Math.Min(swing, candles[k].Low);
-            if (ema[k] is { } line && candles[k].Low <= line + (0.25m * (atr[k] ?? atrNow)))
+            if (touchedAt < 0 && ema[k] is { } line && atr[k] is { } atrK && atrK > 0m && candles[k].Low <= line + (0.25m * atrK))
             {
-                touched = true;
+                touchedAt = k;
+            }
+
+            if (touchedAt >= 0 && k > touchedAt && candles[k].Close < candles[touchedAt].Low)
+            {
+                return Detail(
+                    SignalType.NoAction,
+                    $"Impulse setup invalidated after the pullback. impulse_index={impulseAt} impulse_age={age} pullback=1 expired=0. Close broke the pullback low. No order.",
+                    candles,
+                    i,
+                    snapshot: ImpulseSnapshot(impulseAt, age, pullback: true, expired: false));
             }
         }
 
         var bar = candles[i];
-        if (!touched || emaNow <= 0m || bar.Close <= emaNow || bar.Close <= bar.Open)
+        if (touchedAt < 0 || emaNow <= 0m || bar.Close <= emaNow || bar.Close <= bar.Open)
         {
-            return Detail(SignalType.NoAction, "Impulse is waiting for a bullish reclaim of EMA.", candles, i);
+            return Detail(
+                SignalType.NoAction,
+                $"Impulse is waiting for a pullback after the impulse and a bullish reclaim of EMA. impulse_index={impulseAt} impulse_age={age} pullback={(touchedAt >= 0 ? 1 : 0)} expired=0.",
+                candles,
+                i,
+                snapshot: ImpulseSnapshot(impulseAt, age, touchedAt >= 0, expired: false));
         }
 
         if (swing == decimal.MaxValue)
         {
-            return Detail(SignalType.NoAction, "Impulse pullback low is missing.", candles, i);
+            return Detail(SignalType.NoAction, "Impulse pullback low is missing.", candles, i, snapshot: ImpulseSnapshot(impulseAt, age, pullback: true, expired: false));
         }
 
         var structural = swing - (0.3m * atrNow);
@@ -158,11 +164,76 @@ public static class RefactoredStrategyEvaluator
         var stop = structural < bar.Close ? Math.Max(structural, capped) : capped;
         if (stop >= bar.Close || bar.Close - stop <= 0m)
         {
-            return Detail(SignalType.NoAction, "Impulse stop distance is not valid.", candles, i);
+            return Detail(SignalType.NoAction, "Impulse stop distance is not valid.", candles, i, snapshot: ImpulseSnapshot(impulseAt, age, pullback: true, expired: false));
         }
 
-        return Detail(SignalType.Buy, "Impulse reclaim after a pullback to EMA. Long only.", candles, i, stop: stop);
+        return Detail(
+            SignalType.Buy,
+            $"Impulse reclaim after a pullback to EMA. Long only. impulse_index={impulseAt} impulse_age={age} pullback=1 expired=0.",
+            candles,
+            i,
+            stop: stop,
+            snapshot: ImpulseSnapshot(impulseAt, age, pullback: true, expired: false));
     }
+
+    private static int FindImpulse(
+        IReadOnlyList<MarketCandle> candles,
+        IReadOnlyList<decimal?> atr,
+        StrategyTemplateParams p,
+        int window,
+        int from,
+        int oldest)
+    {
+        for (var k = from; k >= oldest; k--)
+        {
+            if (k - window < 0 || candles[k].Close <= 0m || candles[k - window].Close <= 0m || atr[k] is not { } atrK || atrK <= 0m)
+            {
+                continue;
+            }
+
+            var priorHigh = candles[k - window].Close;
+            for (var j = k - window; j < k; j++)
+            {
+                priorHigh = Math.Max(priorHigh, candles[j].Close);
+            }
+
+            if (candles[k].Close <= priorHigh)
+            {
+                continue;
+            }
+
+            var ret = (candles[k].Close - candles[k - window].Close) / candles[k - window].Close;
+            var atrPct = atrK / candles[k].Close;
+            if (ret <= 0m || ret < p.PriceDisplacementAtr * atrPct)
+            {
+                continue;
+            }
+
+            var volume = PriorMean(candles, k, p.RelativeVolumePeriod, c => c.Volume);
+            if (volume is not { } mean || mean <= 0m || !StrategyExecutionRules.VolumeUsable(candles[k].Volume))
+            {
+                return -2;
+            }
+
+            if (candles[k].Volume < mean * p.MinimumRelativeVolume)
+            {
+                continue;
+            }
+
+            return k;
+        }
+
+        return -1;
+    }
+
+    private static Dictionary<string, decimal?> ImpulseSnapshot(int index, int age, bool pullback, bool expired) =>
+        new()
+        {
+            ["impulseIndex"] = index,
+            ["impulseAge"] = age,
+            ["pullback"] = pullback ? 1m : 0m,
+            ["expired"] = expired ? 1m : 0m
+        };
 
     private static StrategySignalDetail ZigZag(
         StrategyTemplateParams p,
@@ -632,32 +703,28 @@ public static class RefactoredStrategyEvaluator
     {
         if (i < Math.Max(p.BbPeriod, p.RsiPeriod) + 2)
         {
-            return Detail(SignalType.NoAction, "Cluc v2 warmup is incomplete.", candles, i);
-        }
+            if (context.HasOpenPosition)
+            {
+                return TimeExpired(context, candles[i], p)
+                    ? Detail(SignalType.Exit, "Cluc v2 time stop.", candles, i)
+                    : Detail(SignalType.Hold, "Cluc v2 warmup is incomplete. The open position is not closed for missing bars.", candles, i);
+            }
 
-        var regime = HtfBias(context, candles[i].CloseTime, p.TrendEmaPeriod);
-        if (regime != true)
-        {
-            return Detail(SignalType.NoAction, regime is null
-                ? "DATA_UNAVAILABLE: 1h EMA regime is missing. No order."
-                : "Cluc v2 stays flat unless the higher timeframe is bullish.", candles, i);
+            return Detail(SignalType.NoAction, "Cluc v2 warmup is incomplete.", candles, i);
         }
 
         var (_, _, lower) = cache.Bollinger(p.BbPeriod, p.BbStdDev);
         var mid = cache.Bollinger(p.BbPeriod, p.BbStdDev).Mid;
         var rsi = cache.Rsi(p.RsiPeriod);
         var atr = cache.Atr(p.AtrPeriod);
-        if (lower[i] is not { } lo || lower[i - 1] is not { } prevLo || rsi[i] is not { } rsiNow || rsi[i - 1] is not { } rsiPrev || atr[i] is not { } atrNow || mid[i] is not { } middle)
-        {
-            return Detail(SignalType.NoAction, "Cluc v2 indicators are not ready.", candles, i);
-        }
-
-        var setup = candles[i - 1].Close < prevLo
-            && candles[i].Close > lo
-            && rsiPrev < p.RsiOversold
-            && rsiNow > rsiPrev
-            && candles[i].Close > candles[i].Open
-            && StrategyExecutionRules.VolumeUsable(candles[i].Volume);
+        var lo = lower[i];
+        var prevLo = lower[i - 1];
+        var rsiNow = rsi[i];
+        var rsiPrev = rsi[i - 1];
+        var atrNow = atr[i];
+        var middle = mid[i];
+        var indicatorsReady = lo is not null && prevLo is not null && rsiNow is not null && rsiPrev is not null && atrNow is not null && middle is not null;
+        var regime = HtfBias(context, candles[i].CloseTime, p.TrendEmaPeriod);
         if (context.HasOpenPosition)
         {
             if (!IsLong(context))
@@ -670,20 +737,51 @@ public static class RefactoredStrategyEvaluator
                 return Detail(SignalType.Exit, "Cluc v2 time stop.", candles, i);
             }
 
-            if (candles[i].Close >= middle && InProfit(context, candles[i].Close))
+            if (indicatorsReady && candles[i].Close >= middle!.Value && InProfit(context, candles[i].Close))
             {
                 return Detail(SignalType.Exit, "Cluc v2 middle band reached in profit.", candles, i);
             }
 
-            return Detail(SignalType.Hold, "Cluc v2 long is open.", candles, i, stop: candles[i - 1].Low - (p.SweepDepthAtr * atrNow));
+            if (regime == false)
+            {
+                return Detail(SignalType.Exit, "Cluc v2 higher timeframe turned bearish. Long is closed. This is not a missing-data path.", candles, i);
+            }
+
+            if (!indicatorsReady)
+            {
+                return Detail(SignalType.Hold, "Cluc v2 indicators are not ready. The open position stays under the existing stop.", candles, i);
+            }
+
+            var holdReason = regime is null
+                ? "Cluc v2 long stays open. Higher-timeframe data is missing and is not treated as bearish."
+                : "Cluc v2 long is open.";
+            return Detail(SignalType.Hold, holdReason, candles, i, stop: candles[i - 1].Low - (p.SweepDepthAtr * atrNow!.Value));
         }
 
+        if (regime != true)
+        {
+            return Detail(SignalType.NoAction, regime is null
+                ? "DATA_UNAVAILABLE: 1h EMA regime is missing. No order."
+                : "Cluc v2 stays flat unless the higher timeframe is bullish.", candles, i);
+        }
+
+        if (!indicatorsReady)
+        {
+            return Detail(SignalType.NoAction, "Cluc v2 indicators are not ready.", candles, i);
+        }
+
+        var setup = candles[i - 1].Close < prevLo!.Value
+            && candles[i].Close > lo!.Value
+            && rsiPrev!.Value < p.RsiOversold
+            && rsiNow!.Value > rsiPrev.Value
+            && candles[i].Close > candles[i].Open
+            && StrategyExecutionRules.VolumeUsable(candles[i].Volume);
         if (!setup)
         {
             return Detail(SignalType.NoAction, "Cluc v2 reversal is not confirmed.", candles, i);
         }
 
-        var stop = candles[i - 1].Low - (p.SweepDepthAtr * atrNow);
+        var stop = candles[i - 1].Low - (p.SweepDepthAtr * atrNow!.Value);
         var risk = candles[i].Close - stop;
         if (risk <= 0m)
         {
@@ -691,8 +789,8 @@ public static class RefactoredStrategyEvaluator
         }
 
         var rTarget = candles[i].Close + (1.5m * risk);
-        var take = middle > candles[i].Close && StrategyExecutionRules.RewardMultiple(candles[i].Close, stop, middle, 1.5m)
-            ? middle
+        var take = middle!.Value > candles[i].Close && StrategyExecutionRules.RewardMultiple(candles[i].Close, stop, middle.Value, 1.5m)
+            ? middle.Value
             : rTarget;
         if (!StrategyExecutionRules.PaysRoundTrip(candles[i].Close, take) || !StrategyExecutionRules.RewardMultiple(candles[i].Close, stop, take, 1.5m))
         {
@@ -1567,6 +1665,7 @@ public static class RefactoredStrategyEvaluator
         IReadOnlyList<MarketCandle> candles,
         int i,
         decimal? stop = null,
-        decimal? take = null) =>
-        new(signal, reason, candles[i].CloseTime, stop, take, null, StrategyExecutionRules.VersionStatus);
+        decimal? take = null,
+        IReadOnlyDictionary<string, decimal?>? snapshot = null) =>
+        new(signal, reason, candles[i].CloseTime, stop, take, snapshot, StrategyExecutionRules.VersionStatus);
 }

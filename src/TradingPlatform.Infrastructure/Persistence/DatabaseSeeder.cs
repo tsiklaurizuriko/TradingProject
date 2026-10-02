@@ -281,10 +281,51 @@ public sealed class DatabaseSeeder
             AlignCatalogStrategy(strategy, row, parameters);
         }
 
+        await SeedRefactoredResearchAsync(existing, admin, cancellationToken);
         await AlignBotTimeframesAsync(cancellationToken);
         await RetireHiddenStrategiesAsync(existing, cancellationToken);
         await AttachStrategyRiskAsync(cancellationToken);
         await ApplyPublishedRiskAsync(cancellationToken);
+    }
+
+    private async Task SeedRefactoredResearchAsync(List<Strategy> existing, User admin, CancellationToken cancellationToken)
+    {
+        foreach (var key in StrategyTemplateKeys.Refactored)
+        {
+            if (StrategyTemplateKeys.ContainsTemplate(existing.Select(strategy => strategy.TemplateKey), key))
+            {
+                continue;
+            }
+
+            var parameters = StrategyTemplates.DefaultsFor(key, qualityOn: false);
+            var timeframe = TimeframeExtensions.TryParseInterval(parameters.Timeframe, out var parsed)
+                ? parsed
+                : Timeframe.FifteenMinutes;
+            var strategy = new Strategy
+            {
+                UserId = admin.Id,
+                User = admin,
+                Name = StrategyTemplates.DisplayName(key),
+                Description = "Research v2. NOT_VALIDATED. Disabled until an operator turns it on. Seeding does not start bots or enable live trading.",
+                AppliesToAllSymbols = true,
+                TemplateKey = key,
+                AllowedSide = parameters.AllowedSide,
+                IsEnabled = false,
+                IsArchived = false,
+                ValidationStatus = StrategyExecutionRules.VersionStatus
+            };
+            strategy.Versions.Add(new StrategyVersion
+            {
+                Strategy = strategy,
+                VersionNumber = 1,
+                DefinitionJson = StrategyTemplates.Build(strategy.Name, 1, parameters),
+                Symbol = "BTCUSDT",
+                Timeframe = timeframe
+            });
+            _db.Strategies.Add(strategy);
+            existing.Add(strategy);
+            await _db.SaveChangesAsync(cancellationToken);
+        }
     }
 
     private async Task RetireHiddenStrategiesAsync(List<Strategy> existing, CancellationToken cancellationToken)
@@ -302,6 +343,11 @@ public sealed class DatabaseSeeder
             {
                 var latest = strategy.Versions.OrderByDescending(row => row.VersionNumber).FirstOrDefault();
                 key = latest is null ? string.Empty : StrategyTemplates.Read(latest.DefinitionJson).TemplateKey;
+            }
+
+            if (StrategyTemplateKeys.IsResearchWorkflow(key))
+            {
+                continue;
             }
 
             if (StrategyTemplateKeys.IsKnown(key) && !StrategyTemplateKeys.IsOperatorCatalog(key))

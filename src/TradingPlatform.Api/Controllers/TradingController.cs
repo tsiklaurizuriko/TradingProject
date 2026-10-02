@@ -204,6 +204,22 @@ public sealed class TradingController : ControllerBase
         return _lifecycle.StartAllIdleAsync(UserId(), parsed, request.PreferredStrategyId, cancellationToken);
     }
 
+    [HttpPost("bots/start-strategy")]
+    public Task<StartBotsResult> StartStrategy([FromBody] StrategyBotsRequest request, CancellationToken cancellationToken)
+    {
+        if (!Enum.TryParse<TradingMode>(request.Mode, true, out var parsed) || parsed is not (TradingMode.Paper or TradingMode.Live))
+        {
+            throw new DomainException(ErrorCodes.ValidationFailed, "Use Paper or Live.");
+        }
+
+        if (request.StrategyId == Guid.Empty)
+        {
+            throw new DomainException(ErrorCodes.ValidationFailed, "Pick a strategy group.");
+        }
+
+        return _lifecycle.StartAllIdleAsync(UserId(), parsed, request.StrategyId, cancellationToken);
+    }
+
     [HttpPost("bots/stop-all")]
     public Task<StopBotsResult> StopAll([FromBody] StartBotsRequest request, CancellationToken cancellationToken)
     {
@@ -212,7 +228,23 @@ public sealed class TradingController : ControllerBase
             throw new DomainException(ErrorCodes.ValidationFailed, "Use Paper or Live.");
         }
 
-        return _lifecycle.StopAllRunningAsync(UserId(), parsed, cancellationToken);
+        return _lifecycle.StopAllRunningAsync(UserId(), parsed, request.PreferredStrategyId, cancellationToken);
+    }
+
+    [HttpPost("bots/stop-strategy")]
+    public Task<StopBotsResult> StopStrategy([FromBody] StrategyBotsRequest request, CancellationToken cancellationToken)
+    {
+        if (!Enum.TryParse<TradingMode>(request.Mode, true, out var parsed) || parsed is not (TradingMode.Paper or TradingMode.Live))
+        {
+            throw new DomainException(ErrorCodes.ValidationFailed, "Use Paper or Live.");
+        }
+
+        if (request.StrategyId == Guid.Empty)
+        {
+            throw new DomainException(ErrorCodes.ValidationFailed, "Pick a strategy group.");
+        }
+
+        return _lifecycle.StopAllRunningAsync(UserId(), parsed, request.StrategyId, cancellationToken);
     }
 
     [HttpGet("strategies")]

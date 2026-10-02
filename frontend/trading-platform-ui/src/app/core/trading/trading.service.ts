@@ -261,6 +261,24 @@ export class TradingService {
     );
   }
 
+  stopWorkspaceStrategy(strategyId: string): Promise<StopBotsResult> {
+    return firstValueFrom(
+      this.http.post<StopBotsResult>(`${environment.apiBaseUrl}/trading/bots/stop-strategy`, {
+        mode: this.ui.workspace(),
+        strategyId,
+      }),
+    );
+  }
+
+  startWorkspaceStrategy(strategyId: string): Promise<StartBotsResult> {
+    return firstValueFrom(
+      this.http.post<StartBotsResult>(`${environment.apiBaseUrl}/trading/bots/start-strategy`, {
+        mode: this.ui.workspace(),
+        strategyId,
+      }),
+    );
+  }
+
   async refresh(quiet = false): Promise<void> {
     if (this.overviewInFlight) {
       return;

@@ -15,12 +15,12 @@ Status of the historical books: **NOT VALIDATED**. Nothing below is a profitabil
 | Slippage | Replay `SlippagePercent`. Sensitivity cases are 5 bps (`0.05`), 10 bps (`0.10`), and 20 bps (`0.20`). A scripted flat round trip loses more as slippage rises. That test is not a strategy result. | Paper bps setting. | Not sent. |
 | Funding | Applied only when settlement rows are passed in and `fundingTime` is at or before the bar close. Otherwise the report says `EXCLUDING_FUNDING`. That omission is not a zero funding rate. | A live funding print can be shown to the signal. It is not invented when missing. | Not sent. |
 
-v1 imported rules still use `BookStopsOff`. That mode still flattens and can open the opposite side on the same next open. v2 signals do not. An opposite v2 setup while a position is open returns Exit with `REVERSAL_DEFERRED`. The new entry can only be evaluated after that close, on a later closed bar.
+v1 imported rules still use `BookStopsOff`. That mode still flattens and can open the opposite side on the next open. v2 signals do not. An opposite v2 setup while a position is open returns Exit with `REVERSAL_DEFERRED`. The new entry can only be evaluated after that close, on a later closed bar. Cluc v2 now runs that exit before the higher-timeframe entry gate. A bearish completed 1h EMA closes the long. Missing 1h data leaves the open long under its existing stop and blocks a new long.
 
 ## Stops and targets
 
 - The suggested stop is interpreted from the fill, not from the signal close. `TryStructuralStops` rejects a stop on the wrong side of the fill or closer than 0.2% of price. A rejected stop cancels that entry instead of inventing a price.
-- Tick rounding, when `ReplaySettings.TickSize` is positive, moves a long stop up and a short stop down. That is tighter, not wider. A tick that would cross the fill rejects the entry. Paper and live already round with the contract tick. The default replay tick remains 0 because the candle file does not carry the tick.
+- Tick rounding, when `ReplaySettings.TickSize` is positive, moves a long stop up and a short stop down. That is tighter, not wider. A tick that would cross the fill rejects the entry. Paper and live already round with the contract tick. `BacktestService` copies `Symbol.TickSize` when that stored value is positive. If the symbol row is missing or the tick is 0, the replay says `TICK_SIZE_UNCONFIGURED` and does not invent a tick.
 - Trailing stops on v2 ratchet only tighter on later closed bars (`HonorSuggestedStops`). They are not loosened.
 - Breakeven after +1R uses `ProtectiveStopPrice` and the average fill. If that stop is missing, breakeven is not guessed.
 - Time stops for v2 are `RefactoredStrategyEvaluator.MaxHoldBars`: Impulse 32, Cluc 24, Combined 24, Flat range 48, Bollinger reversion 12. Other v2 templates have no time stop. The replay also receives `PositionOpenedAt`, so the signal can emit the same time stop when the clock is present.
@@ -54,6 +54,6 @@ v2 entries that have a target must clear three times the documented round trip: 
 
 - Intrabar sequence when both stop and target trade is still unknowable from OHLC. Stop wins.
 - Partial exits are not filled.
-- Replay tick size is 0 unless a caller sets it.
+- Replay tick size is the stored symbol tick when that value is positive. Otherwise it stays 0 and the assumption text says `TICK_SIZE_UNCONFIGURED`.
 - v1 flow and squeeze index paths can still read the last funding or open-interest slot of a full series.
 - No walk-forward or OOS run was executed for the v2 templates. Historical candles were not loaded for a score. Every v2 status is `NOT_VALIDATED`.

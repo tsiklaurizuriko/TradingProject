@@ -2,7 +2,7 @@ import { Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { TradingService } from '../../core/trading/trading.service';
-import { BotDto, botStatus, modeBadge, signedMoney } from '../../core/trading/trading.models';
+import { BotDto, StartBotsResult, StopBotsResult, botStatus, modeBadge, signedMoney } from '../../core/trading/trading.models';
 import { ratingFor, ratingSortValue, starText, verdictLabel } from '../../core/trading/strategy-ratings';
 import { ToastService } from '../../core/ui/toast.service';
 import { UiStateService } from '../../core/ui/ui-state.service';
@@ -26,6 +26,9 @@ export class BotsPage {
   readonly signedMoney = signedMoney;
   busy = false;
   busyId: string | null = null;
+  busyGroup: string | null = null;
+  groupAction: 'start' | 'stop' | null = null;
+  readonly confirmGroup = signal<{ key: string; name: string } | null>(null);
   readonly strategyId = signal(this.ui.preferredStrategyId());
   readonly coinQuery = signal('');
   readonly selected = signal<Set<string>>(new Set());
@@ -241,6 +244,172 @@ export class BotsPage {
     }
   }
 
+  idleCount(bots: BotDto[]): number {
+    return bots.filter((bot) => bot.status !== 'Running').length;
+  }
+
+  requestStartGroup(group: StrategyBotGroup): void {
+    if (!this.idleCount(group.bots)) {
+      this.toast.show('Nothing to start', `Every bot in ${group.name} is already running.`, 'info');
+      return;
+    }
+    if (this.ui.isLive() || this.ui.confirmStartAll()) {
+      this.confirmGroup.set({ key: group.key, name: group.name });
+      return;
+    }
+    void this.startGroup(group);
+  }
+
+  cancelStartGroup(): void {
+    this.confirmGroup.set(null);
+  }
+
+  groupStartTitle(): string {
+    return this.ui.isLive() ? 'LIVE TRADING WARNING' : `Start ${this.confirmGroup()?.name ?? 'group'}`;
+  }
+
+  groupStartMessage(): string {
+    const name = this.confirmGroup()?.name ?? 'this group';
+    if (!this.ui.isLive()) {
+      return `This starts every stopped bot in ${name}. Other groups stay as they are.`;
+    }
+    return `LIVE bots in ${name} only. Other groups stay as they are. Isolated still allows only one open LIVE position per coin.`;
+  }
+
+  groupStartWarning(): string {
+    return this.ui.isLive()
+      ? 'Real Binance USD-M Isolated orders can fire as soon as a strategy signals. Planned Risk is not a guaranteed maximum loss.'
+      : '';
+  }
+
+  confirmStartGroup(): void {
+    const pending = this.confirmGroup();
+    this.confirmGroup.set(null);
+    if (!pending) {
+      return;
+    }
+    const group = this.strategyGroups().find((row) => row.key === pending.key) ?? { ...pending, bots: [] };
+    void this.startGroup(group);
+  }
+
+  async startGroup(group: StrategyBotGroup): Promise<void> {
+    await this.runGroup(group, 'start');
+  }
+
+  async stopGroup(group: StrategyBotGroup): Promise<void> {
+    if (!this.runningCount(group.bots)) {
+      this.toast.show('Nothing to stop', `No running bots in ${group.name}.`, 'info');
+      return;
+    }
+    await this.runGroup(group, 'stop');
+  }
+
+  private async runGroup(group: StrategyBotGroup, action: 'start' | 'stop'): Promise<void> {
+    const current = this.strategyGroups().find((row) => row.key === group.key) ?? group;
+    this.busy = true;
+    this.busyGroup = current.key;
+    this.groupAction = action;
+    try {
+      const result = action === 'start' ? await this.startGroupBots(current) : await this.stopGroupBots(current);
+      await this.trading.refresh();
+      this.toastGroup(current.name, action, result);
+    } catch {
+      this.toast.show(
+        action === 'start' ? 'Start failed' : 'Stop failed',
+        action === 'start' ? `Could not start ${current.name}.` : `Could not stop ${current.name}.`,
+        'error',
+      );
+    } finally {
+      this.busy = false;
+      this.busyGroup = null;
+      this.groupAction = null;
+    }
+  }
+
+  private async startGroupBots(group: StrategyBotGroup): Promise<StartBotsResult> {
+    const idle = group.bots.filter((bot) => bot.status !== 'Running');
+    if (!isGuid(group.key)) {
+      return this.startListed(idle);
+    }
+    try {
+      return await this.trading.startWorkspaceStrategy(group.key);
+    } catch (error) {
+      if (!isMissingRoute(error)) {
+        throw error;
+      }
+      return this.startListed(idle);
+    }
+  }
+
+  private async stopGroupBots(group: StrategyBotGroup): Promise<StopBotsResult> {
+    const running = group.bots.filter((bot) => bot.status === 'Running');
+    if (!isGuid(group.key)) {
+      return this.stopListed(running);
+    }
+    try {
+      return await this.trading.stopWorkspaceStrategy(group.key);
+    } catch (error) {
+      if (!isMissingRoute(error)) {
+        throw error;
+      }
+      return this.stopListed(running);
+    }
+  }
+
+  private async startListed(bots: BotDto[]): Promise<StartBotsResult> {
+    let started = 0;
+    let failed = 0;
+    let detail: string | null = null;
+    for (const bot of bots) {
+      try {
+        await this.trading.startWorkspaceBot(bot);
+        started++;
+      } catch (error) {
+        failed++;
+        detail = error instanceof Error ? error.message : 'Could not start this bot.';
+      }
+    }
+    return { started, failed, detail };
+  }
+
+  private async stopListed(bots: BotDto[]): Promise<StopBotsResult> {
+    let stopped = 0;
+    let failed = 0;
+    let detail: string | null = null;
+    for (const bot of bots) {
+      try {
+        await this.trading.stopWorkspaceBot(bot);
+        stopped++;
+      } catch (error) {
+        failed++;
+        detail = error instanceof Error ? error.message : 'Could not stop this bot.';
+      }
+    }
+    return { stopped, failed, detail };
+  }
+
+  private toastGroup(name: string, action: 'start' | 'stop', result: StartBotsResult | StopBotsResult): void {
+    if (action === 'start') {
+      const row = result as StartBotsResult;
+      if (row.failed && row.started) {
+        this.toast.show('Partial start', `${row.started} ${name} bot(s) started, ${row.failed} skipped.${row.detail ? ' ' + row.detail : ''}`, this.ui.isLive() ? 'error' : 'info');
+      } else if (row.failed) {
+        this.toast.show('Start blocked', row.detail || `Could not start ${name}.`, 'error');
+      } else {
+        this.toast.show(`${name} started`, `${row.started} bot(s) in this group are running. Other groups were not changed.`, this.ui.isLive() ? 'error' : 'success');
+      }
+      return;
+    }
+    const row = result as StopBotsResult;
+    if (row.failed && row.stopped) {
+      this.toast.show('Partial stop', `${row.stopped} ${name} bot(s) stopped, ${row.failed} skipped.${row.detail ? ' ' + row.detail : ''}`, 'info');
+    } else if (row.failed) {
+      this.toast.show('Stop blocked', row.detail || `Could not stop ${name}.`, 'error');
+    } else {
+      this.toast.show(`${name} stopped`, `${row.stopped} bot(s) in this group were stopped. Other groups were not changed. Positions were not closed.`, 'success');
+    }
+  }
+
   groupKey(key: string): string {
     return `bots-strategy-${key}`;
   }
@@ -333,6 +502,20 @@ export class BotsPage {
     const wins = closed.filter((t) => t.pnL > 0).length;
     return `${((wins / closed.length) * 100).toFixed(0)}%`;
   }
+}
+
+interface StrategyBotGroup {
+  key: string;
+  name: string;
+  bots: BotDto[];
+}
+
+function isGuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
+function isMissingRoute(error: unknown): boolean {
+  return !!error && typeof error === 'object' && 'status' in error && (error as { status: unknown }).status === 404;
 }
 
 interface CoinPick {

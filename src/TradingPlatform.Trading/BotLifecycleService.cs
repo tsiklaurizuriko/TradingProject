@@ -393,7 +393,6 @@ public sealed class BotLifecycleService : IBotLifecycleService
         Guid? preferredStrategyId = null,
         CancellationToken cancellationToken = default)
     {
-        _ = preferredStrategyId;
         if (_options.KillSwitchEnabled)
         {
             throw new DomainException(ErrorCodes.KillSwitchActive, "Kill switch is active.");
@@ -423,6 +422,7 @@ public sealed class BotLifecycleService : IBotLifecycleService
 
         var bots = (await _store.ListWorkspaceBotsAsync(user.Id, mode, cancellationToken))
             .Where(bot => bot.Status != BotStatus.Running)
+            .Where(bot => MatchesStrategy(bot, preferredStrategyId))
             .OrderBy(bot => bot.Symbol)
             .ThenBy(bot => bot.Name)
             .ToList();
@@ -459,11 +459,20 @@ public sealed class BotLifecycleService : IBotLifecycleService
             await FlushWorkspaceProgressAsync(cancellationToken);
         }
 
-        _logger.LogInformation("Start-all {Mode}: started {Started}, failed {Failed}.", mode, started, failed);
+        _logger.LogInformation(
+            "Start-all {Mode} strategy {StrategyId}: started {Started}, failed {Failed}.",
+            mode,
+            preferredStrategyId,
+            started,
+            failed);
         return new StartBotsResult(started, failed, detail);
     }
 
-    public async Task<StopBotsResult> StopAllRunningAsync(Guid userId, TradingMode mode, CancellationToken cancellationToken = default)
+    public async Task<StopBotsResult> StopAllRunningAsync(
+        Guid userId,
+        TradingMode mode,
+        Guid? strategyId = null,
+        CancellationToken cancellationToken = default)
     {
         if (mode is not TradingMode.Paper and not TradingMode.Live)
         {
@@ -476,6 +485,7 @@ public sealed class BotLifecycleService : IBotLifecycleService
 
         var bots = (await _store.ListWorkspaceBotsAsync(user.Id, mode, cancellationToken))
             .Where(bot => bot.Status == BotStatus.Running)
+            .Where(bot => MatchesStrategy(bot, strategyId))
             .OrderBy(bot => bot.Symbol)
             .ThenBy(bot => bot.Id)
             .ToList();
@@ -514,9 +524,17 @@ public sealed class BotLifecycleService : IBotLifecycleService
             await FlushWorkspaceProgressAsync(cancellationToken);
         }
 
-        _logger.LogInformation("Stop-all {Mode}: stopped {Stopped}, failed {Failed}. Positions were not closed.", mode, stopped, failed);
+        _logger.LogInformation(
+            "Stop-all {Mode} strategy {StrategyId}: stopped {Stopped}, failed {Failed}. Positions were not closed.",
+            mode,
+            strategyId,
+            stopped,
+            failed);
         return new StopBotsResult(stopped, failed, detail);
     }
+
+    private static bool MatchesStrategy(Bot bot, Guid? strategyId) =>
+        strategyId is not { } id || id == Guid.Empty || bot.StrategyVersion?.StrategyId == id;
 
     private async Task FlushWorkspaceProgressAsync(CancellationToken cancellationToken)
     {

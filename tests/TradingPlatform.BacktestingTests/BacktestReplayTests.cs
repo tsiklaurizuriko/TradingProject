@@ -193,6 +193,39 @@ public sealed class BacktestReplayTests
     }
 
     [Fact]
+    public void Fee_scenarios_of_five_ten_and_twenty_bps_are_repeatable()
+    {
+        var start = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var candles = Enumerable.Range(0, 60).Select(i => Bar(start, i, 100m)).ToList();
+        var nets = new[] { 0.05m, 0.10m, 0.20m }
+            .Select(percent =>
+            {
+                var replay = new BacktestReplay(new ScriptedEngine(40, 50));
+                return replay.Run(
+                    new StrategyDefinition { Name = "script", Timeframe = "5m", Entry = new ConditionGroup(), Exit = new ConditionGroup() },
+                    candles,
+                    Settings(start, start.AddHours(6)) with { FeePercent = percent, SlippagePercent = 0m }).NetProfit;
+            })
+            .ToList();
+
+        nets[0].Should().BeGreaterThan(nets[1]);
+        nets[1].Should().BeGreaterThan(nets[2]);
+    }
+
+    [Fact]
+    public void Missing_tick_size_is_reported_and_does_not_invent_a_tick()
+    {
+        var start = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var candles = Enumerable.Range(0, 60).Select(i => Bar(start, i, 100m)).ToList();
+        var replay = new BacktestReplay(new ScriptedEngine(40, 50));
+        var result = replay.Run(
+            new StrategyDefinition { Name = "script", Timeframe = "5m", Entry = new ConditionGroup(), Exit = new ConditionGroup() },
+            candles,
+            Settings(start, start.AddHours(6)) with { TickSize = 0m });
+        result.Assumptions.Should().Contain("TICK_SIZE_UNCONFIGURED");
+    }
+
+    [Fact]
     public void Missing_target_is_not_replaced_when_preserve_null_take_is_set()
     {
         var start = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);

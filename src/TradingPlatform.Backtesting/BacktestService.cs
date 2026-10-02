@@ -94,6 +94,8 @@ public sealed class BacktestService : IBacktestService
         }
 
         var book = await _store.GetConservativeRiskAsync(cancellationToken);
+        var listed = await _store.GetSymbolAsync(symbol, cancellationToken);
+        var tick = listed is { TickSize: > 0m } ? listed.TickSize : 0m;
         var result = _replay.Run(
             definition,
             candles,
@@ -118,6 +120,7 @@ public sealed class BacktestService : IBacktestService
                     ? FlatRangeStrategy.MaxHoldHours
                     : RefactoredStrategyEvaluator.MaxHoldBars(definition.Template),
                 BookStopsOff: StrategyTemplateKeys.IsImported(definition.Template),
+                TickSize: tick,
                 PreserveNullTake: StrategyTemplateKeys.IsRefactored(definition.Template)));
 
         var user = await _store.GetUserAsync(userId, cancellationToken)

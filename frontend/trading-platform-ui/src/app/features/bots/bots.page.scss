@@ -119,6 +119,11 @@
   font-weight: 700;
 }
 
+.bot-strategy .section-head-meta {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .section-head-meta .is-live {
   color: var(--success);
   font-weight: 700;

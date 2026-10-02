@@ -423,6 +423,8 @@ public sealed record CreateBotsResult(int Created, int Skipped);
 
 public sealed record StartBotsRequest(string Mode, Guid? PreferredStrategyId = null);
 
+public sealed record StrategyBotsRequest(string Mode, Guid StrategyId);
+
 public sealed record StartBotsResult(int Started, int Failed, string? Detail);
 
 public sealed record StopBotsResult(int Stopped, int Failed, string? Detail);
@@ -510,7 +512,7 @@ public interface IBotLifecycleService
     Task<BotDto> StartSymbolAsync(Guid userId, string symbol, TradingMode mode, Guid? strategyId = null, Guid? riskProfileId = null, CancellationToken cancellationToken = default);
     Task<CreateBotsResult> CreateSymbolBotsAsync(Guid userId, TradingMode mode, Guid strategyId, Guid riskProfileId, IReadOnlyList<string> symbols, CancellationToken cancellationToken = default);
     Task<StartBotsResult> StartAllIdleAsync(Guid userId, TradingMode mode, Guid? preferredStrategyId = null, CancellationToken cancellationToken = default);
-    Task<StopBotsResult> StopAllRunningAsync(Guid userId, TradingMode mode, CancellationToken cancellationToken = default);
+    Task<StopBotsResult> StopAllRunningAsync(Guid userId, TradingMode mode, Guid? strategyId = null, CancellationToken cancellationToken = default);
     Task<BotDto> StartAsync(Guid botId, CancellationToken cancellationToken = default);
     Task<BotDto> StopAsync(Guid botId, CancellationToken cancellationToken = default);
     Task<DeleteBotsResult> DeleteBotsAsync(IReadOnlyList<Guid> ids, TradingMode? requiredMode, CancellationToken cancellationToken = default);

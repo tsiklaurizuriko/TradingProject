@@ -441,6 +441,26 @@ public static class StrategyTemplateKeys
         return OperatorCatalog.Contains(raw, StringComparer.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// v2 rows an operator can select for research. They are not in the live operator catalog.
+    /// Selection does not enable the strategy and does not turn on live trading.
+    /// </summary>
+    public static bool IsResearchWorkflow(string? key) => IsRefactored(key);
+
+    public static bool ContainsTemplate(IEnumerable<string?> existing, string key)
+    {
+        var normalized = Normalize(key);
+        foreach (var row in existing)
+        {
+            if (string.Equals(Normalize(row), normalized, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public static bool IsScalping(string? key) =>
         Scalping.Contains(Normalize(key), StringComparer.OrdinalIgnoreCase);
 
@@ -626,7 +646,8 @@ public sealed record StrategyTemplateParams(
     int SwingLength = 3,
     bool UseFuturesFilter = true,
     decimal PriceDisplacementAtr = 1.5m,
-    decimal OiExtremePercentile = 0.90m);
+    decimal OiExtremePercentile = 0.90m,
+    int MaxImpulseAgeBars = 32);
 
 public static class StrategyTemplates
 {
@@ -1005,7 +1026,8 @@ public static class StrategyTemplates
                 MinimumRelativeVolume = 1.5m,
                 RelativeVolumePeriod = 20,
                 StopAtrMultiplier = 1.8m,
-                AtrStopMultiplier = 2.5m
+                AtrStopMultiplier = 2.5m,
+                MaxImpulseAgeBars = 32
             },
             StrategyTemplateKeys.ZigZagFadeV2 => shared with
             {
@@ -1219,7 +1241,8 @@ public static class StrategyTemplates
                 "swingLength": {{p.SwingLength}},
                 "useFuturesFilter": {{(p.UseFuturesFilter ? "true" : "false")}},
                 "priceDisplacementAtr": {{Invariant(p.PriceDisplacementAtr)}},
-                "oiExtremePercentile": {{Invariant(p.OiExtremePercentile)}}
+                "oiExtremePercentile": {{Invariant(p.OiExtremePercentile)}},
+                "maxImpulseAgeBars": {{p.MaxImpulseAgeBars}}
               },
               "quality": {
                 "requireVolume": {{(q.RequireVolume ? "true" : "false")}},
@@ -1306,7 +1329,8 @@ public static class StrategyTemplates
                 Int(p, "swingLength") ?? 3,
                 p.TryGetProperty("useFuturesFilter", out var uff) && uff.ValueKind == JsonValueKind.False ? false : true,
                 Dec(p, "priceDisplacementAtr") ?? 1.5m,
-                Dec(p, "oiExtremePercentile") ?? 0.90m);
+                Dec(p, "oiExtremePercentile") ?? 0.90m,
+                Int(p, "maxImpulseAgeBars") ?? 32);
         }
         catch (JsonException)
         {

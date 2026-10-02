@@ -99,6 +99,12 @@
           <div class="section-head-meta">
             <span class="tiny">{{ bookLabel(group.bots[0]) }}</span>
             <span class="tiny" [class.is-live]="runningCount(group.bots) > 0">{{ runningCount(group.bots) }} running</span>
+            <button class="btn accent sm" type="button" title="Start this group only" [disabled]="busy || idleCount(group.bots) === 0" (click)="requestStartGroup(group)">
+              {{ busyGroup === group.key && groupAction === 'start' ? 'Starting…' : 'Start' }}
+            </button>
+            <button class="btn danger sm" type="button" title="Stop this group only" [disabled]="busy || runningCount(group.bots) === 0" (click)="stopGroup(group)">
+              {{ busyGroup === group.key && groupAction === 'stop' ? 'Stopping…' : 'Stop' }}
+            </button>
             <button class="btn ghost sm" type="button" [disabled]="busy" (click)="askDeleteGroup(group.bots)">Delete group</button>
           </div>
         </div>
@@ -126,9 +132,9 @@
                 <p class="tiny" style="margin:10px 0 0">{{ bot.lastError || 'Idle until you start this coin' }}</p>
                 <div class="bot-actions" (click)="$event.preventDefault(); $event.stopPropagation()">
                   @if (bot.status === 'Running') {
-                    <button class="btn danger" type="button" [disabled]="busyId === bot.id" (click)="stop(bot)">Stop</button>
+                    <button class="btn danger" type="button" [disabled]="busy || busyId === bot.id" (click)="stop(bot)">Stop</button>
                   } @else {
-                    <button class="btn" type="button" [class.danger]="ui.isLive()" [disabled]="busyId === bot.id" (click)="start(bot)">Start</button>
+                    <button class="btn" type="button" [class.danger]="ui.isLive()" [disabled]="busy || busyId === bot.id" (click)="start(bot)">Start</button>
                   }
                   <a class="btn secondary" [routerLink]="['/bots', bot.id]">Details</a>
                   <button class="btn ghost" type="button" [disabled]="busy" (click)="askDeleteOne(bot)">Delete</button>
@@ -151,4 +157,14 @@
   [danger]="true"
   (cancel)="cancelDelete()"
   (confirm)="confirmDeleteBots()"
+/>
+<app-confirm-modal
+  [open]="!!confirmGroup()"
+  [title]="groupStartTitle()"
+  [message]="groupStartMessage()"
+  [warning]="groupStartWarning()"
+  [confirmLabel]="ui.isLive() ? 'Enable live entries' : 'Start'"
+  [danger]="ui.isLive()"
+  (cancel)="cancelStartGroup()"
+  (confirm)="confirmStartGroup()"
 />

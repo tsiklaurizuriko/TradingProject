@@ -509,6 +509,9 @@ public sealed class BacktestReplay
             (settings.PreserveNullTake
                 ? "A missing suggested target stays open. It is not replaced with 2R. "
                 : "When a suggested target is missing, structural mode fills a 2R target. ") +
+            (settings.TickSize > 0m
+                ? "Stops and targets are rounded to the configured tick size. "
+                : "TICK_SIZE_UNCONFIGURED: symbol tick size was not supplied. Stops are not tick-rounded. A zero tick is not an invented size. ") +
             "Historical simulation, not a guarantee of future performance.";
 
         var longMetrics = ReplayMetrics.ForSide(trades, "Long");
