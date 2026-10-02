@@ -8,7 +8,7 @@ import {
   OrderDto,
   PositionDto,
   TradeDto,
-  feeCash,
+  feeText,
   formatTime,
   isHistoryOrder,
   isProtectionOrder,
@@ -100,7 +100,7 @@ export type LedgerBookTab = 'positions' | 'open' | 'history' | 'fills' | 'closed
                   @if (tab() === 'fills') {
                     <td class="num" [class]="pnlClass(row.pnL)">{{ signedMoney(row.pnL) }}</td>
                   }
-                  <td class="num" [class]="pnlClass(feeCash(row.fee))">{{ signedMoney(feeCash(row.fee), 4) }}</td>
+                  <td class="num">{{ feeText(row.fee, row.feeStatus, row.feeAsset) }}</td>
                   @if (tab() === 'open' && openKind() === 'conditional') {
                     <td>Close Position</td>
                   }
@@ -171,7 +171,7 @@ export class LedgerBookComponent {
   readonly price = price;
   readonly signedMoney = signedMoney;
   readonly pnlClass = pnlClass;
-  readonly feeCash = feeCash;
+  readonly feeText = feeText;
   readonly isProtectionOrder = isProtectionOrder;
   readonly orderKindLabel = orderKindLabel;
   readonly orderStatusLabel = orderStatusLabel;
@@ -233,7 +233,7 @@ export class LedgerBookComponent {
         filled: (row) => row.filledQuantity,
         price: (row) => row.price ?? 0,
         pnl: (row) => row.pnL ?? 0,
-        fee: (row) => row.fee ?? 0,
+        fee: (row) => (row.feeStatus === 'Known' ? row.fee ?? 0 : null),
       },
     ),
   );

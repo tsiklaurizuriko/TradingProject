@@ -1527,6 +1527,9 @@ namespace TradingPlatform.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<int>("FeeStatus")
+                        .HasColumnType("integer");
+
                     b.Property<bool>("IsMaker")
                         .HasColumnType("boolean");
 
@@ -2151,6 +2154,12 @@ namespace TradingPlatform.Infrastructure.Persistence.Migrations
                     b.Property<decimal>("Fees")
                         .HasPrecision(28, 8)
                         .HasColumnType("numeric(28,8)");
+
+                    b.Property<string>("FeeAsset")
+                        .HasColumnType("text");
+
+                    b.Property<int>("FeeStatus")
+                        .HasColumnType("integer");
 
                     b.Property<string>("HypothesisId")
                         .HasColumnType("text");

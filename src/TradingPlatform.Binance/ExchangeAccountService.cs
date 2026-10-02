@@ -658,10 +658,11 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                              item.Side,
                              item.Price,
                              item.Quantity,
-                             item.Fee ?? 0m,
+                             item.Fee,
                              item.Time,
                              item.TradeId,
-                             item.RealizedPnl)).ToList()))
+                             item.RealizedPnl,
+                             item.FeeAsset)).ToList()))
             {
                 await UpsertClosedTradeAsync(bot, trip, cancellationToken);
             }
@@ -692,7 +693,7 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                         : 0m,
                     fill?.Price ?? 0m,
                     fill is not null && BinanceClosedFill.IsClosing(fill.RealizedPnl) ? fill.RealizedPnl : row.Pnl,
-                    fill?.Fee ?? 0m,
+                    fill is null ? FeeBook.Unknown() : FeeBook.FromReport(fill.Fee, fill.FeeAsset),
                     fill?.Time ?? row.Time,
                     fill?.Time ?? row.Time,
                     string.IsNullOrWhiteSpace(row.TradeId) ? row.TranId.ToString() : row.TradeId),
@@ -864,10 +865,14 @@ public sealed class ExchangeAccountService : IExchangeAccountService
             ExchangeOrderId = exchangeOrderId,
             Mode = TradingMode.Live,
             CorrelationId = realizedPnl is not null
-                ? "binance-fill:"
-                    + realizedPnl.Value.ToString(CultureInfo.InvariantCulture)
-                    + ":"
-                    + (fee ?? 0m).ToString(CultureInfo.InvariantCulture)
+                ? fee is null
+                    ? "binance-fill:" + realizedPnl.Value.ToString(CultureInfo.InvariantCulture)
+                    : "binance-fill:"
+                        + realizedPnl.Value.ToString(CultureInfo.InvariantCulture)
+                        + ":"
+                        + fee.Value.ToString(CultureInfo.InvariantCulture)
+                        + ":"
+                        + (feeAsset ?? "")
                 : "binance-ledger",
             SubmittedAt = createdAt,
             ExchangeTimestamp = createdAt,
@@ -883,8 +888,9 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                 ExchangeTradeId = tradeId,
                 Price = price ?? 0m,
                 Quantity = filled,
-                Fee = string.IsNullOrWhiteSpace(feeAsset) ? 0m : fee ?? 0m,
+                Fee = fee ?? 0m,
                 FeeAsset = string.IsNullOrWhiteSpace(feeAsset) ? "" : feeAsset,
+                FeeStatus = FeeBook.FromReport(fee, feeAsset).Status,
                 IsMaker = false,
                 ExchangeTimestamp = createdAt,
                 CorrelationId = "binance-ledger"
@@ -977,7 +983,7 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                 trade.EntryPrice,
                 trade.Quantity,
                 trip.RealizedPnl);
-            trade.Fees = trip.Fees;
+            TradeFee.Apply(trade, trip.Fee, replace: true);
             trade.OpenedAt = trip.OpenedAt;
             trade.ClosedAt = trip.ClosedAt;
             trade.CorrelationId = correlationId;
@@ -1022,7 +1028,9 @@ public sealed class ExchangeAccountService : IExchangeAccountService
             ExitPrice = trip.ExitPrice,
             PnL = trip.RealizedPnl,
             PnLPercent = BinanceClosedFill.PnLPercent(trip.EntryPrice, trip.Quantity, trip.RealizedPnl),
-            Fees = trip.Fees,
+            Fees = trip.Fee.Status == FeeKnowledge.Known ? trip.Fee.Amount ?? 0m : trip.Fee.Status == FeeKnowledge.AssetMissing ? trip.Fee.Amount ?? 0m : 0m,
+            FeeStatus = trip.Fee.Status,
+            FeeAsset = trip.Fee.Status == FeeKnowledge.Known ? trip.Fee.Asset : null,
             OpenedAt = trip.OpenedAt,
             ClosedAt = trip.ClosedAt,
             CorrelationId = correlationId
@@ -1126,9 +1134,12 @@ public sealed class ExchangeAccountService : IExchangeAccountService
             }
 
             var feeAsset = row.TryGetProperty("commissionAsset", out var assetEl) ? assetEl.GetString() : null;
-            decimal? fee = row.TryGetProperty("commission", out _) && !string.IsNullOrWhiteSpace(feeAsset)
-                ? Math.Abs(ParseDecimal(row, "commission"))
-                : null;
+            decimal? fee = null;
+            if (row.TryGetProperty("commission", out var commissionEl)
+                && commissionEl.ValueKind is JsonValueKind.Number or JsonValueKind.String)
+            {
+                fee = Math.Abs(ParseDecimal(row, "commission"));
+            }
             yield return new UserTradeFill(
                 orderId,
                 OrderLedger.ParseSide(row.TryGetProperty("side", out var sideEl) ? sideEl.GetString() : null),

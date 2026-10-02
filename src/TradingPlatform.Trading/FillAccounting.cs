@@ -80,6 +80,19 @@ public static class FillAccounting
                 }
             }
 
+            if (report.ExecutedQuantity > 0m && report.FeeIsCumulative && !extraKnown)
+            {
+                return new FillApplication(
+                    OrderStatus.Uncertain,
+                    report.ExecutedQuantity,
+                    requestedQuantity - report.ExecutedQuantity,
+                    report.AveragePrice is > 0m ? report.AveragePrice : booked.AveragePrice,
+                    null,
+                    true,
+                    true,
+                    "Commission amount is unknown. New entries stay blocked.");
+            }
+
             return Resting(
                 status,
                 report,
@@ -87,7 +100,7 @@ public static class FillAccounting
                 requestedQuantity,
                 extraFee > 0m ? "Cumulative fee increased. Quantity was already booked." : "This cumulative quantity was already booked.",
                 extraFee,
-                extraKnown && extraFee > 0m);
+                extraFee > 0m);
         }
 
         if (!TryIncrementalPrice(booked, report, delta, out var price, out var priceReason))
@@ -102,13 +115,26 @@ public static class FillAccounting
 
         var remaining = requestedQuantity - report.ExecutedQuantity;
         var average = report.AveragePrice is > 0m ? report.AveragePrice : price;
+        if (!feeKnown)
+        {
+            return new FillApplication(
+                OrderStatus.Uncertain,
+                report.ExecutedQuantity,
+                remaining,
+                average,
+                new FillDelta(delta, price, 0m, false),
+                false,
+                true,
+                "Commission amount is unknown. The quantity was booked and new entries stay blocked.");
+        }
+
         var blocks = Blocks(status);
         return new FillApplication(
             status,
             report.ExecutedQuantity,
             remaining,
             average,
-            new FillDelta(delta, price, fee, feeKnown),
+            new FillDelta(delta, price, fee, true),
             false,
             blocks,
             ReasonFor(status, report));

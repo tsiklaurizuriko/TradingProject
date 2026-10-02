@@ -57,6 +57,9 @@ public sealed class Execution : Entity
     public decimal Quantity { get; set; }
     public decimal Fee { get; set; }
     public string FeeAsset { get; set; } = string.Empty;
+
+    /// <summary>Defaults to <see cref="FeeKnowledge.Unknown"/> so a stored 0 is not treated as a certified zero.</summary>
+    public FeeKnowledge FeeStatus { get; set; } = FeeKnowledge.Unknown;
     public bool IsMaker { get; set; }
     public DateTimeOffset ExchangeTimestamp { get; set; }
     public string CorrelationId { get; set; } = string.Empty;

@@ -1,6 +1,6 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { TradingService } from '../../core/trading/trading.service';
-import { PositionDto, feeCash, formatTime, groupPositionsByStrategy, holdDuration, isolatedRoi, isLongSide, money, modeBadge, notionalUsdt, pct, pnlClass, price, qty, sideLabel, signedMoney } from '../../core/trading/trading.models';
+import { PositionDto, feeText, formatTime, groupPositionsByStrategy, holdDuration, isolatedRoi, isLongSide, money, modeBadge, notionalUsdt, pct, pnlClass, price, qty, sideLabel, signedMoney } from '../../core/trading/trading.models';
 import { ToastService } from '../../core/ui/toast.service';
 import { UiStateService } from '../../core/ui/ui-state.service';
 import { ListQuery, timeValue } from '../../shared/lists/list-query';
@@ -257,7 +257,7 @@ export class PositionsPage {
                 <td class="num">{{ price(row.exitPrice) }}</td>
                 <td class="num" [class]="pnlClass(row.pnL)">{{ signedMoney(row.pnL) }}</td>
                 <td class="num" [class]="pnlClass(row.pnLPercent)">{{ pct(row.pnLPercent) }}</td>
-                <td class="num" [class]="pnlClass(feeCash(row.fees))">{{ signedMoney(feeCash(row.fees), 4) }}</td>
+                <td class="num">{{ feeText(row.fees, row.feeStatus, row.feeAsset) }}</td>
                 <td><span class="badge" [class]="modeBadge(trading.workspace())">{{ trading.workspace() }}</span></td>
                 <td>{{ row.closedAt ? 'Closed' : 'Open' }}</td>
               </tr>
@@ -278,7 +278,7 @@ export class TradesPage {
   readonly price = price;
   readonly signedMoney = signedMoney;
   readonly pnlClass = pnlClass;
-  readonly feeCash = feeCash;
+  readonly feeText = feeText;
   readonly pct = pct;
   readonly modeBadge = modeBadge;
   readonly list = new ListQuery();
@@ -301,7 +301,7 @@ export class TradesPage {
         exit: (row) => row.exitPrice,
         pnl: (row) => row.pnL,
         pnlPct: (row) => row.pnLPercent,
-        fee: (row) => row.fees,
+        fee: (row) => (row.feeStatus === 'Known' ? row.fees : null),
         mode: () => this.trading.workspace(),
         status: (row) => (row.closedAt ? 'Closed' : 'Open'),
       },

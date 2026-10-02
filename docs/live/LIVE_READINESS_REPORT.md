@@ -20,14 +20,14 @@ Status: **not ready for real-money trading.** `Trading:LiveTradingEnabled` is fa
 
 ## Remaining blockers
 
-1. No test placed or observed a real Binance order. Stop and take-profit fills are applied only when the REST order or algo query returns an executed quantity and price. There is no separate user-data socket consumer.
+1. No test placed or observed a real Binance order. Stop and take-profit fills are applied only when the REST order or algo query returns an executed quantity and price. There is no user-data socket. REST polling waits 5 seconds, then 15 seconds, then 60 seconds, then 5 minutes. If that query cannot confirm the exchange, the order stays unresolved and new entries stay blocked. This build is not fully live-ready.
 2. A local position missing from a fresh snapshot is left open, including when the bot or strategy version is missing. It is not closed from a mark price, and the trade is not marked closed.
 3. Daily realized loss is enforced. A peak-to-trough equity drawdown series is not stored. If a caller cannot say whether drawdown is known, the risk check fails closed.
 4. Every canonical strategy stays `NOT VALIDATED`. Backtests that do run still assume the stop wins when stop and target are both inside one bar, and they do not model partial exits.
 5. A stored timeframe that is not the canonical default is left as-is and only logged.
-6. Integration tests passed locally against PostgreSQL on localhost:5432. They are not Testcontainers. The GitHub Actions job now starts PostgreSQL 16 for that same connection, but that workflow has not been run for this change.
-7. Docker image builds were not run.
-8. GitHub Actions was not run. These changes are local and uncommitted. Do not treat the local test run as a CI result.
+6. Integration tests passed locally against PostgreSQL. They are not Testcontainers. Assertions were not weakened.
+7. Docker image builds were not run on this machine. The last commit's GitHub Actions docker job did succeed; see the run linked below. That run does not include the fee-status change.
+8. Commit `868937a` has a completed successful GitHub Actions run: https://github.com/tsiklaurizuriko/TradingProject/actions/runs/37033542507. The fee-status work after that commit is local and is not part of that run.
 
 ## Tests run on this machine
 
@@ -35,7 +35,7 @@ No test uses a live Binance order connector. `dotnet restore` completed. `dotnet
 
 | Command | Result |
 | --- | --- |
-| `dotnet test TradingPlatform.slnx -c Release` | UnitTests 321 passed, 0 failed. ResearchTests 130 passed, 0 failed. BacktestingTests 52 passed, 0 failed. TradingTests 4 passed, 0 failed. IntegrationTests 4 passed, 0 failed. |
+| `dotnet test TradingPlatform.slnx -c Release` | UnitTests 330 passed, 0 failed, 0 skipped. ResearchTests 130 passed, 0 failed, 0 skipped. BacktestingTests 52 passed, 0 failed, 0 skipped. TradingTests 4 passed, 0 failed, 0 skipped. IntegrationTests 4 passed, 0 failed, 0 skipped. |
 | `dotnet test tests/TradingPlatform.NewsTests/TradingPlatform.NewsTests.csproj -c Release` | 45 passed, 0 failed. This project is not in the solution test pass above. |
 | `npm run build` in `frontend/trading-platform-ui` | Succeeded. One budget warning: `strategies.page.scss` is 5.19 kB against a 4.00 kB budget. |
 | PostgreSQL Testcontainers | Not executed. Docker is not installed. |

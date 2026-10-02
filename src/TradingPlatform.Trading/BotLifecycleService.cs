@@ -878,7 +878,7 @@ public sealed class TradingQueryService : ITradingQueryService
             t => t.OpenedAt,
             t => t.ClosedAt,
             t => t.CorrelationId,
-            t => t.Fees);
+            t => FeeBook.FromStored(t.FeeStatus, t.Fees, t.FeeAsset).DisplayAmount ?? 0m);
         var trades = tradeRows.Select(MapTrade).ToList();
         var signals = (await _store.GetRecentSignalsAsync(20, cancellationToken))
             .Select(s => new SignalDto(s.Id, s.BotId, s.Symbol, s.SignalType.ToString(), s.Price, s.Reason, s.Timestamp))
@@ -1170,6 +1170,7 @@ public sealed class TradingQueryService : ITradingQueryService
             .Select(o =>
             {
                 var fill = FillLedger(o);
+                var fee = OrderFee(o, fill.Fee);
                 return new OrderDto(
                     o.Id,
                     o.ClientOrderId,
@@ -1185,11 +1186,24 @@ public sealed class TradingQueryService : ITradingQueryService
                     o.ExchangeTimestamp ?? o.CreatedAt,
                     "Bot",
                     fill.PnL ?? (pnlByExit.TryGetValue(o.Id, out var pnl) ? pnl : null),
-                    fill.Fee ?? (o.Executions.Count == 0 ? null : o.Executions.Sum(e => e.Fee)),
+                    fee.DisplayAmount,
                     o.Mode.ToString(),
-                    OrderLedger.Kind(o.Type.ToString()));
+                    OrderLedger.Kind(o.Type.ToString()),
+                    fee.Status.ToString(),
+                    fee.Status == FeeKnowledge.Known ? fee.Asset : null);
             })
             .ToList();
+    }
+
+    private static FeeBook OrderFee(Order order, FeeBook ledger)
+    {
+        if (order.Executions is not { Count: > 0 })
+        {
+            return ledger;
+        }
+
+        return FeeBook.Combine(order.Executions.Select(item =>
+            FeeBook.FromStored(item.FeeStatus, item.Fee, string.IsNullOrWhiteSpace(item.FeeAsset) ? null : item.FeeAsset)));
     }
 
     public async Task<IReadOnlyList<PositionDto>> GetPositionsAsync(CancellationToken cancellationToken = default) =>
@@ -1227,7 +1241,7 @@ public sealed class TradingQueryService : ITradingQueryService
             t => t.OpenedAt,
             t => t.ClosedAt,
             t => t.CorrelationId,
-            t => t.Fees)
+            t => FeeBook.FromStored(t.FeeStatus, t.Fees, t.FeeAsset).DisplayAmount ?? 0m)
         .Select(MapTrade)
         .ToList();
 
@@ -1256,7 +1270,7 @@ public sealed class TradingQueryService : ITradingQueryService
             t => t.OpenedAt,
             t => t.ClosedAt,
             t => t.CorrelationId,
-            t => t.Fees);
+            t => FeeBook.FromStored(t.FeeStatus, t.Fees, t.FeeAsset).DisplayAmount ?? 0m);
         var bots = (await GetBotsAsync(cancellationToken))
             .Where(b => string.Equals(b.Mode, modeLabel, StringComparison.OrdinalIgnoreCase))
             .ToList();
@@ -1285,25 +1299,29 @@ public sealed class TradingQueryService : ITradingQueryService
             strategyResults);
     }
 
-    private static (decimal? PnL, decimal? Fee) FillLedger(Order order)
+    private static (decimal? PnL, FeeBook Fee) FillLedger(Order order)
     {
         const string prefix = "binance-fill:";
         var value = order.CorrelationId;
         if (string.IsNullOrWhiteSpace(value) || !value.StartsWith(prefix, StringComparison.Ordinal))
         {
-            return (null, null);
+            return (null, FeeBook.Unknown());
         }
 
-        var parts = value[prefix.Length..].Split(':', 2);
+        var parts = value[prefix.Length..].Split(':');
         decimal? pnl = decimal.TryParse(parts[0], CultureInfo.InvariantCulture, out var parsedPnL) ? parsedPnL : null;
-        decimal? fee = parts.Length > 1 && decimal.TryParse(parts[1], CultureInfo.InvariantCulture, out var parsedFee)
-            ? parsedFee
-            : null;
-        return (pnl, fee);
+        if (parts.Length < 3 || !decimal.TryParse(parts[1], CultureInfo.InvariantCulture, out var parsedFee))
+        {
+            return (pnl, FeeBook.Unknown());
+        }
+
+        return (pnl, FeeBook.FromReport(parsedFee, parts[2]));
     }
 
-    private static TradeDto MapTrade(Trade t) =>
-        new(
+    private static TradeDto MapTrade(Trade t)
+    {
+        var fee = FeeBook.FromStored(t.FeeStatus, t.Fees, t.FeeAsset);
+        return new(
             t.Id,
             t.BotId,
             t.Symbol,
@@ -1312,14 +1330,19 @@ public sealed class TradingQueryService : ITradingQueryService
             t.ExitPrice,
             t.PnL,
             t.PnLPercent,
-            t.Fees,
+            fee.DisplayAmount,
             t.OpenedAt,
             t.ClosedAt,
             t.Bot?.Mode.ToString() ?? "Paper",
-            t.Side == OrderSide.Sell ? "Short" : "Long");
+            t.Side == OrderSide.Sell ? "Short" : "Long",
+            fee.Status.ToString(),
+            fee.Status == FeeKnowledge.Known ? fee.Asset : null);
+    }
 
-    private static TradeDto MapTrade(PerformanceTradeRow t) =>
-        new(
+    private static TradeDto MapTrade(PerformanceTradeRow t)
+    {
+        var fee = FeeBook.FromStored(t.FeeStatus, t.Fees, t.FeeAsset);
+        return new(
             t.Id,
             t.BotId,
             t.Symbol,
@@ -1328,11 +1351,14 @@ public sealed class TradingQueryService : ITradingQueryService
             t.ExitPrice,
             t.PnL,
             t.PnLPercent,
-            t.Fees,
+            fee.DisplayAmount,
             t.OpenedAt,
             t.ClosedAt,
             t.Mode,
-            string.IsNullOrWhiteSpace(t.Side) ? "Long" : t.Side);
+            string.IsNullOrWhiteSpace(t.Side) ? "Long" : t.Side,
+            fee.Status.ToString(),
+            fee.Status == FeeKnowledge.Known ? fee.Asset : null);
+    }
 
     private static List<StrategyResultDto> BuildStrategyResults(
         IReadOnlyList<PerformanceTradeRow> uniqueTrips,
@@ -1428,7 +1454,8 @@ public sealed class TradingQueryService : ITradingQueryService
         var wins = closed.Where(t => t.PnL > 0m).ToList();
         var losses = closed.Where(t => t.PnL < 0m).ToList();
         var realized = closed.Sum(t => t.PnL);
-        var fees = rows.Sum(t => t.Fees);
+        var feeTotal = FeeBook.Combine(rows.Select(t => FeeBook.FromStored(t.FeeStatus, t.Fees, t.FeeAsset)));
+        var fees = feeTotal.Status == FeeKnowledge.Known ? feeTotal.Amount ?? 0m : 0m;
         var grossWins = wins.Sum(t => t.PnL);
         var grossLoss = Math.Abs(losses.Sum(t => t.PnL));
         var weekStart = DateTimeOffset.UtcNow.AddDays(-7);
@@ -1486,7 +1513,9 @@ public sealed class TradingQueryService : ITradingQueryService
             Slices(closed, t => t.Symbol, null),
             rows.Take(40).Select(MapTrade).ToList(),
             RoundPerf(monthClosed + unrealized),
-            strategyResults);
+            strategyResults,
+            feeTotal.Status.ToString(),
+            feeTotal.Status == FeeKnowledge.Known ? feeTotal.Asset : null);
     }
 
     private static IReadOnlyList<PerformanceDayDto> PerformanceDays(

@@ -61,7 +61,9 @@ public sealed record OrderDto(
     decimal? PnL = null,
     decimal? Fee = null,
     string Mode = "Paper",
-    string Kind = "Fill");
+    string Kind = "Fill",
+    string FeeStatus = "Unknown",
+    string? FeeAsset = null);
 
 public sealed record TradeDto(
     Guid Id,
@@ -72,11 +74,13 @@ public sealed record TradeDto(
     decimal? ExitPrice,
     decimal PnL,
     decimal PnLPercent,
-    decimal Fees,
+    decimal? Fees,
     DateTimeOffset OpenedAt,
     DateTimeOffset? ClosedAt,
     string Mode = "Paper",
-    string Side = "Long");
+    string Side = "Long",
+    string FeeStatus = "Unknown",
+    string? FeeAsset = null);
 
 public sealed record SignalDto(
     Guid Id,
@@ -339,7 +343,9 @@ public sealed record PerformanceTradeRow(
     string StrategyName,
     string Mode,
     string Side = "Long",
-    string CorrelationId = "");
+    string CorrelationId = "",
+    FeeKnowledge FeeStatus = FeeKnowledge.Unknown,
+    string? FeeAsset = null);
 
 public sealed record PerformanceDayDto(string Date, decimal PnL, decimal Cumulative);
 
@@ -390,7 +396,9 @@ public sealed record PerformanceDto(
     IReadOnlyList<PerformanceSliceDto> Coins,
     IReadOnlyList<TradeDto> RecentTrades,
     decimal MonthlyPnL = 0m,
-    IReadOnlyList<StrategyResultDto>? StrategyResults = null);
+    IReadOnlyList<StrategyResultDto>? StrategyResults = null,
+    string FeesStatus = "Unknown",
+    string? FeeAsset = null);
 
 public interface ITradingQueryService
 {

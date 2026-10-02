@@ -87,9 +87,21 @@ export class PerformancePage {
   readonly openTrades = computed(() =>
     this.snap()?.openTrades ?? this.trading.workspaceTrades().filter((t) => !t.closedAt).length,
   );
-  readonly fees = computed(() =>
-    this.snap()?.feesPaid ?? this.trading.workspaceTrades().reduce((sum, trade) => sum + (trade.fees ?? 0), 0),
-  );
+  readonly fees = computed(() => {
+    const snap = this.snap();
+    if (snap) {
+      return snap.feesStatus === 'Known' ? snap.feesPaid : null;
+    }
+    const trades = this.trading.workspaceTrades();
+    if (trades.some((trade) => trade.feeStatus !== 'Known')) {
+      return null;
+    }
+    const assets = new Set(trades.map((trade) => (trade.feeAsset || '').toUpperCase()));
+    if (assets.size > 1) {
+      return null;
+    }
+    return trades.reduce((sum, trade) => sum + (trade.fees ?? 0), 0);
+  });
   readonly drawdown = computed(() => this.snap()?.maxDrawdown ?? 0);
 
   constructor() {
@@ -97,6 +109,21 @@ export class PerformancePage {
       const mode = this.ui.workspace();
       untracked(() => void this.trading.refreshPerformance(mode));
     });
+  }
+
+  feesLabel(): string {
+    const status = this.snap()?.feesStatus;
+    if (status === 'Uncertain') {
+      return 'Fees uncertain';
+    }
+    if (status === 'AssetMissing') {
+      return 'Fee asset unknown';
+    }
+    if (status !== 'Known' || this.fees() === null) {
+      return 'Fees unknown';
+    }
+    const asset = this.snap()?.feeAsset;
+    return 'Fees ' + money(this.fees()) + (asset ? ' ' + asset : '');
   }
 
   equitySub(): string {

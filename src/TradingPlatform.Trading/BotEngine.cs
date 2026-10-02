@@ -234,6 +234,7 @@ public sealed class BotEngine : IBotEngine
                 Quantity = 0m,
                 Fee = application.AdditionalFee,
                 FeeAsset = confirmed.FeeAsset ?? "",
+                FeeStatus = FeeKnowledge.Known,
                 ExchangeTimestamp = confirmed.ExchangeTimestamp ?? _clock.UtcNow,
                 CorrelationId = order.CorrelationId
             }, cancellationToken);
@@ -287,6 +288,8 @@ public sealed class BotEngine : IBotEngine
                 usdt,
                 asset,
                 order.CorrelationId,
+                application.NewFill.FeeKnown && !string.IsNullOrWhiteSpace(confirmed.FeeAsset),
+                confirmed.FeeAsset,
                 cancellationToken);
         }
         else if (position is not null)
@@ -326,6 +329,9 @@ public sealed class BotEngine : IBotEngine
             Quantity = booked,
             Fee = application.NewFill.FeeKnown ? fee : 0m,
             FeeAsset = application.NewFill.FeeKnown ? confirmed.FeeAsset ?? "" : "",
+            FeeStatus = application.NewFill.FeeKnown && !string.IsNullOrWhiteSpace(confirmed.FeeAsset)
+                ? FeeKnowledge.Known
+                : FeeKnowledge.Unknown,
             ExchangeTimestamp = confirmed.ExchangeTimestamp ?? _clock.UtcNow,
             CorrelationId = order.CorrelationId
         }, cancellationToken);
@@ -1508,6 +1514,7 @@ public sealed class BotEngine : IBotEngine
             Quantity = quantity,
             Fee = fee,
             FeeAsset = feeKnown ? confirmed.FeeAsset! : "",
+            FeeStatus = feeKnown ? FeeKnowledge.Known : FeeKnowledge.Unknown,
             IsMaker = false,
             ExchangeTimestamp = confirmed.ExchangeTimestamp ?? _clock.UtcNow,
             CorrelationId = correlationId
@@ -1526,6 +1533,8 @@ public sealed class BotEngine : IBotEngine
                 usdt,
                 baseAsset,
                 correlationId,
+                feeKnown,
+                confirmed.FeeAsset,
                 cancellationToken);
             await _store.SaveChangesAsync(cancellationToken);
             return;
@@ -1625,6 +1634,8 @@ public sealed class BotEngine : IBotEngine
                 Quantity = quantity,
                 EntryPrice = fillPrice,
                 Fees = fee,
+                FeeStatus = feeKnown ? FeeKnowledge.Known : FeeKnowledge.Unknown,
+                FeeAsset = feeKnown ? confirmed.FeeAsset : null,
                 OpenedAt = _clock.UtcNow,
                 CorrelationId = correlationId,
                 HypothesisId = NearMissHypothesis(bot),
@@ -1686,6 +1697,8 @@ public sealed class BotEngine : IBotEngine
                 usdt,
                 baseAsset,
                 correlationId,
+                feeKnown,
+                confirmed.FeeAsset,
                 cancellationToken);
         }
 
@@ -1703,8 +1716,18 @@ public sealed class BotEngine : IBotEngine
         Balance usdt,
         Balance baseAsset,
         string correlationId,
+        bool feeKnown,
+        string? feeAsset,
         CancellationToken cancellationToken)
     {
+        var commission = feeKnown && !string.IsNullOrWhiteSpace(feeAsset)
+            ? FeeBook.Known(fee, feeAsset)
+            : FeeBook.Unknown();
+        if (!feeKnown)
+        {
+            fee = 0m;
+        }
+
         var booking = PositionFillBook.Exit(
             position.Side,
             position.Quantity,
@@ -1719,7 +1742,10 @@ public sealed class BotEngine : IBotEngine
             position.Quantity = booking.RemainingQuantity;
             position.CurrentPrice = fillPrice;
             position.RealizedPnL += pnl;
-            position.Fees += fee;
+            if (feeKnown)
+            {
+                position.Fees += fee;
+            }
             position.Events.Add(new PositionEvent
             {
                 EventType = booking.EventType,
@@ -1733,7 +1759,7 @@ public sealed class BotEngine : IBotEngine
                 && string.Equals(partialTrade.Symbol, position.Symbol, StringComparison.OrdinalIgnoreCase))
             {
                 partialTrade.PnL += pnl;
-                partialTrade.Fees += fee;
+                TradeFee.Apply(partialTrade, commission, replace: false);
             }
 
             return;
@@ -1762,7 +1788,10 @@ public sealed class BotEngine : IBotEngine
         position.CurrentPrice = fillPrice;
         position.UnrealizedPnL = 0m;
         position.RealizedPnL += pnl;
-        position.Fees += fee;
+        if (feeKnown)
+        {
+            position.Fees += fee;
+        }
         position.ClosedAt = _clock.UtcNow;
         position.Events.Add(new PositionEvent
         {
@@ -1815,7 +1844,7 @@ public sealed class BotEngine : IBotEngine
             openTrade.ExitPrice = fillPrice;
             openTrade.PnL += pnl;
             openTrade.PnLPercent = pnlPercent;
-            openTrade.Fees += fee;
+            TradeFee.Apply(openTrade, commission, replace: false);
             openTrade.ClosedAt = _clock.UtcNow;
             openTrade.MaxFavorableExcursion = position.MaxFavorableExcursion;
             openTrade.MaxAdverseExcursion = position.MaxAdverseExcursion;
@@ -1835,7 +1864,9 @@ public sealed class BotEngine : IBotEngine
             ExitPrice = fillPrice,
             PnL = pnl,
             PnLPercent = pnlPercent,
-            Fees = fee,
+            Fees = commission.Status == FeeKnowledge.Known ? commission.Amount ?? 0m : 0m,
+            FeeStatus = commission.Status,
+            FeeAsset = commission.Status == FeeKnowledge.Known ? commission.Asset : null,
             OpenedAt = position.OpenedAt,
             ClosedAt = _clock.UtcNow,
             CorrelationId = correlationId,

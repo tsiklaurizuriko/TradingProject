@@ -11,10 +11,23 @@ public static class BinanceClosedFill
         OrderSide Side,
         decimal Price,
         decimal Quantity,
-        decimal Fee,
+        decimal? Fee,
         DateTimeOffset Time,
         string TradeId,
-        decimal RealizedPnl);
+        decimal RealizedPnl,
+        string? FeeAsset = null,
+        FeeKnowledge? FeeStatus = null)
+    {
+        public FeeBook Commission => FeeStatus is { } status
+            ? status switch
+            {
+                FeeKnowledge.Known when Fee is not null && !string.IsNullOrWhiteSpace(FeeAsset) => FeeBook.Known(Fee.Value, FeeAsset),
+                FeeKnowledge.AssetMissing when Fee is not null => FeeBook.AssetMissing(Fee.Value),
+                FeeKnowledge.Uncertain => FeeBook.Uncertain(),
+                _ => FeeBook.Unknown()
+            }
+            : FeeBook.FromReport(Fee, FeeAsset);
+    }
 
     public sealed record ClosedIsolated(
         string Symbol,
@@ -23,7 +36,7 @@ public static class BinanceClosedFill
         decimal EntryPrice,
         decimal ExitPrice,
         decimal RealizedPnl,
-        decimal Fees,
+        FeeBook Fee,
         DateTimeOffset OpenedAt,
         DateTimeOffset ClosedAt,
         string CloseTradeId);
@@ -63,7 +76,7 @@ public static class BinanceClosedFill
         decimal openNotional = 0m;
         decimal closeQty = 0m;
         decimal closeNotional = 0m;
-        decimal fees = 0m;
+        var feeLines = new List<FeeBook>();
         decimal realized = 0m;
         var opened = DateTimeOffset.MinValue;
         var entrySide = OrderSide.Buy;
@@ -76,7 +89,7 @@ public static class BinanceClosedFill
             openNotional = 0m;
             closeQty = 0m;
             closeNotional = 0m;
-            fees = 0m;
+            feeLines.Clear();
             realized = 0m;
             opened = DateTimeOffset.MinValue;
             lastId = "";
@@ -94,7 +107,7 @@ public static class BinanceClosedFill
             {
                 opened = fill.Time;
                 entrySide = fill.Side;
-                fees = 0m;
+                feeLines.Clear();
                 realized = 0m;
                 openQty = 0m;
                 openNotional = 0m;
@@ -102,7 +115,7 @@ public static class BinanceClosedFill
                 closeNotional = 0m;
             }
 
-            fees += fill.Fee;
+            feeLines.Add(fill.Commission);
             realized += fill.RealizedPnl;
             lastId = fill.TradeId;
             var increasing = net == 0m || (net > 0m && signed > 0m) || (net < 0m && signed < 0m);
@@ -133,7 +146,7 @@ public static class BinanceClosedFill
                 entry,
                 exit,
                 realized,
-                fees,
+                FeeBook.Combine(feeLines),
                 opened,
                 fill.Time,
                 lastId));

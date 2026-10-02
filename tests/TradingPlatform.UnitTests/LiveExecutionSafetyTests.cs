@@ -137,7 +137,19 @@ public sealed class FillAccountingTests
         perFill.NewFill.FeeKnown.Should().BeTrue();
 
         var missing = Apply(0m, 1m, OrderStatus.Filled, 1m, 100m, null);
+        missing.NewFill.Should().NotBeNull();
         missing.NewFill!.FeeKnown.Should().BeFalse();
+        missing.Uncertain.Should().BeFalse();
+        missing.BlocksNewEntries.Should().BeTrue();
+        missing.Status.Should().Be(OrderStatus.Uncertain);
+
+        var stillMissing = FillAccounting.Apply(
+            new BookedFill(1m, 100m, 0m),
+            1m,
+            new ExchangeFillReport(OrderStatus.Filled, 1m, 100m, null, "ex-1", null));
+        stillMissing.NewFill.Should().BeNull();
+        stillMissing.BlocksNewEntries.Should().BeTrue();
+        stillMissing.Status.Should().Be(OrderStatus.Uncertain);
     }
 
     [Theory]

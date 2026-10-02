@@ -1,6 +1,7 @@
 using TradingPlatform.Domain.Bots;
 using TradingPlatform.Domain.Orders;
 using TradingPlatform.Domain.Strategies;
+using TradingPlatform.Domain.Trading;
 
 namespace TradingPlatform.Domain.Trades;
 
@@ -24,6 +25,11 @@ public sealed class Trade : Entity
     public decimal PnL { get; set; }
     public decimal PnLPercent { get; set; }
     public decimal Fees { get; set; }
+
+    /// <summary>Defaults to <see cref="FeeKnowledge.Unknown"/> so a stored 0 is not treated as a certified zero.</summary>
+    public FeeKnowledge FeeStatus { get; set; } = FeeKnowledge.Unknown;
+
+    public string? FeeAsset { get; set; }
     public string? HypothesisId { get; set; }
     public string? StrategyFamily { get; set; }
     public DateTimeOffset? SignalAt { get; set; }

@@ -411,11 +411,15 @@ export function uniqueClosedTrips(rows: TradeDto[]): TradeDto[] {
       chosen.push(row);
       continue;
     }
-    if ((row.fees ?? 0) > (chosen[index].fees ?? 0)) {
+    if (knownFee(row) > knownFee(chosen[index])) {
       chosen[index] = row;
     }
   }
   return chosen.filter((row) => !coveredQuantityShard(row, chosen));
+}
+
+function knownFee(row: TradeDto): number {
+  return row.feeStatus === 'Known' ? (row.fees ?? 0) : -1;
 }
 
 function sameClosedTrip(left: TradeDto, right: TradeDto): boolean {
@@ -635,6 +639,8 @@ export interface OrderDto {
   fee?: number | null;
   mode?: string;
   kind?: string;
+  feeStatus?: string;
+  feeAsset?: string | null;
 }
 
 export function isProtectionOrder(row: OrderDto): boolean {
@@ -710,11 +716,13 @@ export interface TradeDto {
   exitPrice: number | null;
   pnL: number;
   pnLPercent: number;
-  fees: number;
+  fees: number | null;
   openedAt: string;
   closedAt: string | null;
   mode?: string;
   side?: string;
+  feeStatus?: string;
+  feeAsset?: string | null;
 }
 
 export interface PerformanceDayDto {
@@ -773,6 +781,8 @@ export interface PerformanceDto {
   recentTrades: TradeDto[];
   monthlyPnL?: number;
   strategyResults?: StrategyResultDto[] | null;
+  feesStatus?: string;
+  feeAsset?: string | null;
 }
 
 export interface SignalDto {
@@ -904,6 +914,21 @@ export function feeCash(value: number | null | undefined): number | null {
     return null;
   }
   return -value;
+}
+
+/** Known zero is a dollar amount. Unknown, missing asset, and mixed assets are words, never $0. */
+export function feeText(value: number | null | undefined, status?: string | null, asset?: string | null): string {
+  if (status === 'Known') {
+    const text = signedMoney(feeCash(value ?? 0), 4);
+    return asset ? `${text} ${asset}` : text;
+  }
+  if (status === 'AssetMissing') {
+    return 'Unknown asset';
+  }
+  if (status === 'Uncertain') {
+    return 'Uncertain';
+  }
+  return 'Unknown';
 }
 
 export function previewRisk(

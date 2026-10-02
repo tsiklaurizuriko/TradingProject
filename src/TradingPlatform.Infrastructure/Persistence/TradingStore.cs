@@ -717,7 +717,9 @@ public sealed class TradingStore : ITradingStore
                 t.Strategy.Name,
                 t.Bot.Mode.ToString(),
                 t.Side == OrderSide.Sell ? "Short" : "Long",
-                t.CorrelationId))
+                t.CorrelationId,
+                t.FeeStatus,
+                t.FeeAsset))
             .ToListAsync(cancellationToken);
 
     public async Task<IReadOnlyList<Signal>> GetRecentSignalsAsync(int take, CancellationToken cancellationToken = default) =>
