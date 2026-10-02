@@ -42,7 +42,9 @@ internal static class StrategyTemplateEvaluator
         var cache = new CausalIndicatorCache(candles);
         var raw = EvaluateTemplate(parsed, candles, i, context, cache);
         if (raw.Signal is SignalType.Buy or SignalType.Sell
+            && !StrategyTemplateKeys.IsFlatRange(parsed.TemplateKey)
             && !StrategyTemplateKeys.IsImported(parsed.TemplateKey)
+            && !StrategyTemplateKeys.IsRefactored(parsed.TemplateKey)
             && !PassesQuality(parsed.Quality, candles, i, cache))
         {
             reason = "Quality filter skipped this bar (volume or ATR%).";
@@ -165,6 +167,7 @@ internal static class StrategyTemplateEvaluator
         if (raw.Signal is SignalType.Buy or SignalType.Sell
             && !StrategyTemplateKeys.IsFlatRange(parsed.TemplateKey)
             && !StrategyTemplateKeys.IsImported(parsed.TemplateKey)
+            && !StrategyTemplateKeys.IsRefactored(parsed.TemplateKey)
             && !PassesQuality(parsed.Quality, candles, index, cache))
         {
             return new StrategySignalDetail(SignalType.NoAction, "Quality filter skipped this bar (volume or ATR%).");
@@ -193,7 +196,9 @@ internal static class StrategyTemplateEvaluator
         int i,
         StrategyContext context,
         CausalIndicatorCache cache) =>
-        StrategyTemplateKeys.IsImported(p.TemplateKey)
+        StrategyTemplateKeys.IsRefactored(p.TemplateKey)
+            ? RefactoredStrategyEvaluator.Evaluate(p, candles, i, context, cache)
+            : StrategyTemplateKeys.IsImported(p.TemplateKey)
             ? ImportedRuleEvaluator.Evaluate(p, candles, i, context, cache)
             : StrategyTemplateKeys.IsFlatRange(p.TemplateKey)
             ? FlatRangeStrategy.Evaluate(candles, i, context.HasOpenPosition, p.AllowedSide, context.PositionOpenedAt)

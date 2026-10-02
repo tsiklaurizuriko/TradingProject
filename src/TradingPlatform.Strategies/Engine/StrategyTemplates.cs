@@ -103,6 +103,24 @@ public static class StrategyTemplateKeys
     public const string Hlhb = "hlhb";
     public const string FAdxSma = "fadx_sma";
     public const string TripleSupertrend = "triple_supertrend";
+    public const string ImpulseCatchV2 = "impulse_catch_v2";
+    public const string ZigZagFadeV2 = "zigzag_fade_v2";
+    public const string TripleSupertrendV2 = "triple_supertrend_v2";
+    public const string TsMomentumV2 = "ts_momentum_v2";
+    public const string EmaCrossV2 = "ema_cross_v2";
+    public const string FAdxSmaV2 = "fadx_sma_v2";
+    public const string BinHv45V2 = "binhv45_v2";
+    public const string ClucMay72018V2 = "cluc_may72018_v2";
+    public const string ClucMay72018V2Thirty = "cluc_may72018_v2_30m";
+    public const string CombinedBinHClucV2 = "combined_binh_cluc_v2";
+    public const string DonchianBreakoutV2FourHour = "donchian_breakout_v2_4h";
+    public const string DonchianBreakoutV2Daily = "donchian_breakout_v2_1d";
+    public const string SqueezeWatchV2 = "squeeze_watch_v2";
+    public const string FlowZoneV2 = "flow_zone_v2";
+    public const string FlatRangeV2 = "flat_range_v2";
+    public const string EmaRsiTrendV2 = "ema_rsi_trend_v2";
+    public const string EmaRsiTrendV2Thirty = "ema_rsi_trend_v2_30m";
+    public const string BollingerReversionV2 = "bollinger_reversion_v2";
 
     public static readonly string[] Frozen =
     [
@@ -237,7 +255,29 @@ public static class StrategyTemplateKeys
 
     public static readonly string[] Positioning = [SqueezeWatch];
 
-    public static readonly string[] All = [.. Frozen, .. Research, .. NearMiss, .. CrossSectionalReversal, .. Range, .. Flow, .. Positioning, .. Imported];
+    public static readonly string[] Refactored =
+    [
+        ImpulseCatchV2,
+        ZigZagFadeV2,
+        TripleSupertrendV2,
+        TsMomentumV2,
+        EmaCrossV2,
+        FAdxSmaV2,
+        BinHv45V2,
+        ClucMay72018V2,
+        ClucMay72018V2Thirty,
+        CombinedBinHClucV2,
+        DonchianBreakoutV2FourHour,
+        DonchianBreakoutV2Daily,
+        SqueezeWatchV2,
+        FlowZoneV2,
+        FlatRangeV2,
+        EmaRsiTrendV2,
+        EmaRsiTrendV2Thirty,
+        BollingerReversionV2
+    ];
+
+    public static readonly string[] All = [.. Frozen, .. Research, .. NearMiss, .. CrossSectionalReversal, .. Range, .. Flow, .. Positioning, .. Imported, .. Refactored];
 
     /// <summary>
     /// Operator catalog: PAPER or weak guidance only. Avoid/blocked templates stay in the engine
@@ -357,6 +397,11 @@ public static class StrategyTemplateKeys
             return ["1h"];
         }
 
+        if (IsRefactored(template))
+        {
+            return RefactoredTimeframe(template);
+        }
+
         if (IsCrossSectionalReversal(template))
         {
             return ["15m"];
@@ -365,9 +410,25 @@ public static class StrategyTemplateKeys
         return SupportedTimeframes;
     }
 
+    private static string[] RefactoredTimeframe(string template) => template switch
+    {
+        ImpulseCatchV2 or ZigZagFadeV2 or EmaRsiTrendV2 or BollingerReversionV2 or ClucMay72018V2 or CombinedBinHClucV2 => ["15m"],
+        EmaRsiTrendV2Thirty or ClucMay72018V2Thirty or EmaCrossV2 => ["30m"],
+        BinHv45V2 or FlowZoneV2 => ["5m"],
+        TripleSupertrendV2 or FAdxSmaV2 or SqueezeWatchV2 or FlatRangeV2 => ["1h"],
+        TsMomentumV2 or DonchianBreakoutV2Daily => ["1d"],
+        DonchianBreakoutV2FourHour => ["4h"],
+        _ => ["15m"]
+    };
+
     public static IReadOnlyList<string> DirectionsFor(string? key)
     {
         var template = Normalize(key);
+        if (template is ImpulseCatchV2 or TsMomentumV2 or ClucMay72018V2 or ClucMay72018V2Thirty)
+        {
+            return ["LONG"];
+        }
+
         return template is BtcEma20Ema50Long or TsMomentum285 or BtcDailyMax10
             or BinHv45 or ClucMay72018 or CombinedBinHCluc or Hlhb or ImpulseCatch
             ? ["LONG"]
@@ -423,6 +484,9 @@ public static class StrategyTemplateKeys
     public static bool IsFlatRange(string? key) =>
         string.Equals(Normalize(key), FlatRange, StringComparison.Ordinal);
 
+    public static bool IsRefactored(string? key) =>
+        Refactored.Contains(Normalize(key), StringComparer.OrdinalIgnoreCase);
+
     public static bool IsResearchOnlyFamily(string? key) => IsScalping(key) || IsPriceAction(key) || IsCrossSectionalReversal(key);
 
     public static bool IsResearch(string? key) =>
@@ -435,7 +499,9 @@ public static class StrategyTemplateKeys
     {
         TakerFlowMomentum or ScalpTakerFlow => ["OHLCV", "TakerFlow"],
         OiPriceMomentum or OiPriceVolumeRegime or OiBreakoutConfirmation or ScalpPriceOi => ["OHLCV", "OpenInterest"],
-        FundingOiRegime or FundingOiReversal or ScalpFundingOi or SqueezeWatch => ["OHLCV", "Funding", "OpenInterest"],
+        FundingOiRegime or FundingOiReversal or ScalpFundingOi or SqueezeWatch or SqueezeWatchV2 => ["OHLCV", "Funding", "OpenInterest"],
+        FlowZoneV2 => ["OHLCV", "TakerFlow", "OpenInterest", "CompletedHtf"],
+        BinHv45V2 or ClucMay72018V2 or ClucMay72018V2Thirty or EmaRsiTrendV2 or EmaRsiTrendV2Thirty => ["OHLCV", "CompletedHtf"],
         FundingBasisRv or FundingBasisVwap => ["OHLCV", "Funding", "MarkPrice", "IndexPrice", "Basis"],
         FundingPriceMomentum or FundingExtremeMomentumExhaustion => ["OHLCV", "Funding"],
         BasisMeanReversion or ScalpBasis => ["OHLCV", "MarkPrice", "IndexPrice", "Basis"],
@@ -458,7 +524,12 @@ public static class StrategyTemplateKeys
         BollingerReversion or FlatRange or BinHv45 or ClucMay72018 or CombinedBinHCluc => "MEAN REVERSION",
         DonchianBreakout => "BREAKOUT / TREND",
         Bb202Break => "BREAKOUT / TREND",
-        VolSpikeEmaTrend or BtcEma20Ema50Long or TsMomentum285 or BtcDailyMax10 or FlowZone or ImpulseCatch or FAdxSma or TripleSupertrend => "TREND",
+        VolSpikeEmaTrend or BtcEma20Ema50Long or TsMomentum285 or BtcDailyMax10 or FlowZone or ImpulseCatch or FAdxSma or TripleSupertrend
+            or ImpulseCatchV2 or TsMomentumV2 or EmaCrossV2 or FAdxSmaV2 or TripleSupertrendV2 or FlowZoneV2 or EmaRsiTrendV2 or EmaRsiTrendV2Thirty => "TREND",
+        ZigZagFadeV2 => "REVERSAL",
+        BinHv45V2 or ClucMay72018V2 or ClucMay72018V2Thirty or CombinedBinHClucV2 or FlatRangeV2 or BollingerReversionV2 => "MEAN REVERSION",
+        DonchianBreakoutV2FourHour or DonchianBreakoutV2Daily => "BREAKOUT / TREND",
+        SqueezeWatchV2 => "FUTURES / FLOW",
         var scalp when IsScalping(scalp) => "SCALPING",
         var pa when IsPriceAction(pa) => "SCALPING_PRICE_ACTION",
         var near when IsNearMiss(near) => "NEAR_MISS",
@@ -816,6 +887,7 @@ public static class StrategyTemplates
                 Timeframe = "4h",
                 VolumeFilterEnabled = false
             },
+            var refactored when StrategyTemplateKeys.IsRefactored(refactored) => RefactoredDefaults(core),
             _ => core
         };
     }
@@ -905,6 +977,189 @@ public static class StrategyTemplates
             TemplateKey = key,
             AllowedSide = StrategySides.Normalize(parameters.AllowedSide),
             Quality = quality
+        };
+    }
+
+    private static StrategyTemplateParams RefactoredDefaults(StrategyTemplateParams core)
+    {
+        var key = core.TemplateKey;
+        var shared = core with
+        {
+            VolumeFilterEnabled = false,
+            TrendEmaPeriod = 200,
+            AtrPeriod = 14,
+            EmaFast = 20,
+            EmaSlow = 50,
+            SwingLength = 5,
+            AllowedSide = StrategySides.Both
+        };
+        return key switch
+        {
+            StrategyTemplateKeys.ImpulseCatchV2 => shared with
+            {
+                Timeframe = "15m",
+                AllowedSide = StrategySides.Long,
+                EntryLookback = 16,
+                ExitLookback = 32,
+                PriceDisplacementAtr = 1.5m,
+                MinimumRelativeVolume = 1.5m,
+                RelativeVolumePeriod = 20,
+                StopAtrMultiplier = 1.8m,
+                AtrStopMultiplier = 2.5m
+            },
+            StrategyTemplateKeys.ZigZagFadeV2 => shared with
+            {
+                Timeframe = "15m",
+                SwingLength = 5,
+                SweepDepthAtr = 0.3m,
+                AtrStopMultiplier = 2m,
+                StopAtrMultiplier = 1.5m
+            },
+            StrategyTemplateKeys.TripleSupertrendV2 => shared with
+            {
+                Timeframe = "1h",
+                SupertrendPeriod = 10,
+                SupertrendMultiplier = 3m,
+                StopAtrMultiplier = 2m,
+                AtrStopMultiplier = 3m
+            },
+            StrategyTemplateKeys.TsMomentumV2 => shared with
+            {
+                Timeframe = "1d",
+                AllowedSide = StrategySides.Long,
+                TrendEmaPeriod = 100,
+                EntryLookback = 28,
+                AtrStopMultiplier = 3m,
+                StopAtrMultiplier = 3m
+            },
+            StrategyTemplateKeys.EmaCrossV2 => shared with
+            {
+                Timeframe = "30m",
+                MinimumAdx = 18m,
+                StopAtrMultiplier = 1.5m,
+                AtrStopMultiplier = 2.5m
+            },
+            StrategyTemplateKeys.FAdxSmaV2 => shared with
+            {
+                Timeframe = "1h",
+                MinimumAdx = 20m,
+                StopAtrMultiplier = 2m,
+                AtrStopMultiplier = 2m
+            },
+            StrategyTemplateKeys.BinHv45V2 => shared with
+            {
+                Timeframe = "5m",
+                BbPeriod = 40,
+                BbStdDev = 2m,
+                MinimumRelativeVolume = 1.2m,
+                StopAtrMultiplier = 1.5m,
+                SweepDepthAtr = 0.3m
+            },
+            StrategyTemplateKeys.ClucMay72018V2 => shared with
+            {
+                Timeframe = "15m",
+                AllowedSide = StrategySides.Long,
+                BbPeriod = 20,
+                BbStdDev = 2m,
+                RsiOversold = 35m,
+                ExitLookback = 24,
+                SweepDepthAtr = 0.3m
+            },
+            StrategyTemplateKeys.ClucMay72018V2Thirty => shared with
+            {
+                Timeframe = "30m",
+                AllowedSide = StrategySides.Long,
+                BbPeriod = 20,
+                BbStdDev = 2m,
+                RsiOversold = 35m,
+                ExitLookback = 24,
+                SweepDepthAtr = 0.3m
+            },
+            StrategyTemplateKeys.CombinedBinHClucV2 => shared with
+            {
+                Timeframe = "15m",
+                BbPeriod = 20,
+                BbStdDev = 2m,
+                MinimumAdx = 20m,
+                RsiOversold = 35m,
+                PriceChangeThreshold = 0.005m,
+                ExitLookback = 24,
+                SweepDepthAtr = 0.3m,
+                StopAtrMultiplier = 1.5m
+            },
+            StrategyTemplateKeys.DonchianBreakoutV2FourHour => shared with
+            {
+                Timeframe = "4h",
+                EntryLookback = 20,
+                ExitLookback = 10,
+                DonchianLength = 20,
+                TrendEmaPeriod = 100,
+                StopAtrMultiplier = 2m,
+                AtrStopMultiplier = 3m
+            },
+            StrategyTemplateKeys.DonchianBreakoutV2Daily => shared with
+            {
+                Timeframe = "1d",
+                EntryLookback = 55,
+                ExitLookback = 20,
+                DonchianLength = 55,
+                TrendEmaPeriod = 100,
+                StopAtrMultiplier = 2m,
+                AtrStopMultiplier = 3m
+            },
+            StrategyTemplateKeys.SqueezeWatchV2 => shared with
+            {
+                Timeframe = "1h",
+                FundingLookback = 720,
+                FundingExtremePercentile = 0.90m,
+                StopAtrMultiplier = 1.5m,
+                SweepDepthAtr = 0.3m
+            },
+            StrategyTemplateKeys.FlowZoneV2 => shared with
+            {
+                Timeframe = "5m",
+                EntryLookback = 20,
+                StopAtrMultiplier = 1.5m,
+                AtrStopMultiplier = 2m
+            },
+            StrategyTemplateKeys.FlatRangeV2 => shared with
+            {
+                Timeframe = "1h",
+                EntryLookback = 24,
+                ExitLookback = 48,
+                MinimumAdx = 18m
+            },
+            StrategyTemplateKeys.EmaRsiTrendV2 => shared with
+            {
+                Timeframe = "15m",
+                RsiOversold = 40m,
+                RsiMinimum = 50m,
+                MinimumRelativeVolume = 1.2m,
+                StopAtrMultiplier = 1.5m,
+                AtrStopMultiplier = 2m
+            },
+            StrategyTemplateKeys.EmaRsiTrendV2Thirty => shared with
+            {
+                Timeframe = "30m",
+                RsiOversold = 40m,
+                RsiMinimum = 50m,
+                MinimumRelativeVolume = 1.2m,
+                StopAtrMultiplier = 1.5m,
+                AtrStopMultiplier = 2m
+            },
+            StrategyTemplateKeys.BollingerReversionV2 => shared with
+            {
+                Timeframe = "15m",
+                BbPeriod = 20,
+                BbStdDev = 2m,
+                MinimumAdx = 20m,
+                RsiOversold = 35m,
+                RsiOverbought = 70m,
+                PriceChangeThreshold = 0.005m,
+                StopAtrMultiplier = 1.5m,
+                ExitLookback = 12
+            },
+            _ => shared
         };
     }
 
@@ -1156,6 +1411,24 @@ public static class StrategyTemplates
         StrategyTemplateKeys.Hlhb => "HLHB",
         StrategyTemplateKeys.FAdxSma => "ADX SMA Cross",
         StrategyTemplateKeys.TripleSupertrend => "Triple Supertrend",
+        StrategyTemplateKeys.ImpulseCatchV2 => "Impulse Catch v2",
+        StrategyTemplateKeys.ZigZagFadeV2 => "ZigZag Fade v2",
+        StrategyTemplateKeys.TripleSupertrendV2 => "Triple Supertrend v2",
+        StrategyTemplateKeys.TsMomentumV2 => "1d Time-Series Momentum v2",
+        StrategyTemplateKeys.EmaCrossV2 => "30m EMA Cross v2",
+        StrategyTemplateKeys.FAdxSmaV2 => "ADX SMA Cross v2",
+        StrategyTemplateKeys.BinHv45V2 => "BinHV45 v2",
+        StrategyTemplateKeys.ClucMay72018V2 => "Cluc May 2018 v2",
+        StrategyTemplateKeys.ClucMay72018V2Thirty => "Cluc May 2018 v2 30m",
+        StrategyTemplateKeys.CombinedBinHClucV2 => "Combined BinH Cluc v2",
+        StrategyTemplateKeys.DonchianBreakoutV2FourHour => "Donchian 20/10 v2 4h",
+        StrategyTemplateKeys.DonchianBreakoutV2Daily => "Donchian 55/20 v2 1d",
+        StrategyTemplateKeys.SqueezeWatchV2 => "Squeeze Watch v2",
+        StrategyTemplateKeys.FlowZoneV2 => "Flow Zone v2",
+        StrategyTemplateKeys.FlatRangeV2 => "Flat Range v2",
+        StrategyTemplateKeys.EmaRsiTrendV2 => "EMA RSI Trend v2",
+        StrategyTemplateKeys.EmaRsiTrendV2Thirty => "EMA RSI Trend v2 30m",
+        StrategyTemplateKeys.BollingerReversionV2 => "Bollinger Reversion v2",
         _ => "EMA RSI Trend"
     };
 
@@ -1295,6 +1568,7 @@ public static class StrategyTemplates
         StrategyTemplateKeys.CryptoPairsArb => "DATA_UNAVAILABLE",
         StrategyTemplateKeys.XsRelativeStrength => "DATA_UNAVAILABLE",
         var imported when StrategyTemplateKeys.IsImported(imported) => "RESEARCHING",
+        var refactored when StrategyTemplateKeys.IsRefactored(refactored) => StrategyExecutionRules.VersionStatus,
         StrategyTemplateKeys.VolSpikeEmaTrend => StrategyValidationStatuses.HistoricallyFittedCandidate,
         StrategyTemplateKeys.Bb202Break => StrategyValidationStatuses.HistoricallyFittedCandidate,
         StrategyTemplateKeys.BtcEma20Ema50Long => StrategyValidationStatuses.HistoricallyFittedCandidate,

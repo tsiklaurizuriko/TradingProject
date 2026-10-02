@@ -25,7 +25,8 @@ public sealed class AlphaStrategyTests
             + StrategyTemplateKeys.Range.Length
             + StrategyTemplateKeys.Flow.Length
             + StrategyTemplateKeys.Positioning.Length
-            + StrategyTemplateKeys.Imported.Length);
+            + StrategyTemplateKeys.Imported.Length
+            + StrategyTemplateKeys.Refactored.Length);
         StrategyTemplateKeys.Scalping.Should().HaveCount(22);
         StrategyTemplateKeys.OperatorCatalog.Should().HaveCount(26);
         StrategyTemplateKeys.IsOperatorCatalog(StrategyTemplateKeys.BtcDailyMax10).Should().BeTrue();
@@ -44,7 +45,8 @@ public sealed class AlphaStrategyTests
                 .Concat(StrategyTemplateKeys.Range)
                 .Concat(StrategyTemplateKeys.Flow)
                 .Concat(StrategyTemplateKeys.Positioning)
-                .Concat(StrategyTemplateKeys.Imported));
+                .Concat(StrategyTemplateKeys.Imported)
+                .Concat(StrategyTemplateKeys.Refactored));
         StrategyTemplateKeys.IsOperatorCatalog(StrategyTemplateKeys.CrossSectionalReversalReturn15m).Should().BeFalse();
     }
 

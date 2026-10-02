@@ -122,6 +122,8 @@ public sealed class StrategyContext
     public bool HasOpenPosition { get; init; }
     public PositionSide PositionSide { get; init; } = PositionSide.Long;
     public DateTimeOffset? PositionOpenedAt { get; init; }
+    /// <summary>Fill-based protective stop. Used for R multiples. Null when the position has no stop yet.</summary>
+    public decimal? ProtectiveStopPrice { get; init; }
     /// <summary>Binance contract id, for rules that differ by coin. Empty outside a live bot.</summary>
     public string Symbol { get; init; } = "";
     /// <summary>Optional higher-timeframe cache. LIVE and frozen templates leave this null.</summary>
@@ -184,6 +186,7 @@ public interface IStrategyEngine
                 HasOpenPosition = context.HasOpenPosition,
                 PositionSide = context.PositionSide,
                 PositionOpenedAt = context.PositionOpenedAt,
+                ProtectiveStopPrice = context.ProtectiveStopPrice,
                 Symbol = context.Symbol,
                 HigherTimeframeCache = context.HigherTimeframeCache,
                 OpenInterest = Prefix(context.OpenInterest, take),

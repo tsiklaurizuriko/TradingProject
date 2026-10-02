@@ -113,9 +113,12 @@ public sealed class BacktestService : IBacktestService
                 book.MaxConsecutiveLosses,
                 book.CooldownMinutes,
                 book.MinimumLiquidationSafetyBufferPercent,
-                HonorSuggestedStops: StrategyTemplateKeys.IsFlatRange(definition.Template) || StrategyTemplateKeys.IsImported(definition.Template),
-                MaxHoldBars: StrategyTemplateKeys.IsFlatRange(definition.Template) ? FlatRangeStrategy.MaxHoldHours : 0,
-                BookStopsOff: StrategyTemplateKeys.IsImported(definition.Template)));
+                HonorSuggestedStops: StrategyTemplateKeys.IsFlatRange(definition.Template) || StrategyTemplateKeys.IsImported(definition.Template) || StrategyTemplateKeys.IsRefactored(definition.Template),
+                MaxHoldBars: StrategyTemplateKeys.IsFlatRange(definition.Template)
+                    ? FlatRangeStrategy.MaxHoldHours
+                    : RefactoredStrategyEvaluator.MaxHoldBars(definition.Template),
+                BookStopsOff: StrategyTemplateKeys.IsImported(definition.Template),
+                PreserveNullTake: StrategyTemplateKeys.IsRefactored(definition.Template)));
 
         var user = await _store.GetUserAsync(userId, cancellationToken)
             ?? await _store.GetFirstAdminAsync(cancellationToken);

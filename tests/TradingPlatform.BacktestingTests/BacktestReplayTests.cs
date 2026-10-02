@@ -171,6 +171,48 @@ public sealed class BacktestReplayTests
         result.NumberOfTrades.Should().Be(0);
     }
 
+    [Fact]
+    public void Slippage_scenarios_do_not_improve_a_flat_round_trip()
+    {
+        var start = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var candles = Enumerable.Range(0, 60).Select(i => Bar(start, i, 100m)).ToList();
+        var nets = new[] { 0.05m, 0.10m, 0.20m }
+            .Select(bps =>
+            {
+                var replay = new BacktestReplay(new ScriptedEngine(40, 50));
+                return replay.Run(
+                    new StrategyDefinition { Name = "script", Timeframe = "5m", Entry = new ConditionGroup(), Exit = new ConditionGroup() },
+                    candles,
+                    Settings(start, start.AddHours(6)) with { SlippagePercent = bps }).NetProfit;
+            })
+            .ToList();
+
+        nets[0].Should().BeGreaterThan(nets[1]);
+        nets[1].Should().BeGreaterThan(nets[2]);
+        nets.Should().OnlyContain(value => value < 0m);
+    }
+
+    [Fact]
+    public void Missing_target_is_not_replaced_when_preserve_null_take_is_set()
+    {
+        var start = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var candles = Enumerable.Range(0, 60).Select(i => Bar(start, i, 100m)).ToList();
+        candles[45].High = 120m;
+        var definition = new StrategyDefinition { Name = "script", Timeframe = "5m", Entry = new ConditionGroup(), Exit = new ConditionGroup() };
+        var open = Settings(start, start.AddHours(6), stopLossPercent: 3m) with
+        {
+            HonorSuggestedStops = true,
+            PreserveNullTake = true
+        };
+        var replaced = open with { PreserveNullTake = false };
+        var cache = new TradingPlatform.Strategies.Indicators.CausalIndicatorCache(candles);
+        var kept = new BacktestReplay(new StopOnlyEngine()).Run(definition, candles, open, cache);
+        var filled = new BacktestReplay(new StopOnlyEngine()).Run(definition, candles, replaced, cache);
+        kept.Trades[0].Reason.Should().Be("End of window");
+        filled.Trades[0].Reason.Should().Be("Take profit");
+        kept.Assumptions.Should().Contain("not treated as a zero funding rate");
+    }
+
     private static ReplaySettings Settings(DateTimeOffset start, DateTimeOffset end, decimal stopLossPercent = 2m) =>
         new(start, end, 10_000m, 1m, 1m, 0.1m, 0m, stopLossPercent, 4m);
 
@@ -205,6 +247,33 @@ public sealed class BacktestReplayTests
             }
 
             return context.HasOpenPosition ? SignalType.Hold : SignalType.NoAction;
+        }
+    }
+
+    private sealed class StopOnlyEngine : IStrategyEngine
+    {
+        public SignalType Evaluate(StrategyDefinition definition, StrategyContext context, out string reason)
+        {
+            var n = context.ClosedCandles.Count;
+            if (!context.HasOpenPosition && n == 40)
+            {
+                reason = "buy";
+                return SignalType.Buy;
+            }
+
+            reason = "hold";
+            return context.HasOpenPosition ? SignalType.Hold : SignalType.NoAction;
+        }
+
+        public StrategySignalDetail EvaluateDetailAt(
+            StrategyDefinition definition,
+            StrategyContext context,
+            TradingPlatform.Strategies.Indicators.CausalIndicatorCache cache,
+            int index)
+        {
+            var signal = ((IStrategyEngine)this).EvaluateAt(definition, context, cache, index, out var reason);
+            decimal? stop = signal == SignalType.Buy ? 97m : null;
+            return new StrategySignalDetail(signal, reason, SuggestedStop: stop);
         }
     }
 }

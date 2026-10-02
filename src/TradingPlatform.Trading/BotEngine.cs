@@ -804,6 +804,7 @@ public sealed class BotEngine : IBotEngine
                 AverageEntryPrice = position?.AverageEntryPrice,
                 PositionSide = position?.Side ?? PositionSide.Long,
                 PositionOpenedAt = position?.OpenedAt,
+                ProtectiveStopPrice = position?.StopLossPrice is > 0m ? position.StopLossPrice : null,
                 Symbol = bot.Symbol,
                 OpenInterest = openInterest,
                 FundingRate = funding
@@ -816,10 +817,7 @@ public sealed class BotEngine : IBotEngine
         }
 
         var lastCandle = candles[^1];
-        var candleKey = lastCandle.OpenTime.ToUnixTimeSeconds().ToString(System.Globalization.CultureInfo.InvariantCulture);
-        var clientOrderId = bot.Mode == TradingMode.Live
-            ? $"L{bot.Id:N}"[..12] + (candleKey.Length <= 10 ? candleKey : candleKey[^10..])
-            : $"p-{bot.Id:N}-{candleKey}";
+        var clientOrderId = CandleIdempotency.Key(bot.Id, lastCandle.OpenTime, bot.Mode == TradingMode.Live);
         var correlationId = _correlation.GetOrCreate();
 
         if (signalType is SignalType.NoAction or SignalType.Hold)

@@ -26,7 +26,9 @@ public sealed record ReplaySettings(
     decimal MinimumLiquidationSafetyBufferPercent = 0.1m,
     bool HonorSuggestedStops = false,
     int MaxHoldBars = 0,
-    bool BookStopsOff = false);
+    bool BookStopsOff = false,
+    decimal TickSize = 0m,
+    bool PreserveNullTake = false);
 
 public sealed record ReplayTrade(
     DateTimeOffset OpenedAt,
@@ -226,7 +228,7 @@ public sealed class BacktestReplay
                     }
                     else if (settings.HonorSuggestedStops && pendingStop is not null)
                     {
-                        if (!TryStructuralStops(entrySide, fill, pendingStop, pendingTake, out posStop, out posTake, out stopPctOverride))
+                        if (!TryStructuralStops(entrySide, fill, pendingStop, pendingTake, settings.TickSize, settings.PreserveNullTake, out posStop, out posTake, out stopPctOverride))
                         {
                             pendingEntry = null;
                             pendingStop = null;
@@ -306,9 +308,12 @@ public sealed class BacktestReplay
                     stop ??= open.Side == PositionSide.Short
                         ? open.EntryPrice * (1m + settings.StopLossPercent / 100m)
                         : open.EntryPrice * (1m - settings.StopLossPercent / 100m);
-                    target ??= open.Side == PositionSide.Short
-                        ? open.EntryPrice * (1m - settings.TakeProfitPercent / 100m)
-                        : open.EntryPrice * (1m + settings.TakeProfitPercent / 100m);
+                    if (!settings.PreserveNullTake)
+                    {
+                        target ??= open.Side == PositionSide.Short
+                            ? open.EntryPrice * (1m - settings.TakeProfitPercent / 100m)
+                            : open.EntryPrice * (1m + settings.TakeProfitPercent / 100m);
+                    }
                 }
 
                 if (stop is { } stopPrice && open.Side == PositionSide.Long && bar.Low <= stopPrice)
@@ -385,6 +390,8 @@ public sealed class BacktestReplay
                     CurrentPrice = bar.Close,
                     HasOpenPosition = open is not null,
                     PositionSide = open?.Side ?? PositionSide.Long,
+                    PositionOpenedAt = open?.OpenedAt,
+                    ProtectiveStopPrice = open?.StopPrice,
                     HigherTimeframeCache = higherTimeframeCache,
                     OpenInterest = futures?.OpenInterest,
                     FundingRate = futures?.FundingRate,
@@ -409,6 +416,8 @@ public sealed class BacktestReplay
                             CurrentPrice = bar.Close,
                             HasOpenPosition = open is not null,
                             PositionSide = open?.Side ?? PositionSide.Long,
+                            PositionOpenedAt = open?.OpenedAt,
+                            ProtectiveStopPrice = open?.StopPrice,
                             HigherTimeframeCache = higherTimeframeCache,
                             OpenInterest = PrefixFutures(futures?.OpenInterest, i + 1),
                             FundingRate = PrefixFutures(futures?.FundingRate, i + 1),
@@ -444,6 +453,14 @@ public sealed class BacktestReplay
                 else if (settings.BookStopsOff && open is not null && detail?.SuggestedStop is decimal trail)
                 {
                     open = open with { StopPrice = trail };
+                }
+                else if (settings.HonorSuggestedStops && open is not null && detail?.SuggestedStop is decimal suggested)
+                {
+                    var tightened = StrategyExecutionRules.TighterStop(open.Side, open.StopPrice, suggested, bar.Close);
+                    if (tightened is { } next && next != open.StopPrice)
+                    {
+                        open = open with { StopPrice = next };
+                    }
                 }
             }
         }
@@ -488,7 +505,10 @@ public sealed class BacktestReplay
             "If T+1 does not exist, the pending fill is dropped. Execution state starts flat at the window. " +
             (includeFunding
                 ? "Settled funding (fundingTime <= bar.CloseTime, not future) is applied to open Isolated notional (INCLUDING_FUNDING). "
-                : "Funding is not applied in this replay (EXCLUDING_FUNDING). ") +
+                : "Funding is not applied in this replay (EXCLUDING_FUNDING). A missing funding series is not treated as a zero funding rate. ") +
+            (settings.PreserveNullTake
+                ? "A missing suggested target stays open. It is not replaced with 2R. "
+                : "When a suggested target is missing, structural mode fills a 2R target. ") +
             "Historical simulation, not a guarantee of future performance.";
 
         var longMetrics = ReplayMetrics.ForSide(trades, "Long");
@@ -679,6 +699,8 @@ public sealed class BacktestReplay
         decimal fill,
         decimal? suggestedStop,
         decimal? suggestedTake,
+        decimal tickSize,
+        bool preserveNullTake,
         out decimal? stop,
         out decimal? take,
         out decimal? stopPercent)
@@ -691,6 +713,7 @@ public sealed class BacktestReplay
             return false;
         }
 
+        rawStop = StrategyExecutionRules.RoundStop(side, rawStop, tickSize);
         var minDistance = fill * 0.002m;
         if (side == PositionSide.Long)
         {
@@ -702,9 +725,16 @@ public sealed class BacktestReplay
             var dist = fill - rawStop;
             stop = rawStop;
             stopPercent = dist / fill * 100m;
-            take = suggestedTake is { } tp && tp >= fill + dist
-                ? tp
-                : fill + dist * 2m;
+            if (suggestedTake is { } tp)
+            {
+                var roundedTake = StrategyExecutionRules.RoundTarget(side, tp, tickSize);
+                take = roundedTake >= fill + dist ? roundedTake : fill + dist * 2m;
+            }
+            else if (!preserveNullTake)
+            {
+                take = fill + dist * 2m;
+            }
+
             return true;
         }
 
@@ -716,9 +746,16 @@ public sealed class BacktestReplay
         var shortDist = rawStop - fill;
         stop = rawStop;
         stopPercent = shortDist / fill * 100m;
-        take = suggestedTake is { } shortTp && shortTp <= fill - shortDist
-            ? shortTp
-            : fill - shortDist * 2m;
+        if (suggestedTake is { } shortTp)
+        {
+            var roundedTake = StrategyExecutionRules.RoundTarget(side, shortTp, tickSize);
+            take = roundedTake <= fill - shortDist ? roundedTake : fill - shortDist * 2m;
+        }
+        else if (!preserveNullTake)
+        {
+            take = fill - shortDist * 2m;
+        }
+
         return true;
     }
 
