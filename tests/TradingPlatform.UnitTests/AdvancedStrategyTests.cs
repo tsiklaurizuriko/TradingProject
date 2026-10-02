@@ -102,6 +102,7 @@ public sealed class AdvancedStrategyTests
 
         EvalFlowOpen(candles, PositionSide.Long, 110m).Signal.Should().Be(SignalType.Hold);
         EvalFlowOpen(candles, PositionSide.Long, 100m).Signal.Should().Be(SignalType.Exit);
+        EvalFlowOpen(candles, PositionSide.Long, 111m).Signal.Should().Be(SignalType.Exit);
     }
 
     [Fact]

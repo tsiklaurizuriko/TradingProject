@@ -695,9 +695,9 @@ public static class AdvancedStrategyEvaluator
         {
             var leftLong = IsLong(context) && (place < 1m - edge || buyShare <= takerMajority);
             var leftShort = !IsLong(context) && (place > edge || buyShare >= 1m - takerMajority);
-            if ((leftLong || leftShort) && !MoveCoversRoundTripFee(context, bar.Close))
+            if ((leftLong || leftShort) && !IsLoss(context, bar.Close) && !MoveCoversRoundTripFee(context, bar.Close))
             {
-                return Detail(SignalType.Hold, "Flow left the zone, but the move is still inside the round-trip fee.", candles, i, status: status);
+                return Detail(SignalType.Hold, "Flow left the zone, but the gain is still inside the round-trip fee.", candles, i, status: status);
             }
 
             if (leftLong)
@@ -753,7 +753,21 @@ public static class AdvancedStrategyEvaluator
         return now > prior;
     }
 
-    /// <summary>0.20% is about two taker fees. A smaller scratch pays the fee and keeps nothing.</summary>
+    /// <summary>A loss is already a reason to leave. Holding it so the fee looks smaller lets it walk to the 4% stop.</summary>
+    private static bool IsLoss(StrategyContext context, decimal close)
+    {
+        if (context.AverageEntryPrice is not { } entry || entry <= 0m || close <= 0m)
+        {
+            return false;
+        }
+
+        var move = IsLong(context)
+            ? (close - entry) / entry
+            : (entry - close) / entry;
+        return move < 0m;
+    }
+
+    /// <summary>0.20% is about two taker fees. A smaller gain pays the fee and keeps nothing.</summary>
     private static bool MoveCoversRoundTripFee(StrategyContext context, decimal close)
     {
         const decimal feeBand = 0.002m;

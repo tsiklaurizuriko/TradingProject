@@ -1665,10 +1665,13 @@ public sealed class BotEngine : IBotEngine
             }
 
             tpPrice = ProtectiveRatchet.OpeningTake(TemplateKey(bot), overlaySide, entry, slPrice, tpPrice, lastPrice, tick);
-            var keptTake = ProtectiveRatchet.KeepFurtherTake(overlaySide, lastPrice, tpPrice, position.TakeProfitPrice, tick);
-            if (keptTake > 0m)
+            if (!ProtectiveRatchet.RestoresBookTake(TemplateKey(bot)))
             {
-                tpPrice = keptTake;
+                var keptTake = ProtectiveRatchet.KeepFurtherTake(overlaySide, lastPrice, tpPrice, position.TakeProfitPrice, tick);
+                if (keptTake > 0m)
+                {
+                    tpPrice = keptTake;
+                }
             }
         }
         catch (Exception ex)
@@ -1980,13 +1983,53 @@ public sealed class BotEngine : IBotEngine
             }
 
             stop = keptStop;
-            if (TryWorkingTrigger(bot.Symbol, LiveProtectivePrices.TakeClientOrderId(bot.Id), stop: false, position.Side, mark, tick, out var liveTake))
+            if (TryWorkingTrigger(bot.Symbol, LiveProtectivePrices.TakeClientOrderId(bot.Id), stop: false, position.Side, mark, tick, out var liveTake)
+                && !ProtectiveRatchet.RestoresBookTake(TemplateKey(bot)))
             {
                 var keptTake = ProtectiveRatchet.KeepFurtherTake(position.Side, mark, take, liveTake, tick);
                 if (keptTake > 0m)
                 {
                     take = keptTake;
                 }
+            }
+        }
+
+        var restoreTake = false;
+        if (bot.RiskProfile is { StopLossPercent: > 0m, TakeProfitPercent: > 0m } profile
+            && ProtectiveRatchet.RestoresBookTake(TemplateKey(bot)))
+        {
+            try
+            {
+                var (_, bookTake) = LiveProtectivePrices.FromEntry(
+                    position.AverageEntryPrice,
+                    profile.StopLossPercent,
+                    profile.TakeProfitPercent,
+                    tick,
+                    position.Side);
+                if (ProtectiveRatchet.TryRestoreBookTake(
+                        TemplateKey(bot),
+                        position.Side,
+                        mark,
+                        bookTake,
+                        take,
+                        tick,
+                        out var restored,
+                        out var reached))
+                {
+                    if (reached)
+                    {
+                        position.TakeProfitPrice = restored;
+                        position.TakeProfitPercent = profile.TakeProfitPercent;
+                        return;
+                    }
+
+                    take = restored;
+                    restoreTake = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Book take restore skipped for {Symbol}", position.Symbol);
             }
         }
 
@@ -1998,7 +2041,13 @@ public sealed class BotEngine : IBotEngine
             take,
             mark,
             tick);
-        if (decision is null)
+        if (restoreTake)
+        {
+            decision = decision is { } moved
+                ? moved with { TakeProfit = take, TakeMoved = true }
+                : new ProtectiveRatchetDecision(stop, take, StopMoved: false, TakeMoved: true);
+        }
+        else if (decision is null)
         {
             return;
         }

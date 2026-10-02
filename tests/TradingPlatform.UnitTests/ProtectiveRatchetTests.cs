@@ -17,7 +17,7 @@ public sealed class ProtectiveRatchetTests
     }
 
     [Fact]
-    public void Impulse_trails_eight_percent_under_price_and_pushes_the_take_out()
+    public void Impulse_trails_eight_percent_under_price_and_keeps_the_twenty_percent_take()
     {
         var decision = ProtectiveRatchet.TryAdvance(
             StrategyTemplateKeys.ImpulseCatch, PositionSide.Long, 100m, 94m, 120m, 110m, 0.01m);
@@ -25,8 +25,8 @@ public sealed class ProtectiveRatchetTests
         decision.Should().NotBeNull();
         decision!.Value.StopMoved.Should().BeTrue();
         decision.Value.StopLoss.Should().Be(101.20m);
-        decision.Value.TakeMoved.Should().BeTrue();
-        decision.Value.TakeProfit.Should().Be(200m);
+        decision.Value.TakeMoved.Should().BeFalse();
+        decision.Value.TakeProfit.Should().Be(120m);
     }
 
     [Fact]
@@ -44,14 +44,15 @@ public sealed class ProtectiveRatchetTests
     }
 
     [Fact]
-    public void Adx_moves_the_stop_to_breakeven_and_extends_the_take_after_three_percent()
+    public void Adx_moves_the_stop_to_breakeven_and_keeps_the_five_percent_take()
     {
         var decision = ProtectiveRatchet.TryAdvance(
             StrategyTemplateKeys.FAdxSma, PositionSide.Long, 100m, 95m, 105m, 103m, 0.01m);
 
         decision.Should().NotBeNull();
         decision!.Value.StopLoss.Should().Be(100.20m);
-        decision.Value.TakeProfit.Should().Be(200m);
+        decision.Value.TakeMoved.Should().BeFalse();
+        decision.Value.TakeProfit.Should().Be(105m);
     }
 
     [Fact]
@@ -62,36 +63,31 @@ public sealed class ProtectiveRatchetTests
 
         decision.Should().NotBeNull();
         decision!.Value.StopLoss.Should().Be(99.80m);
-        decision.Value.TakeProfit.Should().Be(50m);
+        decision.Value.TakeMoved.Should().BeFalse();
+        decision.Value.TakeProfit.Should().Be(95m);
     }
 
     [Fact]
-    public void Triple_supertrend_extends_the_take_but_does_not_trail_before_a_large_gain()
+    public void Triple_supertrend_locks_breakeven_only_after_ten_percent_and_keeps_the_take()
     {
         var early = ProtectiveRatchet.TryAdvance(
             StrategyTemplateKeys.TripleSupertrend, PositionSide.Long, 100m, 73.5m, 110m, 109m, 0.01m);
-        early.Should().NotBeNull();
-        early!.Value.StopMoved.Should().BeFalse();
-        early.Value.StopLoss.Should().Be(73.5m);
-        early.Value.TakeProfit.Should().Be(200m);
+        early.Should().BeNull();
 
         var armed = ProtectiveRatchet.TryAdvance(
-            StrategyTemplateKeys.TripleSupertrend, PositionSide.Long, 100m, 73.5m, 200m, 110m, 0.01m);
+            StrategyTemplateKeys.TripleSupertrend, PositionSide.Long, 100m, 73.5m, 110m, 110m, 0.01m);
         armed.Should().NotBeNull();
         armed!.Value.StopLoss.Should().Be(100.20m);
         armed.Value.TakeMoved.Should().BeFalse();
+        armed.Value.TakeProfit.Should().Be(110m);
     }
 
     [Fact]
-    public void Ema_cross_locks_breakeven_and_keeps_the_three_percent_take()
+    public void Ema_cross_keeps_the_one_percent_stop_and_the_three_percent_take()
     {
-        var decision = ProtectiveRatchet.TryAdvance(
-            StrategyTemplateKeys.BtcEma20Ema50Long, PositionSide.Long, 100m, 99m, 103m, 101.5m, 0.01m);
-
-        decision.Should().NotBeNull();
-        decision!.Value.StopLoss.Should().Be(100.20m);
-        decision.Value.TakeMoved.Should().BeFalse();
-        decision.Value.TakeProfit.Should().Be(103m);
+        ProtectiveRatchet.TryAdvance(
+            StrategyTemplateKeys.BtcEma20Ema50Long, PositionSide.Long, 100m, 99m, 103m, 101.5m, 0.01m)
+            .Should().BeNull();
     }
 
     [Fact]
@@ -108,18 +104,14 @@ public sealed class ProtectiveRatchetTests
     }
 
     [Fact]
-    public void Squeeze_and_zigzag_lock_breakeven_without_extending_the_take()
+    public void Squeeze_and_zigzag_keep_the_configured_stop_and_take()
     {
-        var squeeze = ProtectiveRatchet.TryAdvance(
-            StrategyTemplateKeys.SqueezeWatch, PositionSide.Long, 100m, 96m, 108m, 104m, 0.01m);
-        squeeze.Should().NotBeNull();
-        squeeze!.Value.StopLoss.Should().Be(100.20m);
-        squeeze.Value.TakeProfit.Should().Be(108m);
-
-        var zigzag = ProtectiveRatchet.TryAdvance(
-            StrategyTemplateKeys.ZigZagFade, PositionSide.Long, 100m, 96m, 108m, 104m, 0.01m);
-        zigzag.Should().NotBeNull();
-        zigzag!.Value.TakeMoved.Should().BeFalse();
+        ProtectiveRatchet.TryAdvance(
+            StrategyTemplateKeys.SqueezeWatch, PositionSide.Long, 100m, 96m, 108m, 104m, 0.01m)
+            .Should().BeNull();
+        ProtectiveRatchet.TryAdvance(
+            StrategyTemplateKeys.ZigZagFade, PositionSide.Long, 100m, 96m, 108m, 104m, 0.01m)
+            .Should().BeNull();
     }
 
     [Theory]
@@ -143,12 +135,38 @@ public sealed class ProtectiveRatchetTests
     }
 
     [Fact]
-    public void Opening_take_is_pushed_out_only_for_the_runners()
+    public void Extended_take_comes_back_to_the_configured_target()
+    {
+        ProtectiveRatchet.TryRestoreBookTake(
+            StrategyTemplateKeys.ImpulseCatch, PositionSide.Long, 105m, 120m, 200m, 0.01m, out var take, out var reached)
+            .Should().BeTrue();
+        take.Should().Be(120m);
+        reached.Should().BeFalse();
+
+        ProtectiveRatchet.TryRestoreBookTake(
+            StrategyTemplateKeys.FAdxSma, PositionSide.Short, 98m, 95m, 50m, 0.01m, out var shortTake, out var shortReached)
+            .Should().BeTrue();
+        shortTake.Should().Be(95m);
+        shortReached.Should().BeFalse();
+
+        ProtectiveRatchet.TryRestoreBookTake(
+            StrategyTemplateKeys.ImpulseCatch, PositionSide.Long, 125m, 120m, 200m, 0.01m, out var filled, out var already)
+            .Should().BeTrue();
+        filled.Should().Be(120m);
+        already.Should().BeTrue();
+
+        ProtectiveRatchet.TryRestoreBookTake(
+            StrategyTemplateKeys.FlowZone, PositionSide.Long, 105m, 115m, 200m, 0.01m, out _, out _)
+            .Should().BeFalse();
+    }
+
+    [Fact]
+    public void Opening_take_stays_at_the_configured_target()
     {
         ProtectiveRatchet.OpeningTake(StrategyTemplateKeys.ImpulseCatch, PositionSide.Long, 100m, 94m, 120m, 100m, 0.01m)
-            .Should().Be(200m);
+            .Should().Be(120m);
         ProtectiveRatchet.OpeningTake(StrategyTemplateKeys.FAdxSma, PositionSide.Short, 100m, 105m, 95m, 100m, 0.01m)
-            .Should().Be(50m);
+            .Should().Be(95m);
         ProtectiveRatchet.OpeningTake(StrategyTemplateKeys.BtcEma20Ema50Long, PositionSide.Long, 100m, 99m, 103m, 100m, 0.01m)
             .Should().Be(103m);
         ProtectiveRatchet.OpeningTake(StrategyTemplateKeys.BinHv45, PositionSide.Long, 100m, 95m, 101.25m, 100m, 0.01m)

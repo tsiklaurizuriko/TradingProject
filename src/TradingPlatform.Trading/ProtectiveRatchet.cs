@@ -10,9 +10,9 @@ public readonly record struct ProtectiveRatchetDecision(
     bool TakeMoved);
 
 /// <summary>
-/// Tightens a working stop after the trade is already in profit, and extends take profit
-/// only where the take is a cap in front of the strategy's own exit. The stop never moves
-/// back out. The take never moves closer.
+/// Tightens a working stop after the trade is already in profit. The stop never moves
+/// back out. The take profit stays at the price the strategy configured: moving it out
+/// to 50% or 100% left the full stop in place and the advertised target never filled.
 /// </summary>
 public static class ProtectiveRatchet
 {
@@ -51,29 +51,55 @@ public static class ProtectiveRatchet
             }
         }
 
-        var take = currentTake;
-        var takeMoved = false;
-        if (policy.ExtendTake && currentTake > 0m)
-        {
-            var distance = shortSide ? 0.50m : 1.00m;
-            var target = shortSide ? entry * (1m - distance) : entry * (1m + distance);
-            target = LiveProtectivePrices.RoundToTick(target, tickSize, down: shortSide);
-            var clearance = Clearance(entry, tickSize);
-            var beyondMark = shortSide ? target < mark - clearance : target > mark + clearance;
-            var further = shortSide ? target < currentTake : target > currentTake;
-            if (beyondMark && further && Math.Abs(target - currentTake) >= entry * MinimumStep)
-            {
-                take = target;
-                takeMoved = true;
-            }
-        }
-
-        if (!stopMoved && !takeMoved)
+        if (!stopMoved)
         {
             return null;
         }
 
-        return new ProtectiveRatchetDecision(stop, take, stopMoved, takeMoved);
+        return new ProtectiveRatchetDecision(stop, currentTake, stopMoved, TakeMoved: false);
+    }
+
+    public static bool RestoresBookTake(string? templateKey) =>
+        StrategyTemplateKeys.Normalize(templateKey) is
+            StrategyTemplateKeys.ImpulseCatch or
+            StrategyTemplateKeys.FAdxSma or
+            StrategyTemplateKeys.TripleSupertrend;
+
+    /// <summary>
+    /// Pulls a take that was pushed out to +100% or −50% back to the configured target.
+    /// When that target is already through the mark, <paramref name="alreadyReached"/> is set
+    /// so the position can close instead of resting an order on the wrong side of price.
+    /// </summary>
+    public static bool TryRestoreBookTake(
+        string? templateKey,
+        PositionSide side,
+        decimal mark,
+        decimal bookTake,
+        decimal workingTake,
+        decimal tickSize,
+        out decimal take,
+        out bool alreadyReached)
+    {
+        take = workingTake;
+        alreadyReached = false;
+        if (!RestoresBookTake(templateKey) || mark <= 0m || bookTake <= 0m || workingTake <= 0m)
+        {
+            return false;
+        }
+
+        var shortSide = side == PositionSide.Short;
+        var bookIsCloser = shortSide ? bookTake > workingTake : bookTake < workingTake;
+        var tolerance = Math.Max(tickSize > 0m ? tickSize : 0m, mark * 0.002m);
+        if (!bookIsCloser || Math.Abs(bookTake - workingTake) < tolerance)
+        {
+            return false;
+        }
+
+        take = bookTake;
+        var clearance = Clearance(0m, tickSize);
+        var stillAhead = shortSide ? bookTake < mark - clearance : bookTake > mark + clearance;
+        alreadyReached = !stillAhead;
+        return true;
     }
 
     public static decimal OpeningTake(
@@ -177,15 +203,12 @@ public static class ProtectiveRatchet
 
     private static Policy? PolicyFor(string? templateKey) => StrategyTemplateKeys.Normalize(templateKey) switch
     {
-        StrategyTemplateKeys.ImpulseCatch => new Policy(0.10m, Trail: true, ExtendTake: true),
-        StrategyTemplateKeys.FAdxSma => new Policy(0.03m, Trail: false, ExtendTake: true),
-        StrategyTemplateKeys.TripleSupertrend => new Policy(0.10m, Trail: false, ExtendTake: true),
-        StrategyTemplateKeys.BtcEma20Ema50Long => new Policy(0.015m, Trail: false, ExtendTake: false),
-        StrategyTemplateKeys.FlowZone => new Policy(0.08m, Trail: false, ExtendTake: false),
-        StrategyTemplateKeys.SqueezeWatch => new Policy(0.04m, Trail: false, ExtendTake: false),
-        StrategyTemplateKeys.ZigZagFade => new Policy(0.04m, Trail: false, ExtendTake: false),
+        StrategyTemplateKeys.ImpulseCatch => new Policy(0.10m, Trail: true),
+        StrategyTemplateKeys.FAdxSma => new Policy(0.03m, Trail: false),
+        StrategyTemplateKeys.TripleSupertrend => new Policy(0.10m, Trail: false),
+        StrategyTemplateKeys.FlowZone => new Policy(0.08m, Trail: false),
         _ => null
     };
 
-    private readonly record struct Policy(decimal Arm, bool Trail, bool ExtendTake);
+    private readonly record struct Policy(decimal Arm, bool Trail);
 }
