@@ -28,7 +28,7 @@ public sealed class AlphaStrategyTests
             + StrategyTemplateKeys.Imported.Length
             + StrategyTemplateKeys.Refactored.Length);
         StrategyTemplateKeys.Scalping.Should().HaveCount(22);
-        StrategyTemplateKeys.OperatorCatalog.Should().HaveCount(26);
+        StrategyTemplateKeys.OperatorCatalog.Should().HaveCount(27);
         StrategyTemplateKeys.IsOperatorCatalog(StrategyTemplateKeys.BtcDailyMax10).Should().BeTrue();
         StrategyTemplateKeys.IsOperatorCatalog(StrategyTemplateKeys.TsMomentum285).Should().BeTrue();
         StrategyTemplateKeys.TimeframesFor(StrategyTemplateKeys.TsMomentum285).Should().Equal("1d");

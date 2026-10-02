@@ -165,7 +165,7 @@ public sealed class SecondPassStrategyTests
     [Fact]
     public void Every_v2_template_rejects_a_short_history_and_an_unclosed_bar()
     {
-        foreach (var key in StrategyTemplateKeys.Refactored)
+        foreach (var key in StrategyTemplateKeys.Canonical)
         {
             var cold = EvalKey(key, Flat(5, 100m));
             cold.Signal.Should().NotBe(SignalType.Buy, key);
@@ -186,30 +186,44 @@ public sealed class SecondPassStrategyTests
     }
 
     [Fact]
-    public void Research_workflow_lists_each_v2_once_without_enabling_live_trading()
+    public void Live_entries_stay_blocked_until_the_operator_turns_the_flag_on()
     {
-        StrategyTemplateKeys.Refactored.Should().OnlyHaveUniqueItems();
+        LiveEntryGate.BlockNewEntry(TradingMode.Live, liveTradingEnabled: false).Should().Be(LiveEntryGate.BlockedMessage);
+        LiveEntryGate.BlockNewEntry(TradingMode.Paper, liveTradingEnabled: false).Should().BeNull();
+        LiveEntryGate.BlockNewEntry(TradingMode.Live, liveTradingEnabled: true).Should().BeNull();
+        File.ReadAllText(Path.Combine(RepoRoot(), "src", "TradingPlatform.Api", "appsettings.json")).Should().Contain("\"LiveTradingEnabled\": false");
+        File.ReadAllText(Path.Combine(RepoRoot(), "src", "TradingPlatform.Workers", "appsettings.json")).Should().Contain("\"LiveTradingEnabled\": false");
+    }
+
+    [Fact]
+    public void Canonical_strategies_are_unique_and_do_not_enable_live_trading()
+    {
+        StrategyTemplateKeys.Canonical.Should().OnlyHaveUniqueItems();
         StrategyTemplateKeys.All.Should().OnlyHaveUniqueItems();
-        var present = new List<string>();
-        foreach (var key in StrategyTemplateKeys.Refactored)
+        StrategyTemplateKeys.Refactored.Should().BeEmpty();
+        foreach (var key in StrategyTemplateKeys.Canonical)
         {
-            StrategyTemplateKeys.IsResearchWorkflow(key).Should().BeTrue();
-            StrategyTemplateKeys.IsOperatorCatalog(key).Should().BeFalse();
+            StrategyTemplateKeys.IsResearchWorkflow(key).Should().BeFalse();
             StrategyTemplates.DefaultsFor(key, false).Timeframe.Should().Be(StrategyTemplateKeys.TimeframesFor(key)[0]);
-            StrategyTemplateKeys.ContainsTemplate(present, key).Should().BeFalse();
-            present.Add(key);
-            StrategyTemplateKeys.ContainsTemplate(present, key).Should().BeTrue();
+            var duplicate = StrategyTemplateKeys.Canonical.Count(row => string.Equals(row, key, StringComparison.OrdinalIgnoreCase));
+            duplicate.Should().Be(1, key);
         }
 
-        StrategyTemplates.DefaultsFor(StrategyTemplateKeys.ImpulseCatchV2, false).MaxImpulseAgeBars.Should().Be(32);
-        var roundTrip = StrategyTemplates.Read(StrategyTemplates.Build("Impulse Catch v2", 1, StrategyTemplates.DefaultsFor(StrategyTemplateKeys.ImpulseCatchV2, false)));
+        StrategyTemplates.DefaultsFor(StrategyTemplateKeys.ImpulseCatch, false).MaxImpulseAgeBars.Should().Be(32);
+        var roundTrip = StrategyTemplates.Read(StrategyTemplates.Build("Impulse Catch", 1, StrategyTemplates.DefaultsFor(StrategyTemplateKeys.ImpulseCatch, false)));
         roundTrip.MaxImpulseAgeBars.Should().Be(32);
         var legacy = StrategyTemplates.Read("""{"template":"impulse_catch_v2","timeframe":"15m","params":{}}""");
         legacy.MaxImpulseAgeBars.Should().Be(32);
 
-        var root = RepoRoot();
-        File.ReadAllText(Path.Combine(root, "src", "TradingPlatform.Api", "appsettings.json")).Should().Contain("\"LiveTradingEnabled\": false");
-        File.ReadAllText(Path.Combine(root, "src", "TradingPlatform.Workers", "appsettings.json")).Should().Contain("\"LiveTradingEnabled\": false");
+        var obsolete = StrategyTemplates.DefaultsFor(StrategyTemplateKeys.ImpulseCatchV2, false);
+        var detail = RefactoredStrategyEvaluator.Evaluate(
+            obsolete with { TemplateKey = StrategyTemplateKeys.ImpulseCatchV2 },
+            Flat(40, 100m),
+            39,
+            Context(Flat(40, 100m)),
+            new CausalIndicatorCache(Flat(40, 100m)));
+        detail.Signal.Should().Be(SignalType.NoAction);
+        detail.Reason.Should().Contain("Obsolete strategy id");
     }
 
     private static StrategySignalDetail EvalKey(string key, List<MarketCandle> candles)

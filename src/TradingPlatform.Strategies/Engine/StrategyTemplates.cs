@@ -255,29 +255,52 @@ public static class StrategyTemplateKeys
 
     public static readonly string[] Positioning = [SqueezeWatch];
 
-    public static readonly string[] Refactored =
+    /// <summary>One implementation each. These ids are already in the family arrays. The old parallel v2 ids are aliases only.</summary>
+    public static readonly string[] Canonical =
     [
-        ImpulseCatchV2,
-        ZigZagFadeV2,
-        TripleSupertrendV2,
-        TsMomentumV2,
-        EmaCrossV2,
-        FAdxSmaV2,
-        BinHv45V2,
-        ClucMay72018V2,
-        ClucMay72018V2Thirty,
-        CombinedBinHClucV2,
-        DonchianBreakoutV2FourHour,
-        DonchianBreakoutV2Daily,
-        SqueezeWatchV2,
-        FlowZoneV2,
-        FlatRangeV2,
-        EmaRsiTrendV2,
-        EmaRsiTrendV2Thirty,
-        BollingerReversionV2
+        ImpulseCatch,
+        ZigZagFade,
+        TripleSupertrend,
+        TsMomentum285,
+        BtcEma20Ema50Long,
+        FAdxSma,
+        BinHv45,
+        ClucMay72018,
+        CombinedBinHCluc,
+        DonchianBreakout,
+        DonchianV2,
+        SqueezeWatch,
+        FlowZone,
+        FlatRange,
+        EmaRsiTrend,
+        BollingerReversion
     ];
 
-    public static readonly string[] All = [.. Frozen, .. Research, .. NearMiss, .. CrossSectionalReversal, .. Range, .. Flow, .. Positioning, .. Imported, .. Refactored];
+    public static readonly IReadOnlyDictionary<string, string> ObsoleteAliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        [ImpulseCatchV2] = ImpulseCatch,
+        [ZigZagFadeV2] = ZigZagFade,
+        [TripleSupertrendV2] = TripleSupertrend,
+        [TsMomentumV2] = TsMomentum285,
+        [EmaCrossV2] = BtcEma20Ema50Long,
+        [FAdxSmaV2] = FAdxSma,
+        [BinHv45V2] = BinHv45,
+        [ClucMay72018V2] = ClucMay72018,
+        [ClucMay72018V2Thirty] = ClucMay72018,
+        [CombinedBinHClucV2] = CombinedBinHCluc,
+        [DonchianBreakoutV2FourHour] = DonchianBreakout,
+        [DonchianBreakoutV2Daily] = DonchianV2,
+        [SqueezeWatchV2] = SqueezeWatch,
+        [FlowZoneV2] = FlowZone,
+        [FlatRangeV2] = FlatRange,
+        [EmaRsiTrendV2] = EmaRsiTrend,
+        [EmaRsiTrendV2Thirty] = EmaRsiTrend,
+        [BollingerReversionV2] = BollingerReversion
+    };
+
+    public static readonly string[] Refactored = [];
+
+    public static readonly string[] All = [.. Frozen, .. Research, .. NearMiss, .. CrossSectionalReversal, .. Range, .. Flow, .. Positioning, .. Imported];
 
     /// <summary>
     /// Operator catalog: PAPER or weak guidance only. Avoid/blocked templates stay in the engine
@@ -288,6 +311,7 @@ public static class StrategyTemplateKeys
         EmaRsiTrend,
         RsiPullback,
         BollingerReversion,
+        DonchianBreakout,
         SupertrendEmaTrend,
         LiqSweepContinuation,
         VolSqueezeStructure,
@@ -331,7 +355,11 @@ public static class StrategyTemplateKeys
 
     public static IReadOnlyList<string> TimeframesFor(string? key)
     {
-        var template = Normalize(key);
+        var template = CanonicalId(key);
+        if (IsCanonical(template))
+        {
+            return CanonicalTimeframe(template);
+        }
         if (IsScalping(template))
         {
             return ScalpingTimeframes;
@@ -397,11 +425,6 @@ public static class StrategyTemplateKeys
             return ["1h"];
         }
 
-        if (IsRefactored(template))
-        {
-            return RefactoredTimeframe(template);
-        }
-
         if (IsCrossSectionalReversal(template))
         {
             return ["15m"];
@@ -410,27 +433,26 @@ public static class StrategyTemplateKeys
         return SupportedTimeframes;
     }
 
-    private static string[] RefactoredTimeframe(string template) => template switch
+    private static string[] CanonicalTimeframe(string template) => template switch
     {
-        ImpulseCatchV2 or ZigZagFadeV2 or EmaRsiTrendV2 or BollingerReversionV2 or ClucMay72018V2 or CombinedBinHClucV2 => ["15m"],
-        EmaRsiTrendV2Thirty or ClucMay72018V2Thirty or EmaCrossV2 => ["30m"],
-        BinHv45V2 or FlowZoneV2 => ["5m"],
-        TripleSupertrendV2 or FAdxSmaV2 or SqueezeWatchV2 or FlatRangeV2 => ["1h"],
-        TsMomentumV2 or DonchianBreakoutV2Daily => ["1d"],
-        DonchianBreakoutV2FourHour => ["4h"],
+        ImpulseCatch or ZigZagFade or EmaRsiTrend or BollingerReversion or ClucMay72018 or CombinedBinHCluc => ["15m"],
+        BtcEma20Ema50Long => ["30m"],
+        BinHv45 or FlowZone => ["5m"],
+        TripleSupertrend or FAdxSma or SqueezeWatch or FlatRange => ["1h"],
+        TsMomentum285 or DonchianV2 => ["1d"],
+        DonchianBreakout => ["4h"],
         _ => ["15m"]
     };
 
     public static IReadOnlyList<string> DirectionsFor(string? key)
     {
-        var template = Normalize(key);
-        if (template is ImpulseCatchV2 or TsMomentumV2 or ClucMay72018V2 or ClucMay72018V2Thirty)
+        var template = CanonicalId(key);
+        if (template is ImpulseCatch or TsMomentum285 or ClucMay72018)
         {
             return ["LONG"];
         }
 
-        return template is BtcEma20Ema50Long or TsMomentum285 or BtcDailyMax10
-            or BinHv45 or ClucMay72018 or CombinedBinHCluc or Hlhb or ImpulseCatch
+        return template is BtcDailyMax10 or Hlhb
             ? ["LONG"]
             : SupportedDirections;
     }
@@ -445,7 +467,21 @@ public static class StrategyTemplateKeys
     /// v2 rows an operator can select for research. They are not in the live operator catalog.
     /// Selection does not enable the strategy and does not turn on live trading.
     /// </summary>
-    public static bool IsResearchWorkflow(string? key) => IsRefactored(key);
+    public static bool IsResearchWorkflow(string? key) => false;
+
+    public static bool IsCanonical(string? key) =>
+        Canonical.Contains(KeyText(key), StringComparer.OrdinalIgnoreCase);
+
+    public static string KeyText(string? key) => (key ?? "").Trim().ToLowerInvariant();
+
+    public static bool IsObsoleteAlias(string? key) =>
+        ObsoleteAliases.ContainsKey(KeyText(key));
+
+    public static string CanonicalId(string? key)
+    {
+        var raw = KeyText(key);
+        return ObsoleteAliases.TryGetValue(raw, out var canonical) ? canonical : Normalize(key);
+    }
 
     public static bool ContainsTemplate(IEnumerable<string?> existing, string key)
     {
@@ -504,8 +540,7 @@ public static class StrategyTemplateKeys
     public static bool IsFlatRange(string? key) =>
         string.Equals(Normalize(key), FlatRange, StringComparison.Ordinal);
 
-    public static bool IsRefactored(string? key) =>
-        Refactored.Contains(Normalize(key), StringComparer.OrdinalIgnoreCase);
+    public static bool IsRefactored(string? key) => IsCanonical(key);
 
     public static bool IsResearchOnlyFamily(string? key) => IsScalping(key) || IsPriceAction(key) || IsCrossSectionalReversal(key);
 
@@ -653,11 +688,16 @@ public static class StrategyTemplates
 {
     public static StrategyTemplateParams DefaultsFor(string templateKey, bool qualityOn)
     {
-        var key = StrategyTemplateKeys.Normalize(templateKey);
+        var key = StrategyTemplateKeys.CanonicalId(templateKey);
         var quality = qualityOn
             ? new StrategyQualityParams(true, 20, 0.15m, 4m)
             : new StrategyQualityParams();
         var core = new StrategyTemplateParams(TemplateKey: key, Quality: quality);
+        if (StrategyTemplateKeys.IsCanonical(key))
+        {
+            return RefactoredDefaults(core);
+        }
+
         return key switch
         {
             StrategyTemplateKeys.TurtleTsm => core with
@@ -1016,7 +1056,7 @@ public static class StrategyTemplates
         };
         return key switch
         {
-            StrategyTemplateKeys.ImpulseCatchV2 => shared with
+            StrategyTemplateKeys.ImpulseCatch => shared with
             {
                 Timeframe = "15m",
                 AllowedSide = StrategySides.Long,
@@ -1029,7 +1069,7 @@ public static class StrategyTemplates
                 AtrStopMultiplier = 2.5m,
                 MaxImpulseAgeBars = 32
             },
-            StrategyTemplateKeys.ZigZagFadeV2 => shared with
+            StrategyTemplateKeys.ZigZagFade => shared with
             {
                 Timeframe = "15m",
                 SwingLength = 5,
@@ -1037,7 +1077,7 @@ public static class StrategyTemplates
                 AtrStopMultiplier = 2m,
                 StopAtrMultiplier = 1.5m
             },
-            StrategyTemplateKeys.TripleSupertrendV2 => shared with
+            StrategyTemplateKeys.TripleSupertrend => shared with
             {
                 Timeframe = "1h",
                 SupertrendPeriod = 10,
@@ -1045,7 +1085,7 @@ public static class StrategyTemplates
                 StopAtrMultiplier = 2m,
                 AtrStopMultiplier = 3m
             },
-            StrategyTemplateKeys.TsMomentumV2 => shared with
+            StrategyTemplateKeys.TsMomentum285 => shared with
             {
                 Timeframe = "1d",
                 AllowedSide = StrategySides.Long,
@@ -1054,21 +1094,21 @@ public static class StrategyTemplates
                 AtrStopMultiplier = 3m,
                 StopAtrMultiplier = 3m
             },
-            StrategyTemplateKeys.EmaCrossV2 => shared with
+            StrategyTemplateKeys.BtcEma20Ema50Long => shared with
             {
                 Timeframe = "30m",
                 MinimumAdx = 18m,
                 StopAtrMultiplier = 1.5m,
                 AtrStopMultiplier = 2.5m
             },
-            StrategyTemplateKeys.FAdxSmaV2 => shared with
+            StrategyTemplateKeys.FAdxSma => shared with
             {
                 Timeframe = "1h",
                 MinimumAdx = 20m,
                 StopAtrMultiplier = 2m,
                 AtrStopMultiplier = 2m
             },
-            StrategyTemplateKeys.BinHv45V2 => shared with
+            StrategyTemplateKeys.BinHv45 => shared with
             {
                 Timeframe = "5m",
                 BbPeriod = 40,
@@ -1077,7 +1117,7 @@ public static class StrategyTemplates
                 StopAtrMultiplier = 1.5m,
                 SweepDepthAtr = 0.3m
             },
-            StrategyTemplateKeys.ClucMay72018V2 => shared with
+            StrategyTemplateKeys.ClucMay72018 => shared with
             {
                 Timeframe = "15m",
                 AllowedSide = StrategySides.Long,
@@ -1087,17 +1127,7 @@ public static class StrategyTemplates
                 ExitLookback = 24,
                 SweepDepthAtr = 0.3m
             },
-            StrategyTemplateKeys.ClucMay72018V2Thirty => shared with
-            {
-                Timeframe = "30m",
-                AllowedSide = StrategySides.Long,
-                BbPeriod = 20,
-                BbStdDev = 2m,
-                RsiOversold = 35m,
-                ExitLookback = 24,
-                SweepDepthAtr = 0.3m
-            },
-            StrategyTemplateKeys.CombinedBinHClucV2 => shared with
+            StrategyTemplateKeys.CombinedBinHCluc => shared with
             {
                 Timeframe = "15m",
                 BbPeriod = 20,
@@ -1109,7 +1139,7 @@ public static class StrategyTemplates
                 SweepDepthAtr = 0.3m,
                 StopAtrMultiplier = 1.5m
             },
-            StrategyTemplateKeys.DonchianBreakoutV2FourHour => shared with
+            StrategyTemplateKeys.DonchianBreakout => shared with
             {
                 Timeframe = "4h",
                 EntryLookback = 20,
@@ -1119,7 +1149,7 @@ public static class StrategyTemplates
                 StopAtrMultiplier = 2m,
                 AtrStopMultiplier = 3m
             },
-            StrategyTemplateKeys.DonchianBreakoutV2Daily => shared with
+            StrategyTemplateKeys.DonchianV2 => shared with
             {
                 Timeframe = "1d",
                 EntryLookback = 55,
@@ -1129,7 +1159,7 @@ public static class StrategyTemplates
                 StopAtrMultiplier = 2m,
                 AtrStopMultiplier = 3m
             },
-            StrategyTemplateKeys.SqueezeWatchV2 => shared with
+            StrategyTemplateKeys.SqueezeWatch => shared with
             {
                 Timeframe = "1h",
                 FundingLookback = 720,
@@ -1137,21 +1167,21 @@ public static class StrategyTemplates
                 StopAtrMultiplier = 1.5m,
                 SweepDepthAtr = 0.3m
             },
-            StrategyTemplateKeys.FlowZoneV2 => shared with
+            StrategyTemplateKeys.FlowZone => shared with
             {
                 Timeframe = "5m",
                 EntryLookback = 20,
                 StopAtrMultiplier = 1.5m,
                 AtrStopMultiplier = 2m
             },
-            StrategyTemplateKeys.FlatRangeV2 => shared with
+            StrategyTemplateKeys.FlatRange => shared with
             {
                 Timeframe = "1h",
                 EntryLookback = 24,
                 ExitLookback = 48,
                 MinimumAdx = 18m
             },
-            StrategyTemplateKeys.EmaRsiTrendV2 => shared with
+            StrategyTemplateKeys.EmaRsiTrend => shared with
             {
                 Timeframe = "15m",
                 RsiOversold = 40m,
@@ -1160,16 +1190,7 @@ public static class StrategyTemplates
                 StopAtrMultiplier = 1.5m,
                 AtrStopMultiplier = 2m
             },
-            StrategyTemplateKeys.EmaRsiTrendV2Thirty => shared with
-            {
-                Timeframe = "30m",
-                RsiOversold = 40m,
-                RsiMinimum = 50m,
-                MinimumRelativeVolume = 1.2m,
-                StopAtrMultiplier = 1.5m,
-                AtrStopMultiplier = 2m
-            },
-            StrategyTemplateKeys.BollingerReversionV2 => shared with
+            StrategyTemplateKeys.BollingerReversion => shared with
             {
                 Timeframe = "15m",
                 BbPeriod = 20,

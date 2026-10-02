@@ -6,18 +6,18 @@ using TradingPlatform.Strategies.Indicators;
 namespace TradingPlatform.Strategies.Engine;
 
 /// <summary>
-/// Versioned replacements for the fifteen operator strategies. Baseline template keys stay on their existing evaluators.
+/// The only runtime implementation for the canonical strategy ids.
 /// Signals use only closed bars at index i. An opposite setup while a position is open exits and does not flip.
 /// </summary>
 public static class RefactoredStrategyEvaluator
 {
-    public static int MaxHoldBars(string? key) => StrategyTemplateKeys.Normalize(key) switch
+    public static int MaxHoldBars(string? key) => StrategyTemplateKeys.CanonicalId(key) switch
     {
-        StrategyTemplateKeys.ImpulseCatchV2 => 32,
-        StrategyTemplateKeys.ClucMay72018V2 or StrategyTemplateKeys.ClucMay72018V2Thirty => 24,
-        StrategyTemplateKeys.CombinedBinHClucV2 => 24,
-        StrategyTemplateKeys.FlatRangeV2 => 48,
-        StrategyTemplateKeys.BollingerReversionV2 => 12,
+        StrategyTemplateKeys.ImpulseCatch => 32,
+        StrategyTemplateKeys.ClucMay72018 => 24,
+        StrategyTemplateKeys.CombinedBinHCluc => 24,
+        StrategyTemplateKeys.FlatRange => 48,
+        StrategyTemplateKeys.BollingerReversion => 12,
         _ => 0
     };
 
@@ -38,24 +38,35 @@ public static class RefactoredStrategyEvaluator
             return Detail(SignalType.NoAction, "Unclosed candle is not an entry or exit signal.", candles, i);
         }
 
-        return StrategyTemplateKeys.Normalize(p.TemplateKey) switch
+        if (StrategyTemplateKeys.IsObsoleteAlias(p.TemplateKey))
         {
-            StrategyTemplateKeys.ImpulseCatchV2 => Impulse(p, candles, i, context, cache),
-            StrategyTemplateKeys.ZigZagFadeV2 => ZigZag(p, candles, i, context, cache),
-            StrategyTemplateKeys.TripleSupertrendV2 => Triple(p, candles, i, context, cache),
-            StrategyTemplateKeys.TsMomentumV2 => TsMomentum(p, candles, i, context, cache),
-            StrategyTemplateKeys.EmaCrossV2 => EmaCross(p, candles, i, context, cache),
-            StrategyTemplateKeys.FAdxSmaV2 => AdxSma(p, candles, i, context, cache),
-            StrategyTemplateKeys.BinHv45V2 => BinHv(p, candles, i, context, cache),
-            StrategyTemplateKeys.ClucMay72018V2 or StrategyTemplateKeys.ClucMay72018V2Thirty => Cluc(p, candles, i, context, cache),
-            StrategyTemplateKeys.CombinedBinHClucV2 => Combined(p, candles, i, context, cache),
-            StrategyTemplateKeys.DonchianBreakoutV2FourHour or StrategyTemplateKeys.DonchianBreakoutV2Daily => Donchian(p, candles, i, context, cache),
-            StrategyTemplateKeys.SqueezeWatchV2 => Squeeze(p, candles, i, context, cache),
-            StrategyTemplateKeys.FlowZoneV2 => Flow(p, candles, i, context, cache),
-            StrategyTemplateKeys.FlatRangeV2 => Flat(p, candles, i, context, cache),
-            StrategyTemplateKeys.EmaRsiTrendV2 or StrategyTemplateKeys.EmaRsiTrendV2Thirty => EmaRsi(p, candles, i, context, cache),
-            StrategyTemplateKeys.BollingerReversionV2 => Bollinger(p, candles, i, context, cache),
-            _ => Detail(SignalType.NoAction, "Unknown refactored template.", candles, i)
+            var alias = StrategyTemplateKeys.KeyText(p.TemplateKey);
+            return Detail(
+                SignalType.NoAction,
+                $"Obsolete strategy id '{alias}'. Canonical id is '{StrategyTemplateKeys.CanonicalId(alias)}'. The retired implementation is not executed.",
+                candles,
+                i);
+        }
+
+        var key = StrategyTemplateKeys.CanonicalId(p.TemplateKey);
+        return key switch
+        {
+            StrategyTemplateKeys.ImpulseCatch => Impulse(p, candles, i, context, cache),
+            StrategyTemplateKeys.ZigZagFade => ZigZag(p, candles, i, context, cache),
+            StrategyTemplateKeys.TripleSupertrend => Triple(p, candles, i, context, cache),
+            StrategyTemplateKeys.TsMomentum285 => TsMomentum(p, candles, i, context, cache),
+            StrategyTemplateKeys.BtcEma20Ema50Long => EmaCross(p, candles, i, context, cache),
+            StrategyTemplateKeys.FAdxSma => AdxSma(p, candles, i, context, cache),
+            StrategyTemplateKeys.BinHv45 => BinHv(p, candles, i, context, cache),
+            StrategyTemplateKeys.ClucMay72018 => Cluc(p, candles, i, context, cache),
+            StrategyTemplateKeys.CombinedBinHCluc => Combined(p, candles, i, context, cache),
+            StrategyTemplateKeys.DonchianBreakout or StrategyTemplateKeys.DonchianV2 => Donchian(p, candles, i, context, cache),
+            StrategyTemplateKeys.SqueezeWatch => Squeeze(p, candles, i, context, cache),
+            StrategyTemplateKeys.FlowZone => Flow(p, candles, i, context, cache),
+            StrategyTemplateKeys.FlatRange => Flat(p, candles, i, context, cache),
+            StrategyTemplateKeys.EmaRsiTrend => EmaRsi(p, candles, i, context, cache),
+            StrategyTemplateKeys.BollingerReversion => Bollinger(p, candles, i, context, cache),
+            _ => Detail(SignalType.NoAction, "Unknown canonical template.", candles, i)
         };
     }
 

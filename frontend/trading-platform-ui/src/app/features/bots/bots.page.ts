@@ -76,9 +76,10 @@ export class BotsPage {
   readonly selectedStrategy = computed(() =>
     this.rankedStrategies().find((row) => row.id === this.strategyId()) ?? this.rankedStrategies()[0] ?? null,
   );
-  readonly rankedStrategies = computed(() =>
-    [...this.trading.strategies()].sort((a, b) => ratingSortValue(b.templateKey) - ratingSortValue(a.templateKey)),
-  );
+  readonly rankedStrategies = computed(() => {
+    const rows = [...this.trading.strategies()];
+    return rows.sort((a, b) => ratingSortValue(b.templateKey) - ratingSortValue(a.templateKey) || a.name.localeCompare(b.name));
+  });
   readonly ratingFor = ratingFor;
 
   bookLabel(bot: { strategyId?: string; riskProfileName?: string } | undefined): string {

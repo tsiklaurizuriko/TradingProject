@@ -195,13 +195,20 @@ internal static class StrategyTemplateEvaluator
         IReadOnlyList<MarketCandle> candles,
         int i,
         StrategyContext context,
-        CausalIndicatorCache cache) =>
-        StrategyTemplateKeys.IsRefactored(p.TemplateKey)
+        CausalIndicatorCache cache)
+    {
+        if (StrategyTemplateKeys.IsObsoleteAlias(p.TemplateKey))
+        {
+            return new StrategySignalDetail(
+                SignalType.NoAction,
+                $"Obsolete strategy id '{StrategyTemplateKeys.Normalize(p.TemplateKey)}'. Canonical id is '{StrategyTemplateKeys.CanonicalId(p.TemplateKey)}'. The retired implementation is not executed.",
+                candles[i].CloseTime);
+        }
+
+        return StrategyTemplateKeys.IsRefactored(p.TemplateKey)
             ? RefactoredStrategyEvaluator.Evaluate(p, candles, i, context, cache)
             : StrategyTemplateKeys.IsImported(p.TemplateKey)
             ? ImportedRuleEvaluator.Evaluate(p, candles, i, context, cache)
-            : StrategyTemplateKeys.IsFlatRange(p.TemplateKey)
-            ? FlatRangeStrategy.Evaluate(candles, i, context.HasOpenPosition, p.AllowedSide, context.PositionOpenedAt)
             : StrategyTemplateKeys.IsCrossSectionalReversal(p.TemplateKey)
             ? new StrategySignalDetail(
                 SignalType.NoAction,
@@ -227,6 +234,7 @@ internal static class StrategyTemplateEvaluator
                 StrategyTemplateKeys.DonchianBreakout => Donchian(p, candles, i, context, cache),
                 _ => EmaRsi(p, candles, i, context, cache)
             }, candles, i);
+    }
 
     private static StrategySignalDetail Wrap(
         (SignalType Signal, string Reason) tuple,

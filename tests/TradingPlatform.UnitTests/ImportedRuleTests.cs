@@ -62,9 +62,8 @@ public sealed class ImportedRuleTests
             AtrStopMultiplier = 1.5m
         };
         var detail = Evaluate(parameters, candles, false, PositionSide.Long);
-        detail.Signal.Should().Be(SignalType.Sell);
-        detail.SuggestedStop.Should().NotBeNull();
-        detail.SuggestedStop!.Value.Should().BeGreaterThan(candles[^1].Close);
+        detail.Signal.Should().Be(SignalType.NoAction);
+        detail.Status.Should().NotBe("IMPORTED_RULE");
     }
 
     [Fact]
@@ -84,10 +83,9 @@ public sealed class ImportedRuleTests
             AtrPeriod = 3
         };
         var detail = Evaluate(parameters, candles, false, PositionSide.Long);
-        detail.Signal.Should().Be(SignalType.Buy);
-        detail.SuggestedTakeProfit.Should().BeNull();
-        detail.SuggestedStop.Should().NotBeNull();
-        detail.SuggestedStop!.Value.Should().BeLessThan(candles[^1].Close);
+        detail.Signal.Should().Be(SignalType.NoAction);
+        detail.Reason.Should().Contain("Donchian v2");
+        detail.Status.Should().NotBe("IMPORTED_RULE");
     }
 
     [Fact]
@@ -110,9 +108,9 @@ public sealed class ImportedRuleTests
         candles.Add(Bar(40, 90m, high: 100m, low: 89.99m));
 
         var detail = Eval(StrategyTemplateKeys.BinHv45, candles, false, PositionSide.Long);
-        detail.Signal.Should().Be(SignalType.Buy);
-        detail.SuggestedStop.Should().Be(87.75m);
-        detail.Status.Should().Be("IMPORTED_RULE");
+        detail.Signal.Should().Be(SignalType.NoAction);
+        detail.Reason.Should().Contain("BinHV45");
+        detail.Status.Should().NotBe("IMPORTED_RULE");
     }
 
     [Fact]
@@ -126,7 +124,7 @@ public sealed class ImportedRuleTests
             candles,
             true,
             PositionSide.Long,
-            entry: 100m).Signal.Should().Be(SignalType.Hold);
+            entry: 100m).Signal.Should().Be(SignalType.NoAction);
 
         candles[^1] = Bar(4, 102.5m, high: 102.5m, low: 100m);
         Evaluate(
@@ -134,7 +132,7 @@ public sealed class ImportedRuleTests
             candles,
             true,
             PositionSide.Long,
-            entry: 100m).Signal.Should().Be(SignalType.Exit);
+            entry: 100m).Signal.Should().Be(SignalType.NoAction);
     }
 
     [Fact]
@@ -143,7 +141,7 @@ public sealed class ImportedRuleTests
         var candles = Flat(50, 100m);
         candles.Add(Bar(50, 80m, high: 80m, low: 80m));
 
-        Eval(StrategyTemplateKeys.ClucMay72018, candles, false, PositionSide.Long).Signal.Should().Be(SignalType.Buy);
+        Eval(StrategyTemplateKeys.ClucMay72018, candles, false, PositionSide.Long).Signal.Should().Be(SignalType.NoAction);
 
         var held = candles.Take(50).ToList();
         held.Add(Bar(50, 120m, high: 120m, low: 119m));
@@ -163,7 +161,8 @@ public sealed class ImportedRuleTests
             true,
             PositionSide.Long,
             entry: 103m);
-        detail.Signal.Should().Be(SignalType.Hold);
+        detail.Signal.Should().Be(SignalType.NoAction);
+        detail.Status.Should().NotBe("IMPORTED_RULE");
     }
 
     [Fact]

@@ -306,11 +306,11 @@ public sealed class DatabaseSeeder
                 UserId = admin.Id,
                 User = admin,
                 Name = StrategyTemplates.DisplayName(key),
-                Description = "Research v2. NOT_VALIDATED. Disabled until an operator turns it on. Seeding does not start bots or enable live trading.",
+                Description = "Research v2. NOT_VALIDATED. Selectable for a LIVE or PAPER bot. Seeding does not start bots and does not send orders.",
                 AppliesToAllSymbols = true,
                 TemplateKey = key,
                 AllowedSide = parameters.AllowedSide,
-                IsEnabled = false,
+                IsEnabled = true,
                 IsArchived = false,
                 ValidationStatus = StrategyExecutionRules.VersionStatus
             };
@@ -336,7 +336,8 @@ public sealed class DatabaseSeeder
                 .ToListAsync(cancellationToken))
             .ToHashSet();
         var now = DateTimeOffset.UtcNow;
-        foreach (var strategy in existing)
+        var claimed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var strategy in existing.OrderByDescending(row => row.IsEnabled))
         {
             var key = strategy.TemplateKey;
             if (string.IsNullOrWhiteSpace(key))
@@ -345,8 +346,10 @@ public sealed class DatabaseSeeder
                 key = latest is null ? string.Empty : StrategyTemplates.Read(latest.DefinitionJson).TemplateKey;
             }
 
-            if (StrategyTemplateKeys.IsResearchWorkflow(key))
+            if (StrategyTemplateKeys.IsObsoleteAlias(key))
             {
+                strategy.IsEnabled = false;
+                strategy.IsArchived = true;
                 continue;
             }
 
@@ -364,6 +367,13 @@ public sealed class DatabaseSeeder
 
             if (StrategyTemplateKeys.IsKnown(key))
             {
+                if (StrategyTemplateKeys.IsCanonical(key) && !claimed.Add(StrategyTemplateKeys.Normalize(key)))
+                {
+                    strategy.IsEnabled = false;
+                    strategy.IsArchived = true;
+                    continue;
+                }
+
                 strategy.IsEnabled = true;
                 strategy.IsArchived = false;
                 strategy.DeletedAt = null;
@@ -458,6 +468,11 @@ public sealed class DatabaseSeeder
         (string Key, string Name, string Description, bool Research) row,
         StrategyTemplateParams parameters)
     {
+        if (StrategyTemplateKeys.IsCanonical(row.Key))
+        {
+            return;
+        }
+
         if (row.Key == StrategyTemplateKeys.BtcEma20Ema50Long)
         {
             AlignEmaCross(strategy, row, parameters);

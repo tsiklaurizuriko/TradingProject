@@ -1002,6 +1002,12 @@ public sealed class BotEngine : IBotEngine
             return;
         }
 
+        if (bot.Mode == TradingMode.Live && !_options.LiveTradingEnabled)
+        {
+            bot.LastError = LiveEntryGate.BlockedMessage;
+            return;
+        }
+
         var maxLosses = profile.MaxConsecutiveLosses > 0 ? profile.MaxConsecutiveLosses : 5;
         var coinCooldown = TimeSpan.FromMinutes(profile.CooldownMinutes > 0 ? profile.CooldownMinutes : 30);
         var (coinLosses, coinLastLoss) = await _store.GetSymbolLossStreakAsync(bot.Mode, bot.Symbol, cancellationToken);

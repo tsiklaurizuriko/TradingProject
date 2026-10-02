@@ -15,20 +15,20 @@ public static class ImportedRuleEvaluator
         IReadOnlyList<MarketCandle> candles,
         int i,
         StrategyContext context,
-        CausalIndicatorCache cache) =>
-        p.TemplateKey switch
+        CausalIndicatorCache cache)
+    {
+        if (StrategyTemplateKeys.IsCanonical(p.TemplateKey) || StrategyTemplateKeys.IsObsoleteAlias(p.TemplateKey))
+        {
+            return RefactoredStrategyEvaluator.Evaluate(p, candles, i, context, cache);
+        }
+
+        return p.TemplateKey switch
         {
             StrategyTemplateKeys.MacContrarian710 => MacContrarian(p, candles, i, context, cache),
-            StrategyTemplateKeys.ZigZagFade => ZigZagFade(p, candles, i, context, cache),
-            StrategyTemplateKeys.DonchianV2 => DonchianV2(p, candles, i, context, cache),
-            StrategyTemplateKeys.BinHv45 => BinHv45(candles, i, context, cache),
-            StrategyTemplateKeys.ClucMay72018 => ClucMay72018(candles, i, context, cache),
-            StrategyTemplateKeys.CombinedBinHCluc => CombinedBinHCluc(candles, i, context, cache),
             StrategyTemplateKeys.Hlhb => Hlhb(candles, i, context, cache),
-            StrategyTemplateKeys.FAdxSma => FAdxSma(candles, i, context, cache),
-            StrategyTemplateKeys.TripleSupertrend => TripleSupertrend(candles, i, context, cache),
             _ => new StrategySignalDetail(SignalType.NoAction, "Unknown imported rule.", candles[i].CloseTime, Status: "IMPLEMENTATION_ERROR")
         };
+    }
 
     /// <summary>
     /// octopus444 MAc(7,10,0.01,0,0). SMA fast above slow*(1+b) is a raw long, then the sign is flipped.

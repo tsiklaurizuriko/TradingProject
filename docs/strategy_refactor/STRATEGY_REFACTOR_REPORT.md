@@ -40,7 +40,7 @@ Each v2 id has defaults in `StrategyTemplates.DefaultsFor`. Impulse Catch v2 add
 
 ## Research selection
 
-v2 ids are `IsResearchWorkflow` and are not in `OperatorCatalog`. On the next database seed, each missing v2 template is inserted disabled, not archived, with status `NOT_VALIDATED`. A second seed does not insert another row and does not change an existing definition. Enabling a row in the strategy list does not set `Trading:LiveTradingEnabled` and does not start a bot. Baseline ids stay in the operator catalog.
+The parallel `_v2` ids are retired. Each strategy now has one canonical id and one evaluator. See `docs/strategy/CANONICAL_STRATEGIES.md`. Seeding does not start a bot and does not set `Trading:LiveTradingEnabled`.
 
 ## Unit tests
 

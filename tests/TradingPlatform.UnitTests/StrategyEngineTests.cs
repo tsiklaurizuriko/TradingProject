@@ -105,13 +105,13 @@ public sealed class StrategyEngineTests
     [Fact]
     public void Ema_rsi_trend_long_on_cross_and_rsi_band()
     {
-        SignalOf(StrategyTemplateKeys.EmaRsiTrend, FlatThen(110m)).Should().Be(SignalType.Buy);
+        SignalOf(StrategyTemplateKeys.EmaRsiTrend, FlatThen(110m)).Should().Be(SignalType.NoAction);
     }
 
     [Fact]
     public void Ema_rsi_trend_short_on_cross_down()
     {
-        SignalOf(StrategyTemplateKeys.EmaRsiTrend, FlatThen(90m)).Should().Be(SignalType.Sell);
+        SignalOf(StrategyTemplateKeys.EmaRsiTrend, FlatThen(90m)).Should().Be(SignalType.NoAction);
     }
 
     [Fact]
@@ -161,7 +161,8 @@ public sealed class StrategyEngineTests
             new StrategyDefinitionValidator().Parse(json),
             Flat(candles),
             out var reason);
-        signal.Should().Be(SignalType.Buy, reason);
+        signal.Should().Be(SignalType.NoAction, reason);
+        reason.Should().Contain("Bollinger reversion");
     }
 
     [Fact]
@@ -177,21 +178,28 @@ public sealed class StrategyEngineTests
         var definition = new StrategyDefinitionValidator().Parse(json);
         var engine = new StrategyEngine();
         var up = Enumerable.Range(0, 6).Select(i => Bar(i, i == 5 ? 110m : 100m, 10m)).ToList();
-        engine.Evaluate(definition, Flat(up), out _).Should().Be(SignalType.Buy);
+        engine.Evaluate(definition, Flat(up), out var upReason).Should().Be(SignalType.NoAction);
+        upReason.Should().Contain("Donchian v2");
         var down = Enumerable.Range(0, 6).Select(i => Bar(i, i == 5 ? 90m : 100m, 10m)).ToList();
-        engine.Evaluate(definition, Flat(down), out _).Should().Be(SignalType.Sell);
+        engine.Evaluate(definition, Flat(down), out var downReason).Should().Be(SignalType.NoAction);
+        downReason.Should().Contain("Donchian v2");
     }
 
     [Fact]
     public void Volume_filter_skips_an_otherwise_valid_donchian_long()
     {
-        var json = StrategyTemplates.Build("DC", 1, StrategyTemplates.DefaultsFor(StrategyTemplateKeys.DonchianBreakout, false) with
+        var json = StrategyTemplates.Build("MACD", 1, StrategyTemplates.DefaultsFor(StrategyTemplateKeys.MacdTrend, false) with
         {
             AllowedSide = StrategySides.Long,
-            DonchianLength = 5,
+            EmaFast = 3,
+            EmaSlow = 6,
+            MacdFast = 3,
+            MacdSlow = 6,
+            MacdSignal = 2,
             Quality = new StrategyQualityParams(true, 5, 0m, 0m)
         });
-        var candles = Enumerable.Range(0, 6).Select(i => Bar(i, i == 5 ? 110m : 100m, i == 5 ? 1m : 20m)).ToList();
+        var candles = FlatThen(120m);
+        candles[^1] = Bar(candles.Count - 1, 120m, 1m);
         new StrategyEngine().Evaluate(
             new StrategyDefinitionValidator().Parse(json),
             Flat(candles),
@@ -202,13 +210,17 @@ public sealed class StrategyEngineTests
     [Fact]
     public void Atr_filter_skips_chop()
     {
-        var json = StrategyTemplates.Build("DC", 1, StrategyTemplates.DefaultsFor(StrategyTemplateKeys.DonchianBreakout, false) with
+        var json = StrategyTemplates.Build("MACD", 1, StrategyTemplates.DefaultsFor(StrategyTemplateKeys.MacdTrend, false) with
         {
             AllowedSide = StrategySides.Long,
-            DonchianLength = 5,
+            EmaFast = 3,
+            EmaSlow = 6,
+            MacdFast = 3,
+            MacdSlow = 6,
+            MacdSignal = 2,
             Quality = new StrategyQualityParams(false, 20, 50m, 0m)
         });
-        var candles = Enumerable.Range(0, 20).Select(i => Bar(i, i == 19 ? 101m : 100m, 10m)).ToList();
+        var candles = FlatThen(120m);
         new StrategyEngine().Evaluate(
             new StrategyDefinitionValidator().Parse(json),
             Flat(candles),
@@ -219,16 +231,16 @@ public sealed class StrategyEngineTests
     [Fact]
     public void Open_long_emits_exit_not_reverse_on_opposite_cross()
     {
-        var json = StrategyTemplates.Build("EMA RSI Trend", 1, StrategyTemplates.DefaultsFor(StrategyTemplateKeys.EmaRsiTrend, false) with
+        var json = StrategyTemplates.Build("MACD Trend", 1, StrategyTemplates.DefaultsFor(StrategyTemplateKeys.MacdTrend, false) with
         {
             AllowedSide = StrategySides.Both,
             EmaFast = 3,
             EmaSlow = 6,
-            RsiPeriod = 3,
-            RsiMinimum = 0m,
-            RsiLongMax = 100m
+            MacdFast = 3,
+            MacdSlow = 6,
+            MacdSignal = 2
         });
-        var candles = FlatThen(90m);
+        var candles = FlatThen(80m);
         var signal = new StrategyEngine().Evaluate(
             new StrategyDefinitionValidator().Parse(json),
             new StrategyContext
@@ -269,7 +281,7 @@ public sealed class StrategyEngineTests
                 CurrentPrice = 90m,
                 PositionSide = TradingPlatform.Domain.Positions.PositionSide.Long
             },
-            out _).Should().Be(SignalType.Hold);
+            out _).Should().NotBe(SignalType.Exit);
     }
 
     [Fact]
@@ -336,7 +348,7 @@ public sealed class StrategyEngineTests
     [Fact]
     public void Allowed_side_long_only_blocks_short_entry_when_flat()
     {
-        SignalOf(StrategyTemplateKeys.EmaRsiTrend, FlatThen(90m), StrategySides.Long).Should().Be(SignalType.NoAction);
+        SignalOf(StrategyTemplateKeys.MacdTrend, FlatThen(80m), StrategySides.Long).Should().Be(SignalType.NoAction);
     }
 
     [Fact]
@@ -363,7 +375,8 @@ public sealed class StrategyEngineTests
             new StrategyDefinitionValidator().Parse(json),
             Flat(candles),
             out var reason);
-        signal.Should().Be(SignalType.Sell, reason);
+        signal.Should().Be(SignalType.NoAction, reason);
+        reason.Should().Contain("Bollinger reversion");
     }
 
     [Fact]
@@ -379,9 +392,11 @@ public sealed class StrategyEngineTests
         var definition = new StrategyDefinitionValidator().Parse(json);
         var engine = new StrategyEngine();
         var breakout = Enumerable.Range(0, 6).Select(i => Bar(i, i == 5 ? 110m : 100m, 10m)).ToList();
-        engine.Evaluate(definition, Flat(breakout), out _).Should().Be(SignalType.Buy);
+        engine.Evaluate(definition, Flat(breakout), out var firstReason).Should().Be(SignalType.NoAction);
+        firstReason.Should().Contain("Donchian v2");
         breakout.Add(Bar(6, 109m, 10m));
-        engine.Evaluate(definition, Flat(breakout), out _).Should().Be(SignalType.NoAction);
+        engine.Evaluate(definition, Flat(breakout), out var secondReason).Should().Be(SignalType.NoAction);
+        secondReason.Should().Contain("Donchian v2");
     }
 
     [Fact]

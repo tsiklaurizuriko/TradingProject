@@ -12,7 +12,7 @@ public sealed class StrategySignalRiskTests
     [Fact]
     public void Template_buy_is_sized_as_a_long_by_the_risk_engine()
     {
-        var signal = SignalOf(StrategyTemplateKeys.EmaRsiTrend, FlatThen(110m));
+        var signal = SignalOf(StrategyTemplateKeys.MacdTrend, FlatThen(120m));
         signal.Should().Be(SignalType.Buy);
         var evaluation = new RiskEngine().Evaluate(signal, Book(), Snap(), DateTimeOffset.UtcNow);
         evaluation.Decision.Should().Be(RiskDecision.Approved);
@@ -24,7 +24,7 @@ public sealed class StrategySignalRiskTests
     [Fact]
     public void Template_sell_is_sized_as_a_short_by_the_risk_engine()
     {
-        var signal = SignalOf(StrategyTemplateKeys.EmaRsiTrend, FlatThen(90m));
+        var signal = SignalOf(StrategyTemplateKeys.MacdTrend, FlatThen(80m));
         signal.Should().Be(SignalType.Sell);
         var evaluation = new RiskEngine().Evaluate(signal, Book(), Snap(), DateTimeOffset.UtcNow);
         evaluation.Decision.Should().Be(RiskDecision.Approved);
@@ -42,7 +42,10 @@ public sealed class StrategySignalRiskTests
             EmaSlow = 6,
             RsiPeriod = 3,
             RsiMinimum = 0m,
-            RsiLongMax = 100m
+            RsiLongMax = 100m,
+            MacdFast = 3,
+            MacdSlow = 6,
+            MacdSignal = 2
         });
         return new StrategyEngine().Evaluate(new StrategyDefinitionValidator().Parse(json), new StrategyContext
         {

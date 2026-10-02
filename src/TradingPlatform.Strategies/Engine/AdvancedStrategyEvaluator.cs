@@ -13,8 +13,14 @@ public static class AdvancedStrategyEvaluator
         IReadOnlyList<MarketCandle> candles,
         int i,
         StrategyContext context,
-        CausalIndicatorCache cache) =>
-        p.TemplateKey switch
+        CausalIndicatorCache cache)
+    {
+        if (StrategyTemplateKeys.IsCanonical(p.TemplateKey) || StrategyTemplateKeys.IsObsoleteAlias(p.TemplateKey))
+        {
+            return RefactoredStrategyEvaluator.Evaluate(p, candles, i, context, cache);
+        }
+
+        return p.TemplateKey switch
         {
             StrategyTemplateKeys.TurtleTsm => Turtle(p, candles, i, context, cache),
             StrategyTemplateKeys.VwapPullbackTrend => VwapPullback(p, candles, i, context, cache),
@@ -24,17 +30,13 @@ public static class AdvancedStrategyEvaluator
             StrategyTemplateKeys.FundingOiRegime => FundingRegime(p, candles, i, context, cache),
             StrategyTemplateKeys.VolSpikeEmaTrend => VolSpikeEma(p, candles, i, context, cache),
             StrategyTemplateKeys.Bb202Break => BbBreak(p, candles, i, context, cache),
-            StrategyTemplateKeys.BtcEma20Ema50Long => EmaCrossLong(p, candles, i, context, cache),
-            StrategyTemplateKeys.TsMomentum285 => TsMomentum(candles, i, context),
             StrategyTemplateKeys.BtcDailyMax10 => BtcDailyMax(candles, i, context),
-            StrategyTemplateKeys.FlowZone => FlowZone(candles, i, context),
-            StrategyTemplateKeys.SqueezeWatch => SqueezeWatch(candles, i, context),
-            StrategyTemplateKeys.ImpulseCatch => ImpulseCatch(candles, i, context),
             var pa when StrategyTemplateKeys.IsPriceAction(pa) =>
                 PriceActionStrategyEvaluator.Evaluate(p, candles, i, context, cache),
             var scalp when StrategyTemplateKeys.IsScalping(scalp) => ScalpingStrategyEvaluator.Evaluate(p, candles, i, context, cache),
             _ => AlphaStrategyEvaluator.Evaluate(p, candles, i, context, cache)
         };
+    }
 
     private static StrategySignalDetail Turtle(
         StrategyTemplateParams p,

@@ -215,7 +215,7 @@ public sealed class PaperPipelineTests
         await using var db = new TradingDbContext(options);
 
         var user = new User { Email = "admin@localhost", NormalizedEmail = "ADMIN@LOCALHOST", DisplayName = "Admin", PasswordHash = "x" };
-        var strategy = new Strategy { User = user, UserId = user.Id, Name = "Donchian Breakout", TemplateKey = "donchian_breakout", AllowedSide = "Short" };
+        var strategy = new Strategy { User = user, UserId = user.Id, Name = "MACD Trend", TemplateKey = "macd_trend", AllowedSide = "Short" };
         var version = new StrategyVersion
         {
             Strategy = strategy,
@@ -224,10 +224,10 @@ public sealed class PaperPipelineTests
                 {
                   "name": "Always short",
                   "version": 1,
-                  "template": "donchian_breakout",
+                  "template": "macd_trend",
                   "timeframe": "5m",
                   "allowedSide": "Short",
-                  "params": { "donchianLength": 5, "emaFast": 3, "emaSlow": 6 },
+                  "params": { "emaFast": 3, "emaSlow": 6, "macdFast": 3, "macdSlow": 6, "macdSignal": 2 },
                   "quality": { "requireVolume": false, "volumeLookback": 20, "minAtrPercent": 0, "maxAtrPercent": 0 }
                 }
                 """,
@@ -271,9 +271,9 @@ public sealed class PaperPipelineTests
         db.Balances.Add(new Balance { ExchangeAccount = account, Asset = "USDT", Free = 10_000m, Mode = TradingMode.Paper });
         await db.SaveChangesAsync();
 
-        var candles = Enumerable.Range(0, 16).Select(i =>
+        var candles = Enumerable.Range(0, 31).Select(i =>
         {
-            var price = i == 15 ? 90m : 100m;
+            var price = i == 30 ? 80m : 100m;
             return new MarketCandle
             {
                 Open = price,

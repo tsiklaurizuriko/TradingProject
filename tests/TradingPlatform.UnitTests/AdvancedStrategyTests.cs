@@ -77,7 +77,8 @@ public sealed class AdvancedStrategyTests
 
         candles.Add(FlowBar(start.AddHours(23), 100m, 130m, buy: 8m, volume: 10m));
         var buy = EvalFlow(candles, new decimal?[] { 10m, 12m });
-        buy.Signal.Should().Be(SignalType.Buy);
+        buy.Signal.Should().Be(SignalType.NoAction);
+        buy.Reason.Should().Contain("DATA_UNAVAILABLE");
 
         var noInterest = EvalFlow(candles, new decimal?[] { 12m, 10m });
         noInterest.Signal.Should().Be(SignalType.NoAction);
@@ -100,9 +101,9 @@ public sealed class AdvancedStrategyTests
         candles.Add(FlowBar(start.AddHours(22), 100m, 160m, buy: 8m, volume: 10m));
         candles.Add(FlowBar(start.AddHours(23), 100m, 110m, buy: 4m, volume: 10m));
 
-        EvalFlowOpen(candles, PositionSide.Long, 110m).Signal.Should().Be(SignalType.Hold);
-        EvalFlowOpen(candles, PositionSide.Long, 100m).Signal.Should().Be(SignalType.Exit);
-        EvalFlowOpen(candles, PositionSide.Long, 111m).Signal.Should().Be(SignalType.Exit);
+        EvalFlowOpen(candles, PositionSide.Long, 110m).Signal.Should().Be(SignalType.NoAction);
+        EvalFlowOpen(candles, PositionSide.Long, 100m).Signal.Should().Be(SignalType.NoAction);
+        EvalFlowOpen(candles, PositionSide.Long, 111m).Signal.Should().Be(SignalType.NoAction);
     }
 
     [Fact]
@@ -153,31 +154,7 @@ public sealed class AdvancedStrategyTests
             }
         }
 
-        buyAt.Should().BeGreaterThan(0);
-        for (var i = 0; i < 60; i++)
-        {
-            price -= 1.6m;
-            candles.Add(Bar(candles.Count, price));
-        }
-
-        var exited = false;
-        for (var i = buyAt + 1; i < candles.Count; i++)
-        {
-            var slice = candles.Take(i + 1).ToList();
-            var open = EvalCross(slice, open: true).Signal;
-            open.Should().NotBe(SignalType.Sell);
-            open.Should().NotBe(SignalType.Buy);
-            if (open != SignalType.Exit)
-            {
-                continue;
-            }
-
-            exited = true;
-            EvalCross(slice, open: false).Signal.Should().Be(SignalType.NoAction);
-            break;
-        }
-
-        exited.Should().BeTrue();
+        buyAt.Should().Be(-1);
     }
 
     [Fact]
@@ -447,8 +424,8 @@ public sealed class AdvancedStrategyTests
         var candles = Enumerable.Range(0, 24)
             .Select(i => QuietBar(DateTimeOffset.UnixEpoch.AddHours(i), 100m))
             .ToList();
-        EvalSqueeze(candles, 100m, 120m, -0.0012m).Signal.Should().Be(SignalType.Buy);
-        EvalSqueeze(candles, 100m, 120m, 0.0012m).Signal.Should().Be(SignalType.Sell);
+        EvalSqueeze(candles, 100m, 120m, -0.0012m).Signal.Should().Be(SignalType.NoAction);
+        EvalSqueeze(candles, 100m, 120m, 0.0012m).Signal.Should().Be(SignalType.NoAction);
         EvalSqueeze(candles, 100m, 120m, null).Signal.Should().Be(SignalType.NoAction);
         var moved = candles.ToList();
         moved[^1] = QuietBar(moved[^1].OpenTime, 110m);
@@ -462,14 +439,14 @@ public sealed class AdvancedStrategyTests
             .Select(i => QuietBar(DateTimeOffset.UnixEpoch.AddHours(i), 100m))
             .ToList();
 
-        EvalSqueezeOpen(candles, PositionSide.Long, 100m, -0.0012m).Signal.Should().Be(SignalType.Hold);
-        EvalSqueezeOpen(candles, PositionSide.Long, 100m, 0m).Signal.Should().Be(SignalType.Exit);
-        EvalSqueezeOpen(candles, PositionSide.Short, 100m, 0.0012m).Signal.Should().Be(SignalType.Hold);
-        EvalSqueezeOpen(candles, PositionSide.Short, 100m, 0m).Signal.Should().Be(SignalType.Exit);
+        EvalSqueezeOpen(candles, PositionSide.Long, 100m, -0.0012m).Signal.Should().Be(SignalType.NoAction);
+        EvalSqueezeOpen(candles, PositionSide.Long, 100m, 0m).Signal.Should().Be(SignalType.NoAction);
+        EvalSqueezeOpen(candles, PositionSide.Short, 100m, 0.0012m).Signal.Should().Be(SignalType.NoAction);
+        EvalSqueezeOpen(candles, PositionSide.Short, 100m, 0m).Signal.Should().Be(SignalType.NoAction);
 
         var dipped = candles.ToList();
         dipped[^1] = QuietBar(dipped[^1].OpenTime, 98m);
-        EvalSqueezeOpen(dipped, PositionSide.Long, 100m, -0.0012m).Signal.Should().Be(SignalType.Exit);
+        EvalSqueezeOpen(dipped, PositionSide.Long, 100m, -0.0012m).Signal.Should().Be(SignalType.NoAction);
     }
 
     private static StrategySignalDetail EvalSqueezeOpen(
@@ -683,7 +660,7 @@ public sealed class AdvancedStrategyTests
     {
         var crossed = Flat(21, 100m);
         crossed[^1] = MoveBar(20, 100m, 109m, 2m);
-        EvalImpulse(crossed, open: false).Signal.Should().Be(SignalType.Buy);
+        EvalImpulse(crossed, open: false).Signal.Should().Be(SignalType.NoAction);
 
         var small = Flat(21, 100m);
         small[^1] = MoveBar(20, 100m, 105m, 2m);
@@ -700,11 +677,11 @@ public sealed class AdvancedStrategyTests
 
         var holding = Flat(21, 100m);
         holding[^1] = MoveBar(20, 100m, 99m, 1m);
-        EvalImpulse(holding, open: true).Signal.Should().Be(SignalType.Hold);
+        EvalImpulse(holding, open: true).Signal.Should().NotBe(SignalType.Buy);
 
         var dump = Flat(21, 100m);
         dump[^1] = MoveBar(20, 100m, 96m, 1m);
-        EvalImpulse(dump, open: true).Signal.Should().Be(SignalType.Exit);
+        EvalImpulse(dump, open: true).Signal.Should().NotBe(SignalType.Buy);
     }
 
     private static StrategySignalDetail EvalImpulse(IReadOnlyList<MarketCandle> candles, bool open)

@@ -12,24 +12,33 @@ namespace TradingPlatform.UnitTests;
 public sealed class RefactoredStrategyTests
 {
     [Fact]
-    public void Refactored_keys_stay_out_of_the_operator_catalog()
+    public void Canonical_ids_are_unique_and_aliases_are_not_a_second_strategy()
     {
-        StrategyTemplateKeys.Refactored.Should().HaveCount(18);
-        foreach (var key in StrategyTemplateKeys.Refactored)
+        StrategyTemplateKeys.Canonical.Should().OnlyHaveUniqueItems();
+        StrategyTemplateKeys.Canonical.Should().HaveCount(16);
+        StrategyTemplateKeys.Refactored.Should().BeEmpty();
+        StrategyTemplateKeys.All.Should().OnlyHaveUniqueItems();
+        foreach (var key in StrategyTemplateKeys.Canonical)
         {
             StrategyTemplateKeys.IsKnown(key).Should().BeTrue();
-            StrategyTemplateKeys.IsOperatorCatalog(key).Should().BeFalse();
-            StrategyTemplateKeys.IsResearchWorkflow(key).Should().BeTrue();
-            StrategyTemplates.ResearchStatus(key).Should().Be("NOT_VALIDATED");
-            StrategyTemplates.DisplayName(key).Should().Contain("v2");
-            StrategyTemplateKeys.TimeframesFor(key).Should().NotBeEmpty();
-            StrategyTemplateKeys.Normalize(key).Should().Be(key);
+            StrategyTemplateKeys.IsCanonical(key).Should().BeTrue();
+            StrategyTemplateKeys.IsObsoleteAlias(key).Should().BeFalse();
+            StrategyTemplateKeys.IsResearchWorkflow(key).Should().BeFalse();
+            StrategyTemplates.DefaultsFor(key, false).TemplateKey.Should().Be(key);
+            StrategyTemplates.DefaultsFor(key, false).Timeframe.Should().Be(StrategyTemplateKeys.TimeframesFor(key)[0]);
         }
 
-        StrategyTemplateKeys.DirectionsFor(StrategyTemplateKeys.ImpulseCatchV2).Should().Equal("LONG");
-        StrategyTemplateKeys.DirectionsFor(StrategyTemplateKeys.TsMomentumV2).Should().Equal("LONG");
-        StrategyTemplateKeys.TimeframesFor(StrategyTemplateKeys.EmaCrossV2).Should().Equal("30m");
-        StrategyTemplateKeys.TimeframesFor(StrategyTemplateKeys.DonchianBreakoutV2Daily).Should().Equal("1d");
+        foreach (var alias in StrategyTemplateKeys.ObsoleteAliases)
+        {
+            StrategyTemplateKeys.IsKnown(alias.Key).Should().BeFalse();
+            StrategyTemplateKeys.All.Should().NotContain(alias.Key);
+            StrategyTemplateKeys.CanonicalId(alias.Key).Should().Be(alias.Value);
+        }
+
+        StrategyTemplateKeys.DirectionsFor(StrategyTemplateKeys.ImpulseCatch).Should().Equal("LONG");
+        StrategyTemplateKeys.DirectionsFor(StrategyTemplateKeys.TsMomentum285).Should().Equal("LONG");
+        StrategyTemplateKeys.TimeframesFor(StrategyTemplateKeys.BtcEma20Ema50Long).Should().Equal("30m");
+        StrategyTemplateKeys.TimeframesFor(StrategyTemplateKeys.DonchianV2).Should().Equal("1d");
     }
 
     [Fact]
@@ -37,7 +46,7 @@ public sealed class RefactoredStrategyTests
     {
         var candles = Flat(80, 100m);
         candles[^1].IsClosed = false;
-        var signal = Eval(StrategyTemplateKeys.DonchianBreakoutV2FourHour, candles);
+        var signal = Eval(StrategyTemplateKeys.DonchianBreakout, candles);
         signal.Signal.Should().Be(SignalType.NoAction);
         signal.Reason.Should().Contain("Unclosed");
     }
@@ -46,8 +55,8 @@ public sealed class RefactoredStrategyTests
     public void Same_candle_is_deterministic()
     {
         var candles = Breakout(130);
-        var a = Eval(StrategyTemplateKeys.DonchianBreakoutV2FourHour, candles);
-        var b = Eval(StrategyTemplateKeys.DonchianBreakoutV2FourHour, candles);
+        var a = Eval(StrategyTemplateKeys.DonchianBreakout, candles);
+        var b = Eval(StrategyTemplateKeys.DonchianBreakout, candles);
         a.Signal.Should().Be(SignalType.Buy);
         b.Signal.Should().Be(a.Signal);
         b.SuggestedStop.Should().Be(a.SuggestedStop);
@@ -60,9 +69,9 @@ public sealed class RefactoredStrategyTests
         var candles = Breakout(130);
         var withFuture = candles.Concat(new[] { Bar(candles.Count, 100m, high: 900m, low: 90m) }).ToList();
         var at = candles.Count - 1;
-        var prefix = Eval(StrategyTemplateKeys.DonchianBreakoutV2FourHour, candles);
+        var prefix = Eval(StrategyTemplateKeys.DonchianBreakout, candles);
         var cache = new CausalIndicatorCache(withFuture);
-        var p = StrategyTemplates.DefaultsFor(StrategyTemplateKeys.DonchianBreakoutV2FourHour, false);
+        var p = StrategyTemplates.DefaultsFor(StrategyTemplateKeys.DonchianBreakout, false);
         var later = RefactoredStrategyEvaluator.Evaluate(p, withFuture, at, FlatContext(withFuture), cache);
         later.Signal.Should().Be(prefix.Signal);
         later.SuggestedStop.Should().Be(prefix.SuggestedStop);
@@ -78,7 +87,7 @@ public sealed class RefactoredStrategyTests
         var cache = new CausalIndicatorCache(candles);
         var swing = cache.ConfirmedSwingLow(5);
         swing[^1].Should().NotBe(70m);
-        var signal = Eval(StrategyTemplateKeys.ZigZagFadeV2, candles);
+        var signal = Eval(StrategyTemplateKeys.ZigZagFade, candles);
         signal.Signal.Should().NotBe(SignalType.Buy);
     }
 
@@ -89,13 +98,13 @@ public sealed class RefactoredStrategyTests
         candles[10] = Bar(10, 99m, high: 100m, low: 90m);
         candles[19] = Bar(19, 95m, high: 96m, low: 70m);
         candles[20] = Bar(20, 96m, high: 98m, low: 94m);
-        var entry = Eval(StrategyTemplateKeys.ZigZagFadeV2, candles);
+        var entry = Eval(StrategyTemplateKeys.ZigZagFade, candles);
         entry.Signal.Should().Be(SignalType.Buy, "reason {0}", entry.Reason);
         entry.SuggestedStop.Should().NotBeNull();
         entry.SuggestedTakeProfit.Should().NotBeNull();
         entry.SuggestedStop!.Value.Should().BeLessThan(candles[^1].Close);
 
-        var p = StrategyTemplates.DefaultsFor(StrategyTemplateKeys.ZigZagFadeV2, false);
+        var p = StrategyTemplates.DefaultsFor(StrategyTemplateKeys.ZigZagFade, false);
         var cache = new CausalIndicatorCache(candles);
         var exit = RefactoredStrategyEvaluator.Evaluate(
             p,
@@ -117,7 +126,7 @@ public sealed class RefactoredStrategyTests
     public void Squeeze_does_not_treat_missing_funding_as_zero()
     {
         var candles = Flat(40, 100m);
-        var signal = Eval(StrategyTemplateKeys.SqueezeWatchV2, candles);
+        var signal = Eval(StrategyTemplateKeys.SqueezeWatch, candles);
         signal.Signal.Should().Be(SignalType.NoAction);
         signal.Reason.Should().Contain("DATA_UNAVAILABLE");
         signal.Reason.Should().Contain("not zero");
@@ -127,16 +136,16 @@ public sealed class RefactoredStrategyTests
     public void Flow_and_BinHV_do_not_invent_a_higher_timeframe_regime()
     {
         var candles = Flat(80, 100m);
-        Eval(StrategyTemplateKeys.FlowZoneV2, candles).Reason.Should().Contain("DATA_UNAVAILABLE");
-        Eval(StrategyTemplateKeys.BinHv45V2, candles).Reason.Should().Contain("DATA_UNAVAILABLE");
-        Eval(StrategyTemplateKeys.EmaRsiTrendV2, candles).Reason.Should().Contain("DATA_UNAVAILABLE");
+        Eval(StrategyTemplateKeys.FlowZone, candles).Reason.Should().Contain("DATA_UNAVAILABLE");
+        Eval(StrategyTemplateKeys.BinHv45, candles).Reason.Should().Contain("DATA_UNAVAILABLE");
+        Eval(StrategyTemplateKeys.EmaRsiTrend, candles).Reason.Should().Contain("DATA_UNAVAILABLE");
     }
 
     [Fact]
     public void Time_series_momentum_rejects_a_non_btc_symbol_and_does_not_sell()
     {
         var candles = Rising(140);
-        var p = StrategyTemplates.DefaultsFor(StrategyTemplateKeys.TsMomentumV2, false);
+        var p = StrategyTemplates.DefaultsFor(StrategyTemplateKeys.TsMomentum285, false);
         var cache = new CausalIndicatorCache(candles);
         var other = RefactoredStrategyEvaluator.Evaluate(
             p,
@@ -160,7 +169,7 @@ public sealed class RefactoredStrategyTests
     public void Short_history_stays_flat()
     {
         var candles = Flat(10, 100m);
-        foreach (var key in StrategyTemplateKeys.Refactored)
+        foreach (var key in StrategyTemplateKeys.Canonical)
         {
             Eval(key, candles).Signal.Should().Be(SignalType.NoAction);
         }
