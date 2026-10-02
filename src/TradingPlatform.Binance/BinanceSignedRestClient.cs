@@ -79,6 +79,48 @@ public sealed class BinanceSignedRestClient
         return SendAsync(_futures, HttpMethod.Get, "fapi/v1/allOrders", fields, apiKey, apiSecret, cancellationToken);
     }
 
+    public Task<JsonElement> GetFuturesOrderAsync(
+        string apiKey,
+        string apiSecret,
+        string symbol,
+        string? clientOrderId,
+        string? exchangeOrderId,
+        CancellationToken cancellationToken)
+    {
+        var fields = new Dictionary<string, string> { ["symbol"] = symbol.ToUpperInvariant() };
+        if (!string.IsNullOrWhiteSpace(exchangeOrderId))
+        {
+            fields["orderId"] = exchangeOrderId;
+        }
+        else if (!string.IsNullOrWhiteSpace(clientOrderId))
+        {
+            fields["origClientOrderId"] = clientOrderId;
+        }
+
+        return SendAsync(_futures, HttpMethod.Get, "fapi/v1/order", fields, apiKey, apiSecret, cancellationToken);
+    }
+
+    public Task<JsonElement> GetFuturesAlgoOrderAsync(
+        string apiKey,
+        string apiSecret,
+        string symbol,
+        string? clientAlgoId,
+        string? algoId,
+        CancellationToken cancellationToken)
+    {
+        var fields = new Dictionary<string, string> { ["symbol"] = symbol.ToUpperInvariant() };
+        if (!string.IsNullOrWhiteSpace(algoId))
+        {
+            fields["algoId"] = algoId;
+        }
+        else if (!string.IsNullOrWhiteSpace(clientAlgoId))
+        {
+            fields["clientAlgoId"] = clientAlgoId;
+        }
+
+        return SendAsync(_futures, HttpMethod.Get, "fapi/v1/algoOrder", fields, apiKey, apiSecret, cancellationToken);
+    }
+
     public Task<JsonElement> GetFuturesPositionsAsync(
         string apiKey,
         string apiSecret,

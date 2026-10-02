@@ -161,7 +161,7 @@ public sealed class NewsTradeAdapterTests
         public Task<IReadOnlyList<ExchangeBalance>> GetBalancesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<SymbolFilters> GetSymbolInformationAsync(string symbol, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<ExchangeOrder>> GetOpenOrdersAsync(string? symbol, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<ExchangeOrder?> GetOrderAsync(string? clientOrderId, string? exchangeOrderId, string symbol, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<OrderLookup> GetOrderAsync(string? clientOrderId, string? exchangeOrderId, string symbol, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task PrepareSymbolRiskAsync(string symbol, MarginMode marginMode, int leverage, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<int> GetMaxIsolatedLeverageAsync(string symbol, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<ExchangeOrder> PlaceOrderAsync(PlaceOrderRequest request, CancellationToken cancellationToken = default)

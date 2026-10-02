@@ -21,23 +21,31 @@ The gate refuses a new live entry unless all of these are true:
 
 ## Fills
 
-`PlaceAndFillAsync` writes the order, including the client order id, before it calls the exchange. `FillAccounting.Apply` then stores the exchange status, cumulative executed quantity, remaining quantity, and average price.
+`PlaceAndFillAsync` writes the order, including the client order id, before it calls the exchange. `FillAccounting.Apply` then stores the exchange status, cumulative executed quantity, remaining quantity, and cumulative average price.
+
+The price booked on the new quantity is not the cumulative average. It is the quote delta divided by the quantity delta:
+
+`newCumulativeQty * newCumulativeAvg - oldCumulativeQty * oldCumulativeAvg`, divided by the new quantity.
+
+If the report also has cumulative quote value, that difference is used, and it must agree with the cumulative average. A backwards quantity, a non-positive quote delta, a missing price, or a disagreement is `Uncertain`. No fill price is invented.
 
 `Filled` is stored only when the executed quantity equals the requested quantity and is greater than zero. A report labeled filled with a smaller quantity is stored as `PartiallyFilled`. `NEW`, `PARTIALLY_FILLED`, `FILLED`, `CANCELED`, `REJECTED`, `EXPIRED`, and an unknown status are mapped explicitly. An unknown status becomes `Uncertain`.
 
-A position, execution, fee, and realized PnL change only for the new executed delta. The same cumulative quantity applied again does not move the position. A partial entry books only the executed quantity and blocks another entry on that coin. A cancel after that partial keeps the executed quantity and leaves the remainder unfilled. A partial exit reduces the open quantity and leaves the rest open.
+A position, execution, and realized PnL change only for the new executed delta. The same cumulative quantity applied again does not move the position. A partial entry books only the executed quantity and blocks another entry on that coin. A cancel after that partial keeps the executed quantity and leaves the remainder unfilled. A partial exit reduces the open quantity, keeps the original average entry on the remainder, and adds realized PnL for that slice only. The same `PositionFillBook.Exit` math is used for a normal exit and a recovered exit. If more than one open position matches the coin, the fill is not applied.
 
-If the executed quantity moves backwards, exceeds the request, or a new fill has no price, the order becomes `Uncertain` and new entries on that coin stay blocked. Nothing is invented to make the books match.
+## Fees
+
+On the Binance connector, `ExchangeOrder.Fee` is the cumulative USDT commission from the order payload or from `GET /fapi/v1/userTrades` for that order id. It is not a per-fill delta. `FeeKnown` is false when the commission was missing or was not USDT. A missing fee is stored as unresolved, not as an actual zero. `FillAccounting` subtracts the fee already booked and applies only the positive delta. A cumulative fee that moves backwards is `Uncertain`. Replaying the same cumulative fee books nothing.
 
 ## Recovery
 
-A timeout or lost response is not a rejection and is not a reason to send the order again. The cycle calls `GetOrder` with the client order id.
+`GetOrder` returns `OrderLookup`. `ConfirmedAbsent` is used only when Binance says the id does not exist (`-2013` or `-2011`) on both the order endpoint and the algo endpoint. A timeout, 429, 5xx, empty body, or other error is `Unavailable`. That keeps the order `Uncertain`, keeps the entry block, and does not send the order again. An authoritative absence marks the order `Failed` only when nothing has been filled. A partial fill that then disappears stays `Uncertain` and keeps the booked quantity.
 
-- Lookup throws: the order stays `Uncertain`. The reason and correlation id are logged. It is not sent again.
-- Lookup returns nothing: the order is `Failed` with the reason that the exchange has no such client id. It is not sent again.
-- Lookup returns the order: `FillAccounting` applies that status and only the new fill delta.
+Each cycle, including the first after startup, polls live orders in `Submitting`, `Uncertain`, or `PartiallyFilled`, including stop and take-profit orders. The wait grows from 5 seconds to 5 minutes. A confirmed report goes through the same `FillAccounting` and exit booking as a normal fill. Polling stops once the status is terminal. A partial order keeps blocking a new entry on that coin until then.
 
-On each cycle, including the first cycle after startup, `RecoverUnresolvedOrdersAsync` repeats that lookup for live market orders still in `Uncertain` or `Submitting`. A second pass with the same cumulative quantity does not book another fill. The kill switch still stops bots, but this recovery runs first so a fill that already happened is not dropped.
+## Protective orders
+
+Stop and take-profit orders are queried on the algo endpoint as well as the order endpoint. A confirmed executed quantity is booked with the same fill and exit accounting. A trigger status with no executed quantity or price stays unresolved. Reaching a local trigger price does not mark the order filled.
 
 ## Reconciliation
 
@@ -45,10 +53,10 @@ On each cycle, including the first cycle after startup, `RecoverUnresolvedOrders
 
 - A missing, stale, or incomplete futures snapshot calls `ReconciliationState.Fail` and does not close local positions. Absence in an incomplete snapshot is not treated as flat.
 - A fresh snapshot with an exchange position or open order that has no local row is logged as a reconciliation exception. Those positions are not closed and no fill is invented. New entries stay blocked.
-- A local position that is absent from a fresh book, and that has a positive mark or entry price, is closed locally with a `RECONCILE_FLAT` event. No order is inserted, and the status is not set to `Filled`. The PnL on that path uses the mark or last price, not an exchange fill. If that price is missing, the position stays open and entries stay blocked.
+- A local position that is absent from a fresh book is left open. The health block reason says so. No order is inserted, and no mark price is stored as realized exchange PnL.
 - A clean fresh snapshot calls `Succeed` with the account hint and the clock time.
 
-`GET /api/system/health` reports `applicationStarted`, `databaseReady`, `exchangeReady`, `reconciliationReady`, `riskConfigurationValid`, `liveEntryGateOpen`, and `blockedReason`. The process being up does not set `liveEntryGateOpen`. With the default flag the gate is closed.
+`GET /api/system/health` reports `applicationStarted`, `databaseReady`, `exchangeReady`, `reconciliationReady`, `riskConfigurationValid`, `liveEntryGateOpen`, `unresolvedOrderCount`, and `blockedReason`. The process being up does not set `liveEntryGateOpen`. With the default flag the gate is closed.
 
 ## Risk
 
@@ -58,7 +66,6 @@ On each cycle, including the first cycle after startup, `RecoverUnresolvedOrders
 
 ## What is still limited
 
-- No test talked to Binance. A user-data stream fill of a resting stop or take-profit is not passed through `FillAccounting`. A newly placed protective order is stored as working, with remaining quantity equal to the requested quantity, until a later cancel or fill path updates it.
-- A ghost close uses the last mark. That is not an exchange fill.
-- The fee stored on a later delta is the fee on that exchange report. It is not differenced against an earlier partial fee.
+- No test talked to Binance. Recovery of a stop or take-profit depends on the REST order or algo query returning an executed quantity and price. A user-data stream event is not ingested on its own socket in this build; the same accounting runs when that query returns the fill.
+- A local position missing from a fresh snapshot stays open and blocks new entries. It is not auto-closed.
 - There is no unique database index on the strategy template key. Startup throws if two enabled rows share one canonical id. Adding the index in a migration that runs before the data rewrite would fail on existing duplicates.

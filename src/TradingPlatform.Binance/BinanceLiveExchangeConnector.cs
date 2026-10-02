@@ -3,6 +3,7 @@ using System.Text.Json;
 using TradingPlatform.Application.Abstractions.Exchange;
 using TradingPlatform.Application.Abstractions.MarketData;
 using TradingPlatform.Domain.Errors;
+using TradingPlatform.Domain.Orders;
 using TradingPlatform.Domain.Risk;
 using TradingPlatform.Domain.Trading;
 
@@ -73,8 +74,94 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
     public Task<IReadOnlyList<ExchangeOrder>> GetOpenOrdersAsync(string? symbol, CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<ExchangeOrder>>([]);
 
-    public Task<ExchangeOrder?> GetOrderAsync(string? clientOrderId, string? exchangeOrderId, string symbol, CancellationToken cancellationToken = default) =>
-        Task.FromResult<ExchangeOrder?>(null);
+    /// <summary>
+    /// Read-only query. A Binance "order does not exist" (-2013/-2011) from both the order and algo
+    /// endpoints is <see cref="OrderLookupKind.ConfirmedAbsent"/>. Timeouts, 429, and 5xx stay unavailable.
+    /// Commission on <see cref="ExchangeOrder.Fee"/> is the cumulative USDT commission from the order
+    /// payload or from user trades for that order id. It is not a per-fill delta. A missing commission
+    /// leaves <see cref="ExchangeOrder.FeeKnown"/> false and must not be stored as an actual zero fee.
+    /// </summary>
+    public async Task<OrderLookup> GetOrderAsync(string? clientOrderId, string? exchangeOrderId, string symbol, CancellationToken cancellationToken = default)
+    {
+        var (key, secret) = await RequireKeys(cancellationToken);
+        var regular = await ReadOrderAsync(
+            () => _signed.GetFuturesOrderAsync(key, secret, symbol, clientOrderId, exchangeOrderId, cancellationToken),
+            payload => MapOrder(payload, new PlaceOrderRequest(clientOrderId ?? "", symbol, OrderSide.Buy, OrderType.Market, 0m, null, TimeSpan.Zero)));
+        if (regular.Kind == OrderLookupKind.Found)
+        {
+            return await WithCumulativeFeeAsync(key, secret, regular, cancellationToken);
+        }
+
+        if (regular.Kind == OrderLookupKind.Unavailable)
+        {
+            return regular;
+        }
+
+        var algo = await ReadOrderAsync(
+            () => _signed.GetFuturesAlgoOrderAsync(key, secret, symbol, clientOrderId, exchangeOrderId, cancellationToken),
+            MapAlgoOrder);
+        if (algo.Kind == OrderLookupKind.Found)
+        {
+            return algo;
+        }
+
+        if (algo.Kind == OrderLookupKind.Unavailable)
+        {
+            return algo;
+        }
+
+        return OrderLookup.Absent("Binance confirmed this client id on neither the order nor the algo endpoint. The order was not sent again.");
+    }
+
+    private async Task<OrderLookup> WithCumulativeFeeAsync(
+        string key,
+        string secret,
+        OrderLookup lookup,
+        CancellationToken cancellationToken)
+    {
+        var order = lookup.Order;
+        if (order is null || string.IsNullOrWhiteSpace(order.ExchangeOrderId))
+        {
+            return lookup;
+        }
+
+        try
+        {
+            var trades = await _signed.GetFuturesUserTradesAsync(key, secret, order.Symbol, order.ExchangeOrderId, cancellationToken);
+            var (total, complete, asset) = SumCommission(trades);
+            if (complete)
+            {
+                return OrderLookup.Found(order with { Fee = total, FeeKnown = true, FeeAsset = asset });
+            }
+        }
+        catch (DomainException)
+        {
+        }
+
+        return lookup;
+    }
+
+    private static async Task<OrderLookup> ReadOrderAsync(Func<Task<JsonElement>> query, Func<JsonElement, ExchangeOrder> map)
+    {
+        try
+        {
+            return OrderLookup.Found(map(await query()));
+        }
+        catch (DomainException ex) when (IsConfirmedAbsent(ex))
+        {
+            return OrderLookup.Absent(ex.Message);
+        }
+        catch (DomainException ex)
+        {
+            return OrderLookup.Unavailable(ex.Message);
+        }
+    }
+
+    private static bool IsConfirmedAbsent(DomainException ex) =>
+        ex.Message.Contains("-2013", StringComparison.Ordinal)
+        || ex.Message.Contains("-2011", StringComparison.Ordinal)
+        || ex.Message.Contains("Order does not exist", StringComparison.OrdinalIgnoreCase)
+        || ex.Message.Contains("Unknown order", StringComparison.OrdinalIgnoreCase);
 
     public async Task<ExchangeOrder> PlaceOrderAsync(PlaceOrderRequest request, CancellationToken cancellationToken = default)
     {
@@ -100,10 +187,10 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
                     request.Symbol,
                     mapped.ExchangeOrderId,
                     cancellationToken);
-                var fromTrades = SumCommission(trades);
-                if (fromTrades != 0m)
+                var (fromTrades, complete, asset) = SumCommission(trades);
+                if (complete)
                 {
-                    mapped = mapped with { Fee = fromTrades };
+                    mapped = mapped with { Fee = fromTrades, FeeKnown = true, FeeAsset = asset };
                 }
             }
             catch (DomainException)
@@ -498,8 +585,16 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
             _ => OrderStatus.Submitted
         };
         var executed = payload.TryGetProperty("executedQty", out var qtyEl) ? Dec(qtyEl) : request.Quantity;
+        var quantity = payload.TryGetProperty("origQty", out var origEl) ? Dec(origEl) : request.Quantity;
+        if (quantity <= 0m)
+        {
+            quantity = executed > 0m ? executed : request.Quantity;
+        }
+
         var avg = ReadFillPrice(payload, executed) ?? (request.Price is > 0m ? request.Price : null);
         long? transact = payload.TryGetProperty("transactTime", out var timeEl) ? timeEl.GetInt64() : null;
+        var feeKnown = payload.TryGetProperty("commission", out _)
+            || (payload.TryGetProperty("fills", out var fills) && fills.ValueKind == JsonValueKind.Array);
         return new ExchangeOrder(
             payload.TryGetProperty("clientOrderId", out var cid) ? cid.GetString() ?? request.ClientOrderId : request.ClientOrderId,
             payload.TryGetProperty("orderId", out var oid) ? oid.ToString() : null,
@@ -507,12 +602,41 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
             request.Side,
             request.Type,
             status,
-            request.Quantity,
+            quantity,
             executed,
             avg,
             avg,
             transact is null ? null : DateTimeOffset.FromUnixTimeMilliseconds(transact.Value),
-            ReadCommission(payload));
+            feeKnown ? ReadCommission(payload) : 0m,
+            feeKnown,
+            payload.TryGetProperty("cumQuote", out var quoteEl) ? Dec(quoteEl) : null,
+            feeKnown ? "USDT" : null);
+    }
+
+    private static ExchangeOrder MapAlgoOrder(JsonElement payload)
+    {
+        var statusText = payload.TryGetProperty("algoStatus", out var statusEl) ? statusEl.GetString() : "WORKING";
+        var executed = payload.TryGetProperty("executedQty", out var qtyEl) ? Dec(qtyEl) : 0m;
+        var quantity = payload.TryGetProperty("quantity", out var requestedEl) ? Dec(requestedEl) : executed;
+        var avg = ReadFillPrice(payload, executed);
+        return new ExchangeOrder(
+            payload.TryGetProperty("clientAlgoId", out var cid) ? cid.GetString() ?? "" : "",
+            payload.TryGetProperty("algoId", out var oid) ? oid.ToString() : null,
+            payload.TryGetProperty("symbol", out var symbolEl) ? symbolEl.GetString() ?? "" : "",
+            string.Equals(payload.TryGetProperty("side", out var sideEl) ? sideEl.GetString() : "", "SELL", StringComparison.OrdinalIgnoreCase)
+                ? OrderSide.Sell
+                : OrderSide.Buy,
+            OrderType.StopMarket,
+            OrderLedger.ParseStatus(statusText),
+            quantity > 0m ? quantity : executed,
+            executed,
+            avg,
+            avg,
+            null,
+            0m,
+            false,
+            null,
+            null);
     }
 
     private static decimal ReadCommission(JsonElement payload)
@@ -537,29 +661,37 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
         return total;
     }
 
-    private static decimal SumCommission(JsonElement trades)
+    /// <summary>
+    /// Sums commission on user trades. The result is cumulative for the queried order, not a delta.
+    /// A non-USDT commission is not converted, so the total is left unknown instead of stored as zero.
+    /// </summary>
+    private static (decimal Total, bool Complete, string? Asset) SumCommission(JsonElement trades)
     {
         if (trades.ValueKind != JsonValueKind.Array)
         {
-            return 0m;
+            return (0m, false, null);
         }
 
         var total = 0m;
+        var saw = false;
         foreach (var trade in trades.EnumerateArray())
         {
-            if (trade.TryGetProperty("commissionAsset", out var assetEl)
-                && !string.Equals(assetEl.GetString(), "USDT", StringComparison.OrdinalIgnoreCase))
+            if (!trade.TryGetProperty("commission", out var commissionEl))
             {
                 continue;
             }
 
-            if (trade.TryGetProperty("commission", out var commissionEl))
+            saw = true;
+            if (trade.TryGetProperty("commissionAsset", out var assetEl)
+                && !string.Equals(assetEl.GetString(), "USDT", StringComparison.OrdinalIgnoreCase))
             {
-                total += Dec(commissionEl);
+                return (0m, false, assetEl.GetString());
             }
+
+            total += Dec(commissionEl);
         }
 
-        return total;
+        return saw ? (total, true, "USDT") : (0m, false, null);
     }
 
     private static decimal? ReadFillPrice(JsonElement payload, decimal executed)

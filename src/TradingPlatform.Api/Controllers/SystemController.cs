@@ -67,6 +67,7 @@ public sealed class SystemController : ControllerBase
             reconciliationReady,
             riskConfigurationValid = riskValid,
             liveEntryGateOpen = gateOpen,
+            unresolvedOrderCount = _reconciliation.UnresolvedOrderCount,
             blockedReason,
             liveTradingEnabled = options.LiveTradingEnabled,
             defaultMode = _configuration["Trading:DefaultMode"] ?? TradingMode.Paper.ToString(),

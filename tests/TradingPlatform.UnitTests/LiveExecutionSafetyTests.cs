@@ -35,9 +35,40 @@ public sealed class FillAccountingTests
         first.NewFill.Fee.Should().Be(0.4m);
         first.BlocksNewEntries.Should().BeFalse();
 
-        var repeat = Apply(first.FilledQuantity, 1m, OrderStatus.Filled, 1m, 100m, 0.4m);
+        var repeat = FillAccounting.Apply(
+            new BookedFill(first.FilledQuantity, 100m, 0.4m),
+            1m,
+            new ExchangeFillReport(OrderStatus.Filled, 1m, 100m, 0.4m, "ex-1", null));
         repeat.NewFill.Should().BeNull();
+        repeat.AdditionalFee.Should().Be(0m);
         repeat.Status.Should().Be(OrderStatus.Filled);
+    }
+
+    [Fact]
+    public void Cumulative_average_price_becomes_the_incremental_fill_price()
+    {
+        var first = FillAccounting.Apply(
+            new BookedFill(0m, null, 0m),
+            1m,
+            new ExchangeFillReport(OrderStatus.PartiallyFilled, 0.4m, 100m, 0.1m, "ex-1", null));
+        first.NewFill!.Quantity.Should().Be(0.4m);
+        first.NewFill.Price.Should().Be(100m);
+
+        var second = FillAccounting.Apply(
+            new BookedFill(0.4m, 100m, 0.1m),
+            1m,
+            new ExchangeFillReport(OrderStatus.Filled, 1.0m, 110m, 0.25m, "ex-1", null));
+        second.NewFill!.Quantity.Should().Be(0.6m);
+        second.NewFill.Price.Should().BeApproximately(116.6666667m, 0.0000001m);
+        second.NewFill.Fee.Should().Be(0.15m);
+        second.AverageFillPrice.Should().Be(110m);
+
+        var replay = FillAccounting.Apply(
+            new BookedFill(1.0m, 110m, 0.25m),
+            1m,
+            new ExchangeFillReport(OrderStatus.Filled, 1.0m, 110m, 0.25m, "ex-1", null));
+        replay.NewFill.Should().BeNull();
+        replay.AdditionalFee.Should().Be(0m);
     }
 
     [Fact]
@@ -71,10 +102,42 @@ public sealed class FillAccountingTests
     public void Partial_exit_delta_is_the_new_executed_quantity_only()
     {
         var first = Apply(0m, 1m, OrderStatus.PartiallyFilled, 0.3m, 110m, 0.02m);
-        var more = Apply(first.FilledQuantity, 1m, OrderStatus.Filled, 1m, 112m, 0.08m);
+        var more = FillAccounting.Apply(
+            new BookedFill(0.3m, 110m, 0.02m),
+            1m,
+            new ExchangeFillReport(OrderStatus.Filled, 1m, 112m, 0.08m, "ex-1", null));
         more.Status.Should().Be(OrderStatus.Filled);
         more.NewFill!.Quantity.Should().Be(0.7m);
+        more.NewFill.Price.Should().BeApproximately(112.8571428m, 0.0000001m);
         more.AverageFillPrice.Should().Be(112m);
+        more.NewFill.Fee.Should().Be(0.06m);
+    }
+
+    [Fact]
+    public void Inconsistent_quote_and_average_and_a_backwards_fee_are_uncertain()
+    {
+        var quote = FillAccounting.Apply(
+            new BookedFill(0m, null, 0m),
+            1m,
+            new ExchangeFillReport(OrderStatus.Filled, 1m, 100m, null, "ex-1", null, CumulativeQuote: 90m));
+        quote.Uncertain.Should().BeTrue();
+        quote.NewFill.Should().BeNull();
+
+        var fee = FillAccounting.Apply(
+            new BookedFill(1m, 100m, 0.4m),
+            1m,
+            new ExchangeFillReport(OrderStatus.Filled, 1m, 100m, 0.1m, "ex-1", null));
+        fee.Uncertain.Should().BeTrue();
+
+        var perFill = FillAccounting.Apply(
+            new BookedFill(0.4m, 100m, 0m),
+            1m,
+            new ExchangeFillReport(OrderStatus.Filled, 1m, 110m, 0.05m, "ex-1", null, FeeIsCumulative: false));
+        perFill.NewFill!.Fee.Should().Be(0.05m);
+        perFill.NewFill.FeeKnown.Should().BeTrue();
+
+        var missing = Apply(0m, 1m, OrderStatus.Filled, 1m, 100m, null);
+        missing.NewFill!.FeeKnown.Should().BeFalse();
     }
 
     [Theory]
@@ -117,7 +180,7 @@ public sealed class FillAccountingTests
         OrderStatus status,
         decimal executed,
         decimal? price,
-        decimal fee) =>
+        decimal? fee) =>
         FillAccounting.Apply(previous, requested, new ExchangeFillReport(status, executed, price, fee, "ex-1", null));
 }
 
@@ -126,17 +189,20 @@ public sealed class OrderRecoveryTests
     [Fact]
     public void Timeout_before_acceptance_does_not_resubmit()
     {
-        var decision = OrderRecovery.Decide(false, null);
-        decision.Kind.Should().Be(RecoveryKind.NotAccepted);
-        decision.Order.Should().BeNull();
-        decision.Reason.Should().Contain("not sent again");
+        var ambiguous = OrderRecovery.Decide(OrderLookup.Unavailable("timeout"));
+        ambiguous.Kind.Should().Be(RecoveryKind.LookupUnavailable);
+        ambiguous.Order.Should().BeNull();
+
+        var absent = OrderRecovery.Decide(OrderLookup.Absent("Binance confirmed this client id does not exist. The order was not sent again."));
+        absent.Kind.Should().Be(RecoveryKind.ConfirmedAbsent);
+        absent.Reason.Should().Contain("not sent again");
     }
 
     [Fact]
     public void Timeout_after_acceptance_uses_the_existing_order()
     {
         var existing = Sample(OrderStatus.Submitted, 0m);
-        var decision = OrderRecovery.Decide(false, existing);
+        var decision = OrderRecovery.Decide(OrderLookup.Found(existing));
         decision.Kind.Should().Be(RecoveryKind.Confirmed);
         decision.Order.Should().BeSameAs(existing);
     }
@@ -144,7 +210,7 @@ public sealed class OrderRecoveryTests
     [Fact]
     public void Lost_response_after_a_partial_or_full_fill_is_confirmed_once()
     {
-        var partial = OrderRecovery.Decide(false, Sample(OrderStatus.PartiallyFilled, 0.4m));
+        var partial = OrderRecovery.Decide(OrderLookup.Found(Sample(OrderStatus.PartiallyFilled, 0.4m)));
         var applied = FillAccounting.Apply(0m, 1m, new ExchangeFillReport(
             partial.Order!.Status, partial.Order.FilledQuantity, 100m, 0.1m, partial.Order.ExchangeOrderId, null));
         applied.NewFill!.Quantity.Should().Be(0.4m);
@@ -152,7 +218,7 @@ public sealed class OrderRecoveryTests
             partial.Order.Status, partial.Order.FilledQuantity, 100m, 0.1m, partial.Order.ExchangeOrderId, null))
             .NewFill.Should().BeNull();
 
-        var full = OrderRecovery.Decide(false, Sample(OrderStatus.Filled, 1m));
+        var full = OrderRecovery.Decide(OrderLookup.Found(Sample(OrderStatus.Filled, 1m)));
         var booked = FillAccounting.Apply(0m, 1m, new ExchangeFillReport(
             full.Order!.Status, full.Order.FilledQuantity, 101m, 0.2m, full.Order.ExchangeOrderId, null));
         booked.Status.Should().Be(OrderStatus.Filled);
@@ -162,7 +228,7 @@ public sealed class OrderRecoveryTests
     [Fact]
     public void Lookup_unavailable_stays_uncertain_and_a_later_fill_is_applied_once()
     {
-        var missed = OrderRecovery.Decide(true, null);
+        var missed = OrderRecovery.Decide(OrderLookup.Unavailable("429"));
         missed.Kind.Should().Be(RecoveryKind.LookupUnavailable);
         var uncertain = FillAccounting.Apply(0m, 1m, new ExchangeFillReport(OrderStatus.Uncertain, 0m, null, 0m, null, missed.Reason));
         uncertain.Uncertain.Should().BeTrue();
@@ -173,7 +239,25 @@ public sealed class OrderRecoveryTests
         FillAccounting.Apply(late.FilledQuantity, 1m, new ExchangeFillReport(OrderStatus.Filled, 1m, 99m, 0.3m, "ex-late", null))
             .NewFill.Should().BeNull();
 
-        OrderRecovery.Decide(true, null).Kind.Should().Be(missed.Kind);
+        OrderRecovery.Decide(OrderLookup.Unavailable("5xx")).Kind.Should().Be(missed.Kind);
+        var created = DateTimeOffset.UnixEpoch;
+        OrderRecovery.Due(created, created, created.AddSeconds(4)).Should().BeFalse();
+        OrderRecovery.Due(created, created, created.AddSeconds(5)).Should().BeTrue();
+    }
+
+    [Fact]
+    public void Exit_booking_matches_for_a_partial_and_a_full_close()
+    {
+        var partial = PositionFillBook.Exit(PositionSide.Long, 1m, 100m, 0.4m, 110m, 0.1m);
+        partial.Closed.Should().BeFalse();
+        partial.RemainingQuantity.Should().Be(0.6m);
+        partial.RealizedPnl.Should().Be(3.9m);
+        partial.EventType.Should().Be("PARTIAL_CLOSE");
+
+        var full = PositionFillBook.Exit(PositionSide.Long, 0.6m, 100m, 0.6m, 90m, 0.2m);
+        full.Closed.Should().BeTrue();
+        full.RemainingQuantity.Should().Be(0m);
+        full.RealizedPnl.Should().Be(-6.2m);
     }
 
     private static ExchangeOrder Sample(OrderStatus status, decimal filled) =>
@@ -336,22 +420,21 @@ public sealed class ReconciliationSafetyTests
     }
 
     [Fact]
-    public async Task Ghost_local_position_is_closed_from_confirmed_price_without_a_filled_order()
+    public async Task Ghost_local_position_stays_open_and_is_not_given_an_exchange_fill()
     {
         await using var db = await SeedLivePositionAsync();
         var live = new LiveAccountCache();
         live.Set(FreshBook([], []));
-        var cache = new MarketDataCache();
-        cache.SetTicker("BTCUSDT", 50_200m, DateTimeOffset.UtcNow);
         var state = new ReconciliationState();
-        await Reconciler(db, live, state, cache).ReconcileAsync();
+        await Reconciler(db, live, state).ReconcileAsync();
 
-        state.Succeeded.Should().BeTrue();
+        state.Succeeded.Should().BeFalse();
+        state.BlockReason.Should().Contain("left open");
         (await db.Orders.CountAsync()).Should().Be(0);
-        (await db.Bots.SingleAsync()).LastError.Should().Contain("reconciled");
-        var position = await db.Positions.Include(item => item.Events).SingleAsync();
-        position.Quantity.Should().Be(0m);
-        position.Events.Should().Contain(item => item.EventType == "RECONCILE_FLAT");
+        var position = await db.Positions.SingleAsync();
+        position.Quantity.Should().Be(0.01m);
+        position.RealizedPnL.Should().Be(0m);
+        position.ClosedAt.Should().BeNull();
     }
 
     [Fact]

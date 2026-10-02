@@ -24,6 +24,21 @@ public sealed class ReconciliationState
         get { lock (_gate) return _blockReason; }
     }
 
+    public int UnresolvedOrderCount
+    {
+        get { lock (_gate) return _unresolved; }
+    }
+
+    private int _unresolved;
+
+    public void SetUnresolvedCount(int count)
+    {
+        lock (_gate)
+        {
+            _unresolved = count;
+        }
+    }
+
     public void Succeed(string accountId, DateTimeOffset at)
     {
         lock (_gate)

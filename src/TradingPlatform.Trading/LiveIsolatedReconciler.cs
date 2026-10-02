@@ -87,8 +87,10 @@ public sealed class LiveIsolatedReconciler
                 continue;
             }
 
-            await CloseGhostAsync(bot, position, cancellationToken);
-            closed++;
+            if (await CloseGhostAsync(bot, position, cancellationToken))
+            {
+                closed++;
+            }
         }
 
         if (closed > 0)
@@ -123,6 +125,11 @@ public sealed class LiveIsolatedReconciler
             var reason = "Unknown exchange state: " + string.Join(", ", unknown) + ". New live entries are blocked. Nothing was closed automatically.";
             _state.Fail(reason, _clock.UtcNow);
             _logger.LogError("Reconciliation exception. {Reason}", reason);
+            return;
+        }
+
+        if (_state.BlockReason is not null)
+        {
             return;
         }
 
@@ -182,113 +189,13 @@ public sealed class LiveIsolatedReconciler
         openTrade.ClosedAt = now;
     }
 
-    private async Task CloseGhostAsync(Bot bot, Position position, CancellationToken cancellationToken)
+    private Task<bool> CloseGhostAsync(Bot bot, Position position, CancellationToken cancellationToken)
     {
-        var exit = position.CurrentPrice > 0m ? position.CurrentPrice : position.AverageEntryPrice;
-        if (_cache.TryGetTicker(position.Symbol, out var mark) && mark > 0m)
-        {
-            exit = mark;
-        }
-
-        if (exit <= 0m)
-        {
-            _state.Fail(
-                $"Local position {position.Symbol} is absent on the exchange, but there is no confirmed exit price. It was left open.",
-                _clock.UtcNow);
-            _logger.LogError("Ghost position {Symbol} was not closed because the exit price is missing.", position.Symbol);
-            return;
-        }
-
-        var correlationId = _correlation.GetOrCreate();
-        var quantity = position.Quantity;
-        var direction = position.Side == PositionSide.Short ? -1m : 1m;
-        var pnl = direction * (exit - position.AverageEntryPrice) * quantity;
-        position.Quantity = 0m;
-        position.CurrentPrice = exit;
-        position.UnrealizedPnL = 0m;
-        position.RealizedPnL += pnl;
-        position.ClosedAt = _clock.UtcNow;
-        await _store.AddPositionEventAsync(new PositionEvent
-        {
-            PositionId = position.Id,
-            EventType = "RECONCILE_FLAT",
-            Quantity = quantity,
-            Price = exit,
-            RealizedPnLDelta = pnl,
-            CorrelationId = correlationId
-        }, cancellationToken);
-
-        var pnlPercent = position.AverageEntryPrice == 0m
-            ? 0m
-            : direction * (exit - position.AverageEntryPrice) / position.AverageEntryPrice * 100m;
-        var already = (await _store.FindClosedTradesAroundAsync(
-                position.Symbol,
-                position.OpenedAt,
-                _clock.UtcNow,
-                cancellationToken))
-            .FirstOrDefault(item => ClosedTripMatch.Same(
-                item.Symbol,
-                item.Quantity,
-                item.OpenedAt,
-                item.ClosedAt,
-                position.Symbol,
-                quantity,
-                position.OpenedAt,
-                _clock.UtcNow));
-        if (already is not null)
-        {
-            await CancelProtectiveRowAsync(LiveProtectivePrices.StopClientOrderId(bot.Id), cancellationToken);
-            await CancelProtectiveRowAsync(LiveProtectivePrices.TakeClientOrderId(bot.Id), cancellationToken);
-            bot.LastError = $"Isolated {position.Symbol} closed on Binance. Snapshot reconciled.";
-            _logger.LogInformation(
-                "LIVE Isolated {Symbol} is flat on Binance. Snapshot closed; trade already stored for bot {BotId}.",
-                position.Symbol,
-                bot.Id);
-            return;
-        }
-
-        var openTrade = await _store.GetOpenTradeAsync(bot.Id, cancellationToken);
-        if (openTrade is not null &&
-            !string.Equals(openTrade.Symbol, position.Symbol, StringComparison.OrdinalIgnoreCase))
-        {
-            openTrade = null;
-        }
-
-        if (openTrade is not null)
-        {
-            openTrade.ExitPrice = exit;
-            openTrade.PnL = pnl;
-            openTrade.PnLPercent = pnlPercent;
-            openTrade.ClosedAt = _clock.UtcNow;
-        }
-        else
-        {
-            await _store.AddTradeAsync(new Trade
-            {
-                BotId = bot.Id,
-                StrategyId = bot.StrategyVersion.StrategyId,
-                StrategyVersionId = bot.StrategyVersionId,
-                Symbol = position.Symbol,
-                Side = position.Side == PositionSide.Short ? OrderSide.Sell : OrderSide.Buy,
-                Quantity = quantity,
-                EntryPrice = position.AverageEntryPrice,
-                ExitPrice = exit,
-                PnL = pnl,
-                PnLPercent = pnlPercent,
-                Fees = 0m,
-                OpenedAt = position.OpenedAt,
-                ClosedAt = _clock.UtcNow,
-                CorrelationId = correlationId
-            }, cancellationToken);
-        }
-
-        await CancelProtectiveRowAsync(LiveProtectivePrices.StopClientOrderId(bot.Id), cancellationToken);
-        await CancelProtectiveRowAsync(LiveProtectivePrices.TakeClientOrderId(bot.Id), cancellationToken);
-        bot.LastError = $"Isolated {position.Symbol} closed on Binance. Snapshot reconciled.";
-        _logger.LogInformation(
-            "LIVE Isolated {Symbol} is flat on Binance. Closed leftover snapshot for bot {BotId}.",
-            position.Symbol,
-            bot.Id);
+        var reason = $"Local position {position.Symbol} is absent from a fresh exchange snapshot. It was left open. No exchange fill or realized PnL was created.";
+        _state.Fail(reason, _clock.UtcNow);
+        bot.LastError = reason;
+        _logger.LogError("Reconciliation discrepancy for {Symbol}. {Reason}", position.Symbol, reason);
+        return Task.FromResult(false);
     }
 
     private async Task CancelProtectiveRowAsync(string clientOrderId, CancellationToken cancellationToken)

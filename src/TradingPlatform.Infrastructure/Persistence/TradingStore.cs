@@ -421,11 +421,13 @@ public sealed class TradingStore : ITradingStore
 
     public async Task<IReadOnlyList<Order>> GetUnresolvedLiveOrdersAsync(CancellationToken cancellationToken = default) =>
         await _db.Orders
+            .Include(order => order.Executions)
             .Include(order => order.Bot)
             .ThenInclude(bot => bot.StrategyVersion)
             .Where(order => order.Mode == TradingMode.Live
-                && order.Type == OrderType.Market
-                && (order.Status == OrderStatus.Uncertain || order.Status == OrderStatus.Submitting))
+                && (order.Status == OrderStatus.Uncertain
+                    || order.Status == OrderStatus.Submitting
+                    || order.Status == OrderStatus.PartiallyFilled))
             .ToListAsync(cancellationToken);
 
     public async Task AddPositionEventAsync(PositionEvent positionEvent, CancellationToken cancellationToken = default)
@@ -437,7 +439,6 @@ public sealed class TradingStore : ITradingStore
         _db.Orders.AnyAsync(
             order => order.BotId == botId
                 && order.Symbol == symbol
-                && order.Type == OrderType.Market
                 && (order.Status == OrderStatus.Uncertain
                     || order.Status == OrderStatus.PartiallyFilled
                     || order.Status == OrderStatus.Submitting),

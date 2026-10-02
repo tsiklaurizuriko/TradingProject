@@ -34,7 +34,34 @@ public sealed record ExchangeOrder(
     decimal? Price,
     decimal? AverageFillPrice,
     DateTimeOffset? ExchangeTimestamp,
-    decimal Fee = 0m);
+    decimal Fee = 0m,
+    bool FeeKnown = false,
+    decimal? CumulativeQuote = null,
+    string? FeeAsset = null);
+
+/// <summary>
+/// Result of a read-only order query. <see cref="OrderLookupKind.ConfirmedAbsent"/> is used only when the
+/// exchange states that the client id was never accepted. A null body, timeout, 429, or 5xx is
+/// <see cref="OrderLookupKind.Unavailable"/> and must not release an entry lock.
+/// </summary>
+public enum OrderLookupKind
+{
+    Found,
+    ConfirmedAbsent,
+    Unavailable
+}
+
+public sealed record OrderLookup(OrderLookupKind Kind, ExchangeOrder? Order, string Reason)
+{
+    public static OrderLookup Found(ExchangeOrder order) =>
+        new(OrderLookupKind.Found, order, "Exchange returned the order.");
+
+    public static OrderLookup Absent(string reason) =>
+        new(OrderLookupKind.ConfirmedAbsent, null, reason);
+
+    public static OrderLookup Unavailable(string reason) =>
+        new(OrderLookupKind.Unavailable, null, reason);
+}
 
 public sealed record PlaceOrderRequest(
     string ClientOrderId,
@@ -91,7 +118,7 @@ public interface IExchangeConnector
     Task<IReadOnlyList<ExchangeBalance>> GetBalancesAsync(CancellationToken cancellationToken = default);
     Task<SymbolFilters> GetSymbolInformationAsync(string symbol, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<ExchangeOrder>> GetOpenOrdersAsync(string? symbol, CancellationToken cancellationToken = default);
-    Task<ExchangeOrder?> GetOrderAsync(string? clientOrderId, string? exchangeOrderId, string symbol, CancellationToken cancellationToken = default);
+    Task<OrderLookup> GetOrderAsync(string? clientOrderId, string? exchangeOrderId, string symbol, CancellationToken cancellationToken = default);
     Task PrepareSymbolRiskAsync(string symbol, MarginMode marginMode, int leverage, CancellationToken cancellationToken = default);
     /// <summary>Highest Isolated leverage the exchange allows. Zero means the cap could not be read.</summary>
     Task<int> GetMaxIsolatedLeverageAsync(string symbol, CancellationToken cancellationToken = default);

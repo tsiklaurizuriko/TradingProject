@@ -46,8 +46,8 @@ public sealed class PaperExchangeConnector : IExchangeConnector
     public Task<IReadOnlyList<ExchangeOrder>> GetOpenOrdersAsync(string? symbol, CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<ExchangeOrder>>([]);
 
-    public Task<ExchangeOrder?> GetOrderAsync(string? clientOrderId, string? exchangeOrderId, string symbol, CancellationToken cancellationToken = default) =>
-        Task.FromResult<ExchangeOrder?>(null);
+    public Task<OrderLookup> GetOrderAsync(string? clientOrderId, string? exchangeOrderId, string symbol, CancellationToken cancellationToken = default) =>
+        Task.FromResult(OrderLookup.Absent("Paper simulator has no exchange order for this client id."));
 
     public Task PrepareSymbolRiskAsync(string symbol, MarginMode marginMode, int leverage, CancellationToken cancellationToken = default)
     {
