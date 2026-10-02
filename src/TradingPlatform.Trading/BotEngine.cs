@@ -43,6 +43,7 @@ public sealed class BotEngine : IBotEngine
     private readonly LiveIsolatedReconciler _reconcile;
     private readonly ILogger<BotEngine> _logger;
     private readonly IExchangeAccountService? _accounts;
+    private readonly Dictionary<Guid, (decimal Stop, decimal Take, DateTimeOffset At)> _ratchetBackoff = new();
 
     public BotEngine(
         ITradingStore store,
@@ -92,6 +93,8 @@ public sealed class BotEngine : IBotEngine
             await RefreshLiveIsolatedBookAsync(cancellationToken);
             await _reconcile.ReconcileAsync(cancellationToken);
             var bots = await _store.GetRunningBotsAsync(cancellationToken);
+            await HandOffStoppedSnapshotsAsync(cancellationToken);
+            await WatchUnattendedLivePositionsAsync(bots, cancellationToken);
             var cycleKlines = new Dictionary<string, IReadOnlyList<MarketCandle>>(StringComparer.OrdinalIgnoreCase);
             var cyclePrices = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
             var cycleFilters = await LoadCycleFiltersAsync(cancellationToken);
@@ -583,6 +586,11 @@ public sealed class BotEngine : IBotEngine
             position = overlayProtect.Position;
         }
 
+        if (position is not null)
+        {
+            await RatchetOpenProtectionAsync(bot, running, book, position, lastPrice, symbol, cancellationToken);
+        }
+
         if (position is null && StrategySlotsFull(bot, running, book, liveBook, liveAuth, now))
         {
             var cap = bot.RiskProfile?.MaxSimultaneousPositions ?? 0;
@@ -592,11 +600,24 @@ public sealed class BotEngine : IBotEngine
             return;
         }
 
-        if (bot.Mode != TradingMode.Live &&
-            position is not null &&
-            !StrategyTemplateKeys.IsImported(TemplateKey(bot)) &&
-            HitsProtectiveExit(position, lastPrice, out var protectiveReason))
+        var stopBefore = position?.StopLossPrice ?? 0m;
+        var stopPercentBefore = position?.StopLossPercent ?? 0m;
+        var stopClamped = ClampStopToProfile(position, bot, lastPrice, symbol);
+        if (position is not null &&
+            HitsProtectiveExit(position, lastPrice, out var protectiveReason) &&
+            (bot.Mode == TradingMode.Live || !StrategyTemplateKeys.IsImported(TemplateKey(bot))))
         {
+            if (bot.Mode == TradingMode.Live)
+            {
+                if (IsolatedOccupancy.IsOwner(bot, running, book))
+                {
+                    await ClosePositionAsync(position.Id, cancellationToken);
+                    bot.LastError = $"Live {protectiveReason} filled from the mark.";
+                }
+
+                return;
+            }
+
             var usdtProtect = await _store.GetOrCreateBalanceAsync(
                 bot.ExchangeAccountId,
                 null,
@@ -629,6 +650,34 @@ public sealed class BotEngine : IBotEngine
                 flatten: true);
             bot.LastError = $"Paper {protectiveReason} filled.";
             return;
+        }
+
+        if (stopClamped && bot.Mode == TradingMode.Live && position is not null && IsolatedOccupancy.IsOwner(bot, running, book))
+        {
+            try
+            {
+                var stopConnector = _connectors.Create(bot.Mode, bot.ExchangeAccountId);
+                var placed = await AttachLiveProtectiveStopsAsync(
+                    bot,
+                    stopConnector,
+                    position.StopLossPrice,
+                    position.TakeProfitPrice,
+                    position.Side,
+                    cancellationToken,
+                    replaceStop: true,
+                    replaceTake: false);
+                if (!placed.StopPlaced)
+                {
+                    position.StopLossPrice = stopBefore;
+                    position.StopLossPercent = stopPercentBefore;
+                }
+            }
+            catch (Exception ex)
+            {
+                position.StopLossPrice = stopBefore;
+                position.StopLossPercent = stopPercentBefore;
+                _logger.LogWarning(ex, "Could not tighten the live stop for {Symbol}", bot.Symbol);
+            }
         }
 
         if (candles.Count == 0)
@@ -955,6 +1004,15 @@ public sealed class BotEngine : IBotEngine
             return;
         }
 
+        var maxLosses = profile.MaxConsecutiveLosses > 0 ? profile.MaxConsecutiveLosses : 5;
+        var coinCooldown = TimeSpan.FromMinutes(profile.CooldownMinutes > 0 ? profile.CooldownMinutes : 30);
+        var (coinLosses, coinLastLoss) = await _store.GetSymbolLossStreakAsync(bot.Mode, bot.Symbol, cancellationToken);
+        if (coinLosses >= maxLosses && coinLastLoss is { } coinLossAt && now < coinLossAt + coinCooldown)
+        {
+            bot.LastError = $"Isolated {bot.Symbol} lost {coinLosses} times in a row. New entries wait until the cooldown ends.";
+            return;
+        }
+
         if (!claimed.Add(claimKey))
         {
             bot.LastError = nearMiss
@@ -987,7 +1045,18 @@ public sealed class BotEngine : IBotEngine
                 return;
             }
 
+            var bookStop = profile.StopLossPercent;
             profile = FlatRangeRisk(profile, stopPct, takePct);
+            var hints = snapshot.Sizing ?? new RiskSizingHints();
+            if (bookStop > stopPct)
+            {
+                hints = hints with { SizingStopLossPercent = bookStop };
+            }
+
+            snapshot = snapshot with
+            {
+                Sizing = hints with { MaxMarginUsdt = FlatRangeStrategy.MaxEntryMarginUsdt }
+            };
         }
         else if (StrategyTemplateKeys.IsFlatRange(definition.Template))
         {
@@ -1209,6 +1278,18 @@ public sealed class BotEngine : IBotEngine
                     tpPercent,
                     market?.TickSize ?? 0m,
                     openedSide);
+                tpPrice = ProtectiveRatchet.OpeningTake(
+                    TemplateKey(bot),
+                    openedSide,
+                    fillPrice,
+                    slPrice,
+                    tpPrice,
+                    fillPrice,
+                    market?.TickSize ?? 0m);
+                if (fillPrice > 0m && tpPrice > 0m)
+                {
+                    tpPercent = Math.Abs(tpPrice - fillPrice) / fillPrice * 100m;
+                }
             }
             catch (Exception ex)
             {
@@ -1235,7 +1316,9 @@ public sealed class BotEngine : IBotEngine
                 Fees = fee,
                 StopLossPercent = slPercent,
                 TakeProfitPercent = tpPercent,
-                InitialRiskUsdt = plan?.RiskAmount ?? quantity * fillPrice * (slPercent / 100m),
+                InitialRiskUsdt = plan is { ActualRiskAmount: > 0m }
+                    ? plan.ActualRiskAmount
+                    : quantity * fillPrice * (slPercent / 100m),
                 MarginUsdt = openedMargin,
                 AvailableBalanceAtEntry = plan?.AvailableBalance ?? 0m,
                 RiskPerTradePercent = plan?.RiskPerTradePercent ?? 0m,
@@ -1402,6 +1485,32 @@ public sealed class BotEngine : IBotEngine
             openTrade = null;
         }
 
+        var sibling = (await _store.FindClosedTradesAroundAsync(
+                position.Symbol,
+                position.OpenedAt,
+                _clock.UtcNow,
+                cancellationToken))
+            .FirstOrDefault(item =>
+                (openTrade is null || item.Id != openTrade.Id)
+                && ClosedTripMatch.Same(
+                    item.Symbol,
+                    item.Quantity,
+                    item.OpenedAt,
+                    item.ClosedAt,
+                    position.Symbol,
+                    quantity,
+                    position.OpenedAt,
+                    _clock.UtcNow));
+        if (sibling is not null)
+        {
+            if (openTrade is not null)
+            {
+                _store.RemoveTrade(openTrade);
+            }
+
+            return;
+        }
+
         if (openTrade is not null)
         {
             openTrade.ExitOrderId = order.Id;
@@ -1533,32 +1642,7 @@ public sealed class BotEngine : IBotEngine
         var overlaySide = overlay.Side is "Short" or "Sell" ? PositionSide.Short : PositionSide.Long;
         if (position is null)
         {
-            position = new Position
-            {
-                BotId = bot.Id,
-                Symbol = overlay.Symbol,
-                Side = overlaySide,
-                Quantity = overlay.Quantity,
-                AverageEntryPrice = overlay.EntryPrice,
-                CurrentPrice = overlay.MarkPrice > 0m ? overlay.MarkPrice : lastPrice,
-                UnrealizedPnL = overlay.UnrealizedPnL,
-                Fees = 0m,
-                OpenedAt = _clock.UtcNow
-            };
-            position.Events.Add(new PositionEvent
-            {
-                EventType = "OPEN",
-                Quantity = overlay.Quantity,
-                Price = overlay.EntryPrice,
-                CorrelationId = _correlation.GetOrCreate()
-            });
-            await _store.AddPositionAsync(position, cancellationToken);
-        }
-
-        if (hasStop && hasTake)
-        {
-            bot.LastError = $"Live Isolated overlay adopted for {bot.Symbol}. SL/TP already working on Binance.";
-            return new OverlayProtectResult(position, false);
+            return new OverlayProtectResult(null, false);
         }
 
         var profile = bot.RiskProfile ?? await _store.GetConservativeRiskAsync(cancellationToken);
@@ -1572,6 +1656,20 @@ public sealed class BotEngine : IBotEngine
                 profile.TakeProfitPercent,
                 market?.TickSize ?? 0m,
                 overlaySide);
+            var tick = market?.TickSize ?? 0m;
+            var entry = position.AverageEntryPrice > 0m ? position.AverageEntryPrice : overlay.EntryPrice;
+            var keptStop = ProtectiveRatchet.KeepTighterStop(overlaySide, lastPrice, slPrice, position.StopLossPrice, tick);
+            if (keptStop > 0m)
+            {
+                slPrice = keptStop;
+            }
+
+            tpPrice = ProtectiveRatchet.OpeningTake(TemplateKey(bot), overlaySide, entry, slPrice, tpPrice, lastPrice, tick);
+            var keptTake = ProtectiveRatchet.KeepFurtherTake(overlaySide, lastPrice, tpPrice, position.TakeProfitPrice, tick);
+            if (keptTake > 0m)
+            {
+                tpPrice = keptTake;
+            }
         }
         catch (Exception ex)
         {
@@ -1579,10 +1677,19 @@ public sealed class BotEngine : IBotEngine
             return new OverlayProtectResult(position, false);
         }
 
-        position.StopLossPercent = profile.StopLossPercent;
-        position.TakeProfitPercent = profile.TakeProfitPercent;
+        var entryPrice = position.AverageEntryPrice > 0m ? position.AverageEntryPrice : overlay.EntryPrice;
         position.StopLossPrice = slPrice;
         position.TakeProfitPrice = tpPrice;
+        if (entryPrice > 0m)
+        {
+            position.StopLossPercent = Math.Abs(slPrice - entryPrice) / entryPrice * 100m;
+            position.TakeProfitPercent = Math.Abs(tpPrice - entryPrice) / entryPrice * 100m;
+        }
+        else
+        {
+            position.StopLossPercent = profile.StopLossPercent;
+            position.TakeProfitPercent = profile.TakeProfitPercent;
+        }
         var connector = _connectors.Create(bot.Mode, bot.ExchangeAccountId);
         var correlationId = _correlation.GetOrCreate();
         var stops = await AttachLiveProtectiveStopsAsync(
@@ -1630,7 +1737,8 @@ public sealed class BotEngine : IBotEngine
         PositionSide side,
         CancellationToken cancellationToken,
         bool replaceStop = true,
-        bool replaceTake = true)
+        bool replaceTake = true,
+        bool acceptExisting = true)
     {
         if (!replaceStop && !replaceTake)
         {
@@ -1658,7 +1766,8 @@ public sealed class BotEngine : IBotEngine
             LiveProtectivePrices.TakeClientOrderId(bot.Id),
             cancellationToken,
             placeStop: replaceStop && stop > 0m,
-            placeTake: replaceTake && take > 0m);
+            placeTake: replaceTake && take > 0m,
+            acceptExisting: acceptExisting);
         var stopPlaced = !replaceStop || (stop > 0m && placed.StopPlaced);
         var takePlaced = !replaceTake || (take > 0m && placed.TakePlaced);
         return new ProtectiveStopsResult(
@@ -1829,6 +1938,465 @@ public sealed class BotEngine : IBotEngine
     {
         var basis = Math.Max(Math.Abs(left), Math.Abs(right));
         return basis <= 0m ? 0m : Math.Abs(left - right) / basis;
+    }
+
+    private async Task RatchetOpenProtectionAsync(
+        Bot bot,
+        IReadOnlyList<Bot> running,
+        IReadOnlyList<Position> book,
+        Position position,
+        decimal mark,
+        Symbol? market,
+        CancellationToken cancellationToken)
+    {
+        if (position.Quantity <= 0m || position.AverageEntryPrice <= 0m || mark <= 0m)
+        {
+            return;
+        }
+
+        if (bot.Mode == TradingMode.Live)
+        {
+            if (!IsolatedOccupancy.HasFreshFuturesBook(_live.Current)
+                || !IsolatedOccupancy.IsOwner(bot, running, book))
+            {
+                return;
+            }
+        }
+
+        var tick = market?.TickSize ?? 0m;
+        var stop = position.StopLossPrice;
+        var take = position.TakeProfitPrice;
+        if (bot.Mode == TradingMode.Live)
+        {
+            if (!TryWorkingTrigger(bot.Symbol, LiveProtectivePrices.StopClientOrderId(bot.Id), stop: true, position.Side, mark, tick, out var liveStop))
+            {
+                return;
+            }
+
+            var keptStop = ProtectiveRatchet.KeepTighterStop(position.Side, mark, stop, liveStop, tick);
+            if (keptStop <= 0m)
+            {
+                return;
+            }
+
+            stop = keptStop;
+            if (TryWorkingTrigger(bot.Symbol, LiveProtectivePrices.TakeClientOrderId(bot.Id), stop: false, position.Side, mark, tick, out var liveTake))
+            {
+                var keptTake = ProtectiveRatchet.KeepFurtherTake(position.Side, mark, take, liveTake, tick);
+                if (keptTake > 0m)
+                {
+                    take = keptTake;
+                }
+            }
+        }
+
+        var decision = ProtectiveRatchet.TryAdvance(
+            TemplateKey(bot),
+            position.Side,
+            position.AverageEntryPrice,
+            stop,
+            take,
+            mark,
+            tick);
+        if (decision is null)
+        {
+            return;
+        }
+
+        if (_ratchetBackoff.TryGetValue(bot.Id, out var held) && _clock.UtcNow - held.At < TimeSpan.FromMinutes(10))
+        {
+            if (decision.Value.StopMoved && decision.Value.StopLoss == held.Stop)
+            {
+                decision = decision.Value with { StopMoved = false, StopLoss = stop };
+            }
+
+            if (decision.Value.TakeMoved && decision.Value.TakeProfit == held.Take)
+            {
+                decision = decision.Value with { TakeMoved = false, TakeProfit = take };
+            }
+        }
+
+        if (decision is not { } advanced || (!advanced.StopMoved && !advanced.TakeMoved))
+        {
+            return;
+        }
+        if (bot.Mode != TradingMode.Live)
+        {
+            RememberProtection(
+                position,
+                position.AverageEntryPrice,
+                advanced.StopMoved ? advanced.StopLoss : null,
+                advanced.TakeMoved ? advanced.TakeProfit : null);
+            return;
+        }
+
+        var connector = _connectors.Create(bot.Mode, bot.ExchangeAccountId);
+        var stopOk = !advanced.StopMoved;
+        var takeOk = !advanced.TakeMoved;
+        if (advanced.TakeMoved)
+        {
+            var placed = await AttachLiveProtectiveStopsAsync(
+                bot,
+                connector,
+                stop,
+                advanced.TakeProfit,
+                position.Side,
+                cancellationToken,
+                replaceStop: false,
+                replaceTake: true,
+                acceptExisting: false);
+            takeOk = placed.TakePlaced;
+            if (!takeOk)
+            {
+                await AttachLiveProtectiveStopsAsync(
+                    bot,
+                    connector,
+                    stop,
+                    take,
+                    position.Side,
+                    cancellationToken,
+                    replaceStop: false,
+                    replaceTake: true);
+                _logger.LogWarning(
+                    "Take-profit ratchet failed for {Symbol} bot {BotId}. Previous take {Take} was restored. {Error}",
+                    bot.Symbol,
+                    bot.Id,
+                    take,
+                    placed.TakeError);
+            }
+        }
+
+        if (advanced.StopMoved)
+        {
+            var placed = await AttachLiveProtectiveStopsAsync(
+                bot,
+                connector,
+                advanced.StopLoss,
+                advanced.TakeMoved && takeOk ? advanced.TakeProfit : take,
+                position.Side,
+                cancellationToken,
+                replaceStop: true,
+                replaceTake: false,
+                acceptExisting: false);
+            stopOk = placed.StopPlaced;
+            if (!stopOk)
+            {
+                var restored = await AttachLiveProtectiveStopsAsync(
+                    bot,
+                    connector,
+                    stop,
+                    advanced.TakeMoved && takeOk ? advanced.TakeProfit : take,
+                    position.Side,
+                    cancellationToken,
+                    replaceStop: true,
+                    replaceTake: false);
+                _logger.LogCritical(
+                    restored.StopPlaced
+                        ? "Stop ratchet failed for {Symbol} bot {BotId}. Previous stop {Stop} was restored. {Error}"
+                        : "Stop ratchet failed for {Symbol} bot {BotId} and the previous stop {Stop} could not be restored. {Error}",
+                    bot.Symbol,
+                    bot.Id,
+                    stop,
+                    placed.StopError);
+            }
+        }
+
+        if (!stopOk || !takeOk)
+        {
+            _ratchetBackoff[bot.Id] = (
+                advanced.StopMoved && !stopOk ? advanced.StopLoss : 0m,
+                advanced.TakeMoved && !takeOk ? advanced.TakeProfit : 0m,
+                _clock.UtcNow);
+        }
+
+        RememberProtection(
+            position,
+            position.AverageEntryPrice,
+            stopOk && advanced.StopMoved ? advanced.StopLoss : null,
+            takeOk && advanced.TakeMoved ? advanced.TakeProfit : null);
+    }
+
+    private bool TryWorkingTrigger(
+        string symbol,
+        string clientOrderId,
+        bool stop,
+        PositionSide side,
+        decimal mark,
+        decimal tick,
+        out decimal price)
+    {
+        price = 0m;
+        var found = false;
+        foreach (var row in _live.Current.OpenOrders)
+        {
+            if (!string.Equals(row.Symbol, symbol, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(row.ClientOrderId, clientOrderId, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var match = stop
+                ? LiveProtectivePrices.IsStopOrder(row.Type)
+                : LiveProtectivePrices.IsTakeOrder(row.Type);
+            if (!match)
+            {
+                continue;
+            }
+
+            if (row.Price is not > 0m)
+            {
+                price = 0m;
+                return false;
+            }
+
+            found = true;
+            price = price == 0m
+                ? row.Price.Value
+                : stop
+                    ? ProtectiveRatchet.KeepTighterStop(side, mark, price, row.Price.Value, tick)
+                    : ProtectiveRatchet.KeepFurtherTake(side, mark, price, row.Price.Value, tick);
+            if (price <= 0m)
+            {
+                return false;
+            }
+        }
+
+        return found;
+    }
+
+    private static void RememberProtection(Position position, decimal entry, decimal? stop, decimal? take)
+    {
+        if (entry <= 0m)
+        {
+            return;
+        }
+
+        if (stop is > 0m)
+        {
+            position.StopLossPrice = stop.Value;
+            position.StopLossPercent = Math.Abs(stop.Value - entry) / entry * 100m;
+        }
+
+        if (take is > 0m)
+        {
+            position.TakeProfitPrice = take.Value;
+            position.TakeProfitPercent = Math.Abs(take.Value - entry) / entry * 100m;
+        }
+    }
+
+    private async Task HandOffStoppedSnapshotsAsync(CancellationToken cancellationToken)
+    {
+        var book = await _store.GetOpenPositionsForModeAsync(TradingMode.Live, cancellationToken);
+        var known = await _store.ListBotsAsync(cancellationToken);
+        var now = _clock.UtcNow;
+        foreach (var group in book.Where(row => row.Quantity > 0m).GroupBy(row => IsolatedOccupancy.CoinKey(row.Symbol)))
+        {
+            var rows = group.ToList();
+            var owner = IsolatedOccupancy.IsolatedOwner(rows);
+            var droppedOrderIds = new List<string>();
+            foreach (var extra in rows.Where(row => row.Id != owner.Id))
+            {
+                extra.Quantity = 0m;
+                extra.UnrealizedPnL = 0m;
+                extra.ClosedAt = now;
+                if (extra.BotId == owner.BotId)
+                {
+                    continue;
+                }
+
+                var extraBot = extra.Bot ?? await _store.GetBotAsync(extra.BotId, cancellationToken);
+                if (extraBot is null || extraBot.Mode != TradingMode.Live)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    await CancelLiveProtectiveOrdersAsync(extraBot, cancellationToken);
+                    droppedOrderIds.Add(LiveProtectivePrices.StopClientOrderId(extraBot.Id));
+                    droppedOrderIds.Add(LiveProtectivePrices.TakeClientOrderId(extraBot.Id));
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Could not cancel leftover protection for {Symbol} bot {BotId}", extra.Symbol, extra.BotId);
+                }
+            }
+
+            if (droppedOrderIds.Count > 0)
+            {
+                var live = _live.Current;
+                live.OpenOrders = live.OpenOrders
+                    .Where(order => order.ClientOrderId is null || !droppedOrderIds.Contains(order.ClientOrderId))
+                    .ToList();
+            }
+
+            var ownerBot = owner.Bot ?? known.FirstOrDefault(bot => bot.Id == owner.BotId)
+                ?? await _store.GetBotAsync(owner.BotId, cancellationToken);
+            if (ownerBot?.StrategyVersion is null || IsolatedOccupancy.BotExistedAtOpen(ownerBot.CreatedAt, owner.OpenedAt))
+            {
+                continue;
+            }
+
+            var prior = IsolatedOccupancy.PriorOwner(known, owner.Symbol, owner.OpenedAt, ownerBot.Id);
+            if (prior?.StrategyVersion is null || prior.Mode != TradingMode.Live)
+            {
+                continue;
+            }
+
+            var openTrade = await _store.GetOpenTradeAsync(owner.BotId, cancellationToken);
+            if (openTrade is not null
+                && string.Equals(openTrade.Symbol, owner.Symbol, StringComparison.OrdinalIgnoreCase))
+            {
+                openTrade.BotId = prior.Id;
+                openTrade.StrategyId = prior.StrategyVersion.StrategyId;
+                openTrade.StrategyVersionId = prior.StrategyVersionId;
+            }
+
+            _logger.LogInformation(
+                "Isolated {Symbol} opened {OpenedAt:o} stays with {Strategy}, not {Adopter} which was created later.",
+                owner.Symbol,
+                owner.OpenedAt,
+                prior.StrategyVersion.Strategy?.Name ?? prior.Name,
+                ownerBot.StrategyVersion.Strategy?.Name ?? ownerBot.Name);
+            owner.BotId = prior.Id;
+            owner.Bot = prior;
+        }
+    }
+
+    private async Task WatchUnattendedLivePositionsAsync(IReadOnlyList<Bot> running, CancellationToken cancellationToken)
+    {
+        var book = await _store.GetOpenPositionsForModeAsync(TradingMode.Live, cancellationToken);
+        var runningIds = running.Select(bot => bot.Id).ToHashSet();
+        foreach (var position in book.Where(row => row.Quantity > 0m && !runningIds.Contains(row.BotId)))
+        {
+            var bot = position.Bot ?? await _store.GetBotAsync(position.BotId, cancellationToken);
+            if (bot is null)
+            {
+                continue;
+            }
+
+            var mark = position.CurrentPrice;
+            try
+            {
+                var price = await _market.GetLastPriceAsync(position.Symbol, cancellationToken);
+                if (price > 0m)
+                {
+                    mark = price;
+                    position.CurrentPrice = price;
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Mark skipped for unattended {Symbol}", position.Symbol);
+            }
+
+            var market = await ResolveSymbolFiltersAsync(position.Symbol, null, cancellationToken);
+            ClampStopToProfile(position, bot, mark, market);
+            if (HitsProtectiveExit(position, mark, out var reason))
+            {
+                try
+                {
+                    await ClosePositionAsync(position.Id, cancellationToken);
+                    bot.LastError = $"Unattended {position.Symbol} {reason} filled from the mark.";
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Could not flatten unattended {Symbol}", position.Symbol);
+                }
+
+                continue;
+            }
+
+            if (position.StopLossPrice <= 0m || !IsolatedOccupancy.HasFreshFuturesBook(_live.Current))
+            {
+                continue;
+            }
+
+            if (HasWorkingProtection(_live.Current.OpenOrders, position.Symbol, stop: true))
+            {
+                continue;
+            }
+
+            try
+            {
+                var connector = _connectors.Create(TradingMode.Live, bot.ExchangeAccountId);
+                await AttachLiveProtectiveStopsAsync(
+                    bot,
+                    connector,
+                    position.StopLossPrice,
+                    position.TakeProfitPrice,
+                    position.Side,
+                    cancellationToken,
+                    replaceStop: true,
+                    replaceTake: position.TakeProfitPrice > 0m);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not restore protection for unattended {Symbol}", position.Symbol);
+            }
+        }
+    }
+
+    private bool ClampStopToProfile(Position? position, Bot bot, decimal mark, Symbol? market)
+    {
+        if (position is null
+            || position.AverageEntryPrice <= 0m
+            || bot.RiskProfile is not { StopLossPercent: > 0m } profile)
+        {
+            return false;
+        }
+
+        if (position.StopLossPrice > 0m
+            && position.StopLossPercent > 0m
+            && position.StopLossPercent <= profile.StopLossPercent + 0.05m)
+        {
+            return false;
+        }
+
+        var takePercent = position.TakeProfitPercent > 0m ? position.TakeProfitPercent : profile.TakeProfitPercent;
+        if (takePercent <= 0m)
+        {
+            return false;
+        }
+
+        try
+        {
+            var (stop, _) = LiveProtectivePrices.FromEntry(
+                position.AverageEntryPrice,
+                profile.StopLossPercent,
+                takePercent,
+                market?.TickSize ?? 0m,
+                position.Side);
+            var kept = ProtectiveRatchet.KeepTighterStop(
+                position.Side,
+                mark > 0m ? mark : position.CurrentPrice,
+                stop,
+                position.StopLossPrice,
+                market?.TickSize ?? 0m);
+            // A profile stop that is already through the mark must not be written.
+            // Writing it makes the next check market-flatten a position the old stop still covers.
+            if (kept <= 0m || kept == position.StopLossPrice)
+            {
+                return false;
+            }
+
+            position.StopLossPrice = kept;
+            position.StopLossPercent = Math.Abs(kept - position.AverageEntryPrice) / position.AverageEntryPrice * 100m;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Stop clamp skipped for {Symbol}", position.Symbol);
+            return false;
+        }
     }
 
     private static bool HitsProtectiveExit(Position position, decimal lastPrice, out string reason)

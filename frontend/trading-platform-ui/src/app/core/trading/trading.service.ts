@@ -27,6 +27,7 @@ import {
   StrategyPreviewDto,
   SystemHealthDto,
   TradeDto,
+  uniqueClosedTrips,
   PerformanceDto,
   ScalpingResearchSummaryDto,
   NewsDeskDto,
@@ -127,13 +128,14 @@ export class TradingService {
         notionalUsdt: filled.quantity * entry,
       });
     }
-    const running = new Set(this.runningWorkspaceBots().map((bot) => bot.id));
     for (const [key, row] of byCoin) {
       if (ids.has(row.botId)) {
         continue;
       }
-      const owned = books.filter((book) => book.symbol.trim().toUpperCase() === key);
-      const owner = owned.find((book) => running.has(book.botId)) ?? owned[0];
+      const owned = books
+        .filter((book) => book.symbol.trim().toUpperCase() === key)
+        .sort((a, b) => Date.parse(a.openedAt) - Date.parse(b.openedAt));
+      const owner = owned[0];
       if (!owner) {
         continue;
       }
@@ -161,14 +163,14 @@ export class TradingService {
         ? snap.recentTrades.filter((row) => !this.trades().some((existing) => existing.id === row.id))
         : [];
     const merged = extra.length ? [...this.trades(), ...extra] : this.trades();
-    return merged
-      .filter((row) => {
+    return uniqueClosedTrips(
+      merged.filter((row) => {
         if (row.mode) {
           return (row.mode === 'Live') === live;
         }
         return ids.has(row.botId);
-      })
-      .sort((a, b) => byTimeDesc(a.closedAt ?? a.openedAt, b.closedAt ?? b.openedAt));
+      }),
+    ).sort((a, b) => byTimeDesc(a.closedAt ?? a.openedAt, b.closedAt ?? b.openedAt));
   });
   readonly workspaceOrders = computed(() => {
     const ids = this.workspaceBotIds();

@@ -88,6 +88,23 @@ public sealed class AdvancedStrategyTests
     }
 
     [Fact]
+    public void Flow_zone_holds_a_scratch_and_exits_once_the_move_covers_the_fee()
+    {
+        var start = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var candles = new List<MarketCandle>();
+        for (var i = 0; i < 22; i++)
+        {
+            candles.Add(FlowBar(start.AddHours(i), 100m, 100m, buy: 4m, volume: 10m));
+        }
+
+        candles.Add(FlowBar(start.AddHours(22), 100m, 160m, buy: 8m, volume: 10m));
+        candles.Add(FlowBar(start.AddHours(23), 100m, 110m, buy: 4m, volume: 10m));
+
+        EvalFlowOpen(candles, PositionSide.Long, 110m).Signal.Should().Be(SignalType.Hold);
+        EvalFlowOpen(candles, PositionSide.Long, 100m).Signal.Should().Be(SignalType.Exit);
+    }
+
+    [Fact]
     public void Btc_daily_max_buys_a_10_day_high_and_exits_when_the_high_breaks()
     {
         var start = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
@@ -435,6 +452,46 @@ public sealed class AdvancedStrategyTests
         EvalSqueeze(moved, 100m, 120m, -0.0012m).Signal.Should().Be(SignalType.NoAction);
     }
 
+    [Fact]
+    public void Squeeze_watch_exits_when_funding_fades_or_price_moves_two_percent_against()
+    {
+        var candles = Enumerable.Range(0, 24)
+            .Select(i => QuietBar(DateTimeOffset.UnixEpoch.AddHours(i), 100m))
+            .ToList();
+
+        EvalSqueezeOpen(candles, PositionSide.Long, 100m, -0.0012m).Signal.Should().Be(SignalType.Hold);
+        EvalSqueezeOpen(candles, PositionSide.Long, 100m, 0m).Signal.Should().Be(SignalType.Exit);
+        EvalSqueezeOpen(candles, PositionSide.Short, 100m, 0.0012m).Signal.Should().Be(SignalType.Hold);
+        EvalSqueezeOpen(candles, PositionSide.Short, 100m, 0m).Signal.Should().Be(SignalType.Exit);
+
+        var dipped = candles.ToList();
+        dipped[^1] = QuietBar(dipped[^1].OpenTime, 98m);
+        EvalSqueezeOpen(dipped, PositionSide.Long, 100m, -0.0012m).Signal.Should().Be(SignalType.Exit);
+    }
+
+    private static StrategySignalDetail EvalSqueezeOpen(
+        IReadOnlyList<MarketCandle> candles,
+        PositionSide side,
+        decimal entry,
+        decimal? funding)
+    {
+        var parsed = StrategyTemplates.Validate(StrategyTemplates.DefaultsFor(StrategyTemplateKeys.SqueezeWatch, false));
+        return AdvancedStrategyEvaluator.Evaluate(
+            parsed,
+            candles,
+            candles.Count - 1,
+            new StrategyContext
+            {
+                ClosedCandles = candles,
+                CurrentPrice = candles[^1].Close,
+                HasOpenPosition = true,
+                PositionSide = side,
+                AverageEntryPrice = entry,
+                FundingRate = funding is { } rate ? [rate] : null
+            },
+            new CausalIndicatorCache(candles));
+    }
+
     private static StrategySignalDetail EvalSqueeze(
         IReadOnlyList<MarketCandle> candles,
         decimal openInterestThen,
@@ -469,6 +526,25 @@ public sealed class AdvancedStrategyTests
             OpenTime = open,
             CloseTime = open.AddHours(1)
         };
+
+    private static StrategySignalDetail EvalFlowOpen(IReadOnlyList<MarketCandle> candles, PositionSide side, decimal entry)
+    {
+        var parsed = StrategyTemplates.Validate(StrategyTemplates.DefaultsFor(StrategyTemplateKeys.FlowZone, false));
+        return AdvancedStrategyEvaluator.Evaluate(
+            parsed,
+            candles,
+            candles.Count - 1,
+            new StrategyContext
+            {
+                ClosedCandles = candles,
+                CurrentPrice = candles[^1].Close,
+                HasOpenPosition = true,
+                PositionSide = side,
+                AverageEntryPrice = entry,
+                OpenInterest = [10m, 12m]
+            },
+            new CausalIndicatorCache(candles));
+    }
 
     private static StrategySignalDetail EvalFlow(IReadOnlyList<MarketCandle> candles, IReadOnlyList<decimal?> openInterest)
     {
@@ -597,6 +673,69 @@ public sealed class AdvancedStrategyTests
             HasOpenPosition = false,
             OpenInterest = oi,
             FundingRate = funding
+        };
+
+    [Fact]
+    public void Impulse_catch_buys_the_first_large_rise_and_exits_the_giveback()
+    {
+        var crossed = Flat(21, 100m);
+        crossed[^1] = MoveBar(20, 100m, 109m, 2m);
+        EvalImpulse(crossed, open: false).Signal.Should().Be(SignalType.Buy);
+
+        var small = Flat(21, 100m);
+        small[^1] = MoveBar(20, 100m, 105m, 2m);
+        EvalImpulse(small, open: false).Signal.Should().Be(SignalType.NoAction);
+
+        var quiet = Flat(21, 100m);
+        quiet[^1] = MoveBar(20, 100m, 109m, 1m);
+        EvalImpulse(quiet, open: false).Signal.Should().Be(SignalType.NoAction);
+
+        var already = Flat(21, 100m);
+        already[^2] = MoveBar(19, 100m, 109m, 2m);
+        already[^1] = MoveBar(20, 109m, 110m, 2m);
+        EvalImpulse(already, open: false).Signal.Should().Be(SignalType.NoAction);
+
+        var holding = Flat(21, 100m);
+        holding[^1] = MoveBar(20, 100m, 99m, 1m);
+        EvalImpulse(holding, open: true).Signal.Should().Be(SignalType.Hold);
+
+        var dump = Flat(21, 100m);
+        dump[^1] = MoveBar(20, 100m, 96m, 1m);
+        EvalImpulse(dump, open: true).Signal.Should().Be(SignalType.Exit);
+    }
+
+    private static StrategySignalDetail EvalImpulse(IReadOnlyList<MarketCandle> candles, bool open)
+    {
+        var parsed = StrategyTemplates.Validate(StrategyTemplates.DefaultsFor(StrategyTemplateKeys.ImpulseCatch, false));
+        return AdvancedStrategyEvaluator.Evaluate(
+            parsed,
+            candles,
+            candles.Count - 1,
+            new StrategyContext
+            {
+                ClosedCandles = candles,
+                CurrentPrice = candles[^1].Close,
+                HasOpenPosition = open,
+                PositionSide = PositionSide.Long
+            },
+            new CausalIndicatorCache(candles));
+    }
+
+    private static List<MarketCandle> Flat(int count, decimal price) =>
+        Enumerable.Range(0, count).Select(i => MoveBar(i, price, price, 1m)).ToList();
+
+    private static MarketCandle MoveBar(int i, decimal open, decimal close, decimal volume) =>
+        new()
+        {
+            Open = open,
+            High = Math.Max(open, close),
+            Low = Math.Min(open, close),
+            Close = close,
+            Volume = volume,
+            IsClosed = true,
+            OpenTime = DateTimeOffset.UnixEpoch.AddMinutes(i * 15),
+            CloseTime = DateTimeOffset.UnixEpoch.AddMinutes((i + 1) * 15),
+            ExchangeTimestamp = DateTimeOffset.UnixEpoch.AddMinutes((i + 1) * 15)
         };
 
     private static List<MarketCandle> Range(int count, decimal price) =>

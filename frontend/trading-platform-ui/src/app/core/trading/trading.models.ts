@@ -287,6 +287,7 @@ export interface BotDto {
   startedAt: string | null;
   strategyId?: string;
   riskProfileId?: string;
+  createdAt?: string;
 }
 
 export interface CreateBotsResult {
@@ -393,6 +394,60 @@ export function hasBotId(id: string | null | undefined): boolean {
   return !!id && id !== '00000000-0000-0000-0000-000000000000';
 }
 
+export function uniqueClosedTrips(rows: TradeDto[]): TradeDto[] {
+  const chosen: TradeDto[] = [];
+  for (const row of rows) {
+    if (!row.closedAt) {
+      chosen.push(row);
+      continue;
+    }
+    const index = chosen.findIndex((existing) => !!existing.closedAt && sameClosedTrip(existing, row));
+    if (index < 0) {
+      chosen.push(row);
+      continue;
+    }
+    if ((row.fees ?? 0) > (chosen[index].fees ?? 0)) {
+      chosen[index] = row;
+    }
+  }
+  return chosen.filter((row) => !coveredQuantityShard(row, chosen));
+}
+
+function sameClosedTrip(left: TradeDto, right: TradeDto): boolean {
+  if (left.symbol.trim().toUpperCase() !== right.symbol.trim().toUpperCase()) {
+    return false;
+  }
+  const scale = Math.max(1e-8, Math.abs(left.quantity) * 0.0001);
+  if (Math.abs(left.quantity - right.quantity) > scale) {
+    return false;
+  }
+  const leftOpen = Date.parse(left.openedAt);
+  const rightOpen = Date.parse(right.openedAt);
+  const leftClose = Date.parse(left.closedAt ?? '');
+  const rightClose = Date.parse(right.closedAt ?? '');
+  if (!Number.isFinite(leftClose) || !Number.isFinite(rightClose) || !Number.isFinite(leftOpen) || !Number.isFinite(rightOpen)) {
+    return false;
+  }
+  if (Math.abs(leftOpen - rightOpen) > 15 * 60 * 1000) {
+    return false;
+  }
+  return leftOpen <= rightClose && rightOpen <= leftClose;
+}
+
+function coveredQuantityShard(row: TradeDto, rows: TradeDto[]): boolean {
+  if (!row.closedAt || Math.abs(row.quantity) > 0) {
+    return false;
+  }
+  const closed = Date.parse(row.closedAt);
+  const coin = row.symbol.trim().toUpperCase();
+  return rows.some((other) => {
+    if (other === row || !other.closedAt || Math.abs(other.quantity) <= 0) {
+      return false;
+    }
+    return other.symbol.trim().toUpperCase() === coin && Math.abs(Date.parse(other.closedAt) - closed) <= 2 * 60 * 1000;
+  });
+}
+
 export function isolatedOwners(rows: PositionDto[]): PositionDto[] {
   const byCoin = new Map<string, PositionDto>();
   for (const row of rows) {
@@ -414,30 +469,40 @@ function isolatedOwnerRank(row: PositionDto): number {
   return empty + (Number.isFinite(opened) ? opened : 0);
 }
 
+function botExistedAtOpen(bot: BotDto, openedMs: number): boolean {
+  const created = Date.parse(bot.createdAt ?? '');
+  if (!Number.isFinite(created) || !Number.isFinite(openedMs)) {
+    return true;
+  }
+  return created <= openedMs + 60_000;
+}
+
 export function resolvePositionStrategy(
   row: PositionDto,
   bots: BotDto[],
 ): { key: string; name: string } {
-  const byId = hasBotId(row.botId)
+  const opened = Date.parse(row.openedAt);
+  const recorded = hasBotId(row.botId)
     ? bots.find((item) => item.id === row.botId)
     : undefined;
-  if (byId) {
-    const name = (byId.strategyName || '').trim() || 'Unassigned strategy';
-    return { key: byId.strategyId || name, name };
-  }
-
   const coin = row.symbol.trim().toUpperCase();
-  const running = bots.filter(
-    (item) => item.status === 'Running' && item.symbol.trim().toUpperCase() === coin,
-  );
-  const strategyKeys = new Set(running.map((item) => item.strategyId || item.strategyName || item.id));
-  if (strategyKeys.size === 1) {
-    const bot = running[0];
-    const name = (bot.strategyName || '').trim() || 'Unassigned strategy';
-    return { key: bot.strategyId || name, name };
+  const chosen = recorded && botExistedAtOpen(recorded, opened)
+    ? recorded
+    : bots
+        .filter((item) => item.symbol.trim().toUpperCase() === coin && botExistedAtOpen(item, opened))
+        .sort((a, b) => {
+          const aRun = a.status === 'Running' ? 0 : 1;
+          const bRun = b.status === 'Running' ? 0 : 1;
+          if (aRun !== bRun) {
+            return aRun - bRun;
+          }
+          return Date.parse(b.createdAt ?? '') - Date.parse(a.createdAt ?? '');
+        })[0];
+  if (!chosen) {
+    return { key: 'unassigned', name: 'Unassigned strategy' };
   }
-
-  return { key: 'unassigned', name: 'Unassigned strategy' };
+  const name = (chosen.strategyName || '').trim() || 'Unassigned strategy';
+  return { key: chosen.strategyId || name, name };
 }
 
 export function groupPositionsByStrategy(

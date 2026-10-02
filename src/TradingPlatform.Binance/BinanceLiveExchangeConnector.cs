@@ -124,7 +124,8 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
         var (key, secret) = await RequireKeys(cancellationToken);
         await _signed.SetFuturesMarginTypeAsync(key, secret, symbol, "ISOLATED", cancellationToken);
         var cap = await GetMaxIsolatedLeverageAsync(symbol, cancellationToken);
-        var used = Math.Clamp(leverage, 1, cap);
+        var used = cap > 0 ? Math.Min(leverage, cap) : leverage;
+        used = Math.Max(1, used);
         await _signed.SetFuturesLeverageAsync(key, secret, symbol, used, cancellationToken);
         JsonElement positions;
         try
@@ -149,7 +150,7 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
         try
         {
             var payload = await _signed.GetFuturesLeverageBracketsAsync(key, secret, symbol, cancellationToken);
-            var max = 1;
+            var max = 0;
             foreach (var row in ReadBrackets(payload, symbol))
             {
                 if (row > max)
@@ -158,11 +159,11 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
                 }
             }
 
-            return Math.Max(1, max);
+            return max;
         }
         catch (DomainException)
         {
-            return 1;
+            return 0;
         }
     }
 
@@ -175,7 +176,8 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
         string takeProfitClientOrderId,
         CancellationToken cancellationToken = default,
         bool placeStop = true,
-        bool placeTake = true)
+        bool placeTake = true,
+        bool acceptExisting = true)
     {
         var (key, secret) = await RequireKeys(cancellationToken);
         string? stopError = null;
@@ -183,13 +185,13 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
         if (placeStop)
         {
             stopError = await TryPlaceCloseStopAsync(
-                key, secret, symbol, closeSide, "STOP_MARKET", stopLossPrice, stopClientOrderId, cancellationToken);
+                key, secret, symbol, closeSide, "STOP_MARKET", stopLossPrice, stopClientOrderId, cancellationToken, acceptExisting);
         }
 
         if (placeTake)
         {
             takeError = await TryPlaceCloseStopAsync(
-                key, secret, symbol, closeSide, "TAKE_PROFIT_MARKET", takeProfitPrice, takeProfitClientOrderId, cancellationToken);
+                key, secret, symbol, closeSide, "TAKE_PROFIT_MARKET", takeProfitPrice, takeProfitClientOrderId, cancellationToken, acceptExisting);
         }
 
         return new ProtectiveStopsResult(!placeStop || stopError is null, !placeTake || takeError is null, stopError, takeError);
@@ -203,7 +205,8 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
         string type,
         decimal stopPrice,
         string clientOrderId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool acceptExisting)
     {
         if (stopPrice <= 0m)
         {
@@ -211,18 +214,23 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
         }
 
         var error = await PlaceOnceAsync(stopPrice, priceProtect: true);
-        if (IsAccepted(error))
+        if (IsAccepted(error, acceptExisting))
         {
             return null;
         }
 
         if (IsImmediateTrigger(error))
         {
+            if (!acceptExisting)
+            {
+                return error;
+            }
+
             var resting = await TryRestingTriggerAsync(key, secret, symbol, closeSide, type, cancellationToken);
             if (resting > 0m && resting != stopPrice)
             {
                 var nudged = await PlaceOnceAsync(resting, priceProtect: false);
-                if (IsAccepted(nudged))
+                if (IsAccepted(nudged, acceptExisting))
                 {
                     return null;
                 }
@@ -234,7 +242,7 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
         }
 
         var fallback = await PlaceOnceAsync(stopPrice, priceProtect: false);
-        return IsAccepted(fallback) ? null : fallback;
+        return IsAccepted(fallback, acceptExisting) ? null : fallback;
 
         async Task<string?> PlaceOnceAsync(decimal trigger, bool priceProtect)
         {
@@ -366,8 +374,8 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
         }
     }
 
-    private static bool IsAccepted(string? error) =>
-        error is null || ProtectiveOrderMath.IsExistingProtectiveOrder(error);
+    private static bool IsAccepted(string? error, bool acceptExisting) =>
+        error is null || (acceptExisting && ProtectiveOrderMath.IsExistingProtectiveOrder(error));
 
     private static bool IsImmediateTrigger(string? message) =>
         message?.Contains("-2021", StringComparison.Ordinal) == true

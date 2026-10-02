@@ -676,7 +676,8 @@ public sealed class BotLifecycleService : IBotLifecycleService
             bot.LastError,
             bot.StartedAt,
             bot.StrategyVersion.StrategyId,
-            bot.RiskProfileId);
+            bot.RiskProfileId,
+            bot.CreatedAt);
 
     private async Task<RiskProfile> ResolveRiskAsync(Guid? riskProfileId, CancellationToken cancellationToken)
     {
@@ -1042,8 +1043,10 @@ public sealed class TradingQueryService : ITradingQueryService
                 continue;
             }
 
-            var bot = liveBots.FirstOrDefault(item => item.Id == row.BotId)
-                ?? UniqueRunningBot(liveBots, row.Symbol);
+            var owned = row.BotId != Guid.Empty
+                ? liveBots.FirstOrDefault(item => item.Id == row.BotId)
+                : null;
+            var bot = owned ?? UniqueRunningBot(liveBots, row.Symbol);
             var book = bot is not null && books.TryGetValue(bot.RiskProfileId, out var matched)
                 ? matched
                 : active;
@@ -1057,7 +1060,7 @@ public sealed class TradingQueryService : ITradingQueryService
                     book.RiskPerTradePercent,
                     book.MaxLeverage,
                     market?.TickSize ?? 0m,
-                    bot?.Id));
+                    owned?.Id));
             }
             catch (Exception)
             {
@@ -1223,15 +1226,6 @@ public sealed class TradingQueryService : ITradingQueryService
             t => t.ClosedAt,
             t => t.CorrelationId,
             t => t.Fees);
-        var strategyTrades = IsolatedOccupancy.UniqueClosedTrips(
-            rawTrades,
-            t => t.Symbol,
-            t => t.Quantity,
-            t => t.OpenedAt,
-            t => t.ClosedAt,
-            t => t.CorrelationId,
-            t => t.Fees,
-            t => t.StrategyName);
         var bots = (await GetBotsAsync(cancellationToken))
             .Where(b => string.Equals(b.Mode, modeLabel, StringComparison.OrdinalIgnoreCase))
             .ToList();
@@ -1249,7 +1243,7 @@ public sealed class TradingQueryService : ITradingQueryService
             ? IsolatedOccupancy.UniqueCoins(positions, live.OpenPositions, liveAuth)
             : positions.Count;
 
-        var strategyResults = BuildStrategyResults(strategyTrades, positions, bots);
+        var strategyResults = BuildStrategyResults(rows, positions, bots);
         return BuildPerformance(
             modeLabel,
             rows,
@@ -1356,9 +1350,16 @@ public sealed class TradingQueryService : ITradingQueryService
             map[name] = slot;
         }
 
-        foreach (var position in positions)
+        var openByCoin = positions
+            .Where(position => position.Quantity > 0m)
+            .GroupBy(position => IsolatedOccupancy.CoinKey(position.Symbol))
+            .Select(group => group
+                .OrderBy(position => nameByBot.ContainsKey(position.BotId) && bots.Any(bot => bot.Id == position.BotId && bot.Status == "Running") ? 0 : 1)
+                .ThenBy(position => position.OpenedAt)
+                .First());
+        foreach (var position in openByCoin)
         {
-            if (position.Quantity <= 0m || !nameByBot.TryGetValue(position.BotId, out var name))
+            if (!nameByBot.TryGetValue(position.BotId, out var name))
             {
                 continue;
             }

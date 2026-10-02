@@ -595,7 +595,8 @@ public sealed class PaperPipelineTests
             string takeProfitClientOrderId,
             CancellationToken cancellationToken = default,
             bool placeStop = true,
-            bool placeTake = true) =>
+            bool placeTake = true,
+            bool acceptExisting = true) =>
             Task.FromResult(new ProtectiveStopsResult(
                 !placeStop || _protectiveStopPlaced,
                 !placeTake || _protectiveStopPlaced,

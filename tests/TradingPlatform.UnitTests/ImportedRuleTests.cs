@@ -111,8 +111,30 @@ public sealed class ImportedRuleTests
 
         var detail = Eval(StrategyTemplateKeys.BinHv45, candles, false, PositionSide.Long);
         detail.Signal.Should().Be(SignalType.Buy);
-        detail.SuggestedStop.Should().Be(85.5m);
+        detail.SuggestedStop.Should().Be(87.75m);
         detail.Status.Should().Be("IMPORTED_RULE");
+    }
+
+    [Fact]
+    public void BinHV45_holds_when_a_wick_tags_the_bracket_and_the_close_recovers()
+    {
+        var candles = Flat(5, 100m);
+        candles[^1] = Bar(4, 100m, high: 103m, low: 96m);
+
+        Evaluate(
+            StrategyTemplates.DefaultsFor(StrategyTemplateKeys.BinHv45, false),
+            candles,
+            true,
+            PositionSide.Long,
+            entry: 100m).Signal.Should().Be(SignalType.Hold);
+
+        candles[^1] = Bar(4, 102.5m, high: 102.5m, low: 100m);
+        Evaluate(
+            StrategyTemplates.DefaultsFor(StrategyTemplateKeys.BinHv45, false),
+            candles,
+            true,
+            PositionSide.Long,
+            entry: 100m).Signal.Should().Be(SignalType.Exit);
     }
 
     [Fact]

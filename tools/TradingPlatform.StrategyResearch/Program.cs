@@ -28,6 +28,11 @@ var timeframes = (timeframeRaw ?? (isPhase2 ? "5m,15m,1h" : "1h"))
     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 var days = ParseInt(args, "--days", isPhase2 ? 365 : 90);
 var root = FindRepoRoot();
+if (args.Any(a => string.Equals(a, "--catalog-daily", StringComparison.OrdinalIgnoreCase)))
+{
+    var candleCacheDirEarly = Path.Combine(root, "artifacts", "strategy-validation-cache");
+    return await CatalogDailyReplay.RunAsync(root, candleCacheDirEarly, ParseInt(args, "--days", 30), CancellationToken.None);
+}
 if (args.Any(a => string.Equals(a, "--news-research", StringComparison.OrdinalIgnoreCase)))
 {
     return await NewsResearch.RunAsync(root, Arg(args, "--symbol"), Arg(args, "--timeframe") ?? "1h", Arg(args, "--news-stage") ?? "A", CancellationToken.None);

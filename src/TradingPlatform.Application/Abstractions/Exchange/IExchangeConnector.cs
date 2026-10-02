@@ -93,6 +93,7 @@ public interface IExchangeConnector
     Task<IReadOnlyList<ExchangeOrder>> GetOpenOrdersAsync(string? symbol, CancellationToken cancellationToken = default);
     Task<ExchangeOrder?> GetOrderAsync(string? clientOrderId, string? exchangeOrderId, string symbol, CancellationToken cancellationToken = default);
     Task PrepareSymbolRiskAsync(string symbol, MarginMode marginMode, int leverage, CancellationToken cancellationToken = default);
+    /// <summary>Highest Isolated leverage the exchange allows. Zero means the cap could not be read.</summary>
     Task<int> GetMaxIsolatedLeverageAsync(string symbol, CancellationToken cancellationToken = default);
     Task<ExchangeOrder> PlaceOrderAsync(PlaceOrderRequest request, CancellationToken cancellationToken = default);
     Task<ProtectiveStopsResult> PlaceClosePositionStopsAsync(
@@ -104,7 +105,8 @@ public interface IExchangeConnector
         string takeProfitClientOrderId,
         CancellationToken cancellationToken = default,
         bool placeStop = true,
-        bool placeTake = true);
+        bool placeTake = true,
+        bool acceptExisting = true);
     Task CancelOrderAsync(string symbol, string? clientOrderId, string? exchangeOrderId, CancellationToken cancellationToken = default);
     Task CancelAllOrdersAsync(string symbol, CancellationToken cancellationToken = default);
     Task SubscribeMarketDataAsync(string symbol, Timeframe timeframe, CancellationToken cancellationToken = default);

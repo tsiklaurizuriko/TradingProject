@@ -49,6 +49,13 @@ public sealed class LiveIsolatedReconciler
                 return;
             }
 
+            var droppedTrips = await _store.CollapseDuplicateClosedTripsAsync(cancellationToken);
+            if (droppedTrips > 0)
+            {
+                await _store.SaveChangesAsync(cancellationToken);
+                _logger.LogInformation("Collapsed {Trips} duplicate closed trip(s).", droppedTrips);
+            }
+
             var book = await _store.GetOpenPositionsForModeAsync(TradingMode.Live, cancellationToken);
         var now = _clock.UtcNow;
         var closed = 0;
@@ -197,19 +204,20 @@ public sealed class LiveIsolatedReconciler
         var pnlPercent = position.AverageEntryPrice == 0m
             ? 0m
             : direction * (exit - position.AverageEntryPrice) / position.AverageEntryPrice * 100m;
-        var window = _clock.UtcNow - position.OpenedAt;
-        if (window < TimeSpan.FromMinutes(15))
-        {
-            window = TimeSpan.FromMinutes(15);
-        }
-
-        var already = await _store.FindClosedTradeNearAsync(
-            position.Symbol,
-            quantity,
-            position.OpenedAt,
-            _clock.UtcNow,
-            window,
-            cancellationToken);
+        var already = (await _store.FindClosedTradesAroundAsync(
+                position.Symbol,
+                position.OpenedAt,
+                _clock.UtcNow,
+                cancellationToken))
+            .FirstOrDefault(item => ClosedTripMatch.Same(
+                item.Symbol,
+                item.Quantity,
+                item.OpenedAt,
+                item.ClosedAt,
+                position.Symbol,
+                quantity,
+                position.OpenedAt,
+                _clock.UtcNow));
         if (already is not null)
         {
             await CancelProtectiveRowAsync(LiveProtectivePrices.StopClientOrderId(bot.Id), cancellationToken);

@@ -122,6 +122,85 @@ public sealed class RiskEngineTests
     }
 
     [Fact]
+    public void Tighter_protective_stop_does_not_inflate_notional()
+    {
+        var profile = Low();
+        profile.StopLossPercent = 1.026m;
+        profile.TakeProfitPercent = 4.8m;
+
+        var plan = RiskEngine.Plan(profile, 138.55m, 0.02921m, PositionSide.Long, new RiskSizingHints
+        {
+            ExchangeMaxLeverage = 3m,
+            SizingStopLossPercent = 2m,
+            TakerFeePercent = 0m,
+            SlippagePercent = 0m
+        });
+
+        plan.Allowed.Should().BeTrue();
+        plan.StopLossPercent.Should().Be(1.026m);
+        plan.Leverage.Should().Be(3m);
+        plan.PositionNotional.Should().BeApproximately(34.64m, 0.05m);
+        plan.IsolatedMargin.Should().BeApproximately(11.55m, 0.05m);
+        plan.ActualRiskAmount.Should().BeApproximately(0.36m, 0.02m);
+    }
+
+    [Fact]
+    public void Margin_cap_shrinks_a_large_entry_and_leaves_a_small_one()
+    {
+        var wide = Low();
+        wide.StopLossPercent = 1.026m;
+        wide.TakeProfitPercent = 4.8m;
+        var capped = RiskEngine.Plan(wide, 138.55m, 0.02921m, PositionSide.Long, new RiskSizingHints
+        {
+            ExchangeMaxLeverage = 3m,
+            SizingStopLossPercent = 2m,
+            MaxMarginUsdt = 8m,
+            TakerFeePercent = 0.04m,
+            SlippagePercent = 0.05m
+        });
+
+        capped.Allowed.Should().BeTrue();
+        capped.StopLossPercent.Should().Be(1.026m);
+        capped.Leverage.Should().Be(3m);
+        capped.IsolatedMargin.Should().BeLessThanOrEqualTo(8m);
+        capped.IsolatedMargin.Should().BeGreaterThan(7.9m);
+        capped.PositionNotional.Should().BeApproximately(capped.IsolatedMargin * 3m, 0.05m);
+
+        var oneTimes = Low();
+        oneTimes.MaxLeverage = 1m;
+        oneTimes.StopLossPercent = 1m;
+        oneTimes.TakeProfitPercent = 4m;
+        var flat = RiskEngine.Plan(oneTimes, 138.55m, 1m, PositionSide.Long, new RiskSizingHints
+        {
+            ExchangeMaxLeverage = 1m,
+            MaxMarginUsdt = 8m,
+            TakerFeePercent = 0.04m,
+            SlippagePercent = 0.05m
+        });
+        flat.Allowed.Should().BeTrue();
+        flat.Leverage.Should().Be(1m);
+        flat.IsolatedMargin.Should().BeLessThanOrEqualTo(8m);
+        flat.IsolatedMargin.Should().BeGreaterThan(7.9m);
+
+        var small = RiskEngine.Plan(Low(), 40m, 1m, PositionSide.Long, new RiskSizingHints
+        {
+            MaxMarginUsdt = 8m,
+            ExchangeMaxLeverage = 3m
+        });
+        small.Allowed.Should().BeTrue();
+        small.PositionNotional.Should().BeApproximately(10m, 0.01m);
+        small.IsolatedMargin.Should().BeApproximately(10m / 3m, 0.01m);
+    }
+
+    [Fact]
+    public void Unknown_exchange_leverage_keeps_the_profile_max()
+    {
+        var plan = RiskEngine.Plan(Low(), 100m, 100m, PositionSide.Long, new RiskSizingHints { ExchangeMaxLeverage = 0m });
+        plan.Allowed.Should().BeTrue();
+        plan.Leverage.Should().Be(3m);
+    }
+
+    [Fact]
     public void Exchange_leverage_cap_is_used_instead_of_profile_max()
     {
         var plan = RiskEngine.Plan(High(), 100m, 50_000m, PositionSide.Long, new RiskSizingHints { ExchangeMaxLeverage = 5m });

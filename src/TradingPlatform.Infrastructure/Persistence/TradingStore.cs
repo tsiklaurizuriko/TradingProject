@@ -334,10 +334,49 @@ public sealed class TradingStore : ITradingStore
     public Task<int> CountOrdersSinceForModeAsync(TradingMode mode, DateTimeOffset sinceUtc, CancellationToken cancellationToken = default) =>
         _db.Orders.CountAsync(o => o.Mode == mode && o.CreatedAt >= sinceUtc, cancellationToken);
 
-    public async Task<decimal> SumClosedPnLSinceForModeAsync(TradingMode mode, DateTimeOffset sinceUtc, CancellationToken cancellationToken = default) =>
-         await _db.Trades
-            .Where(t => t.ClosedAt != null && t.ClosedAt >= sinceUtc && t.Bot.Mode == mode)
-            .SumAsync(t => (decimal?)t.PnL, cancellationToken) ?? 0m;
+    public async Task<decimal> SumClosedPnLSinceForModeAsync(TradingMode mode, DateTimeOffset sinceUtc, CancellationToken cancellationToken = default)
+    {
+        var rows = await LoadClosedSinceAsync(mode, sinceUtc, cancellationToken);
+        return ClosedTripMatch.Unique(
+            rows,
+            t => t.Symbol,
+            t => t.Quantity,
+            t => t.OpenedAt,
+            t => t.ClosedAt,
+            t => t.CorrelationId,
+            t => t.Fees).Sum(t => t.PnL);
+    }
+
+    public async Task<int> CollapseDuplicateClosedTripsAsync(CancellationToken cancellationToken = default)
+    {
+        var trades = await _db.Trades
+            .IgnoreQueryFilters()
+            .Where(t => t.ClosedAt != null)
+            .ToListAsync(cancellationToken);
+        if (trades.Count < 2)
+        {
+            return 0;
+        }
+
+        var keep = ClosedTripMatch.Unique(
+                trades,
+                t => t.Symbol,
+                t => t.Quantity,
+                t => t.OpenedAt,
+                t => t.ClosedAt,
+                t => t.CorrelationId,
+                t => t.Fees)
+            .Select(t => t.Id)
+            .ToHashSet();
+        var extras = trades.Where(t => !keep.Contains(t.Id)).ToList();
+        if (extras.Count == 0)
+        {
+            return 0;
+        }
+
+        _db.Trades.RemoveRange(extras);
+        return extras.Count;
+    }
 
     public async Task StopRunningBotsForModeAsync(TradingMode mode, string reason, CancellationToken cancellationToken = default)
     {
@@ -451,9 +490,19 @@ public sealed class TradingStore : ITradingStore
 
     public async Task<decimal> SumClosedPnLSinceAsync(Guid botId, DateTimeOffset sinceUtc, CancellationToken cancellationToken = default)
     {
-        return await _db.Trades
+        var rows = await _db.Trades
+            .AsNoTracking()
             .Where(t => t.BotId == botId && t.ClosedAt != null && t.ClosedAt >= sinceUtc)
-            .SumAsync(t => (decimal?)t.PnL, cancellationToken) ?? 0m;
+            .Select(t => new ClosedPnlRow(t.Symbol, t.Quantity, t.OpenedAt, t.ClosedAt, t.PnL, t.Fees, t.CorrelationId))
+            .ToListAsync(cancellationToken);
+        return ClosedTripMatch.Unique(
+            rows,
+            t => t.Symbol,
+            t => t.Quantity,
+            t => t.OpenedAt,
+            t => t.ClosedAt,
+            t => t.CorrelationId,
+            t => t.Fees).Sum(t => t.PnL);
     }
 
     public async Task<(int ConsecutiveLosses, DateTimeOffset? LastLossAt)> GetLossStreakAsync(
@@ -487,28 +536,66 @@ public sealed class TradingStore : ITradingStore
         TradingMode mode,
         CancellationToken cancellationToken = default)
     {
-        var recent = await _db.Trades
-            .Where(t => t.Bot.Mode == mode && t.ClosedAt != null)
-            .OrderByDescending(t => t.ClosedAt)
-            .Take(20)
-            .Select(t => new { t.PnL, t.ClosedAt })
-            .ToListAsync(cancellationToken);
-
-        var losses = 0;
-        DateTimeOffset? lastLoss = null;
-        foreach (var trade in recent)
-        {
-            if (trade.PnL >= 0m)
-            {
-                break;
-            }
-
-            losses++;
-            lastLoss ??= trade.ClosedAt;
-        }
-
-        return (losses, lastLoss);
+        var recent = await LoadClosedSinceAsync(mode, DateTimeOffset.UnixEpoch, cancellationToken, take: 80);
+        var unique = ClosedTripMatch.Unique(
+            recent,
+            t => t.Symbol,
+            t => t.Quantity,
+            t => t.OpenedAt,
+            t => t.ClosedAt,
+            t => t.CorrelationId,
+            t => t.Fees);
+        return ClosedTripMatch.ConsecutiveLosses(unique, t => t.PnL, t => t.ClosedAt);
     }
+
+    public async Task<(int ConsecutiveLosses, DateTimeOffset? LastLossAt)> GetSymbolLossStreakAsync(
+        TradingMode mode,
+        string symbol,
+        CancellationToken cancellationToken = default)
+    {
+        var name = symbol.Trim().ToUpperInvariant();
+        var recent = await _db.Trades
+            .AsNoTracking()
+            .Where(t => t.Bot.Mode == mode && t.Symbol == name && t.ClosedAt != null)
+            .OrderByDescending(t => t.ClosedAt)
+            .Take(40)
+            .Select(t => new ClosedPnlRow(t.Symbol, t.Quantity, t.OpenedAt, t.ClosedAt, t.PnL, t.Fees, t.CorrelationId))
+            .ToListAsync(cancellationToken);
+        var unique = ClosedTripMatch.Unique(
+            recent,
+            t => t.Symbol,
+            t => t.Quantity,
+            t => t.OpenedAt,
+            t => t.ClosedAt,
+            t => t.CorrelationId,
+            t => t.Fees);
+        return ClosedTripMatch.ConsecutiveLosses(unique, t => t.PnL, t => t.ClosedAt);
+    }
+
+    private async Task<List<ClosedPnlRow>> LoadClosedSinceAsync(
+        TradingMode mode,
+        DateTimeOffset sinceUtc,
+        CancellationToken cancellationToken,
+        int? take = null)
+    {
+        var query = _db.Trades
+            .AsNoTracking()
+            .Where(t => t.ClosedAt != null && t.ClosedAt >= sinceUtc && t.Bot.Mode == mode)
+            .OrderByDescending(t => t.ClosedAt);
+        var limited = take is { } cap ? query.Take(cap) : query;
+        return await limited
+            .Select(t => new ClosedPnlRow(t.Symbol, t.Quantity, t.OpenedAt, t.ClosedAt, t.PnL, t.Fees, t.CorrelationId))
+            .ToListAsync(cancellationToken);
+    }
+
+    private sealed record ClosedPnlRow(
+        string Symbol,
+        decimal Quantity,
+        DateTimeOffset OpenedAt,
+        DateTimeOffset? ClosedAt,
+        decimal PnL,
+        decimal Fees,
+        string? CorrelationId);
 
     public async Task<Balance> GetOrCreateBalanceAsync(
         Guid exchangeAccountId,

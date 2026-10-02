@@ -30,6 +30,12 @@ public sealed record RiskSizingHints
     public decimal MinNotional { get; init; }
     public int? QuantityPrecision { get; init; }
     public decimal ExchangeMaxLeverage { get; init; }
+    /// <summary>
+    /// When the protective stop is tighter than this, size from this percent so a close stop does not inflate notional.
+    /// The order stop stays at the profile stop.
+    /// </summary>
+    public decimal SizingStopLossPercent { get; init; }
+    public decimal MaxMarginUsdt { get; init; }
     public decimal TakerFeePercent { get; init; }
     public decimal SlippagePercent { get; init; }
 }
@@ -137,7 +143,13 @@ public sealed class RiskEngine : IRiskEngine
         var feePercent = sizing is { TakerFeePercent: > 0m } ? sizing.TakerFeePercent : DefaultTakerFeePercent;
         var slipPercent = sizing is { SlippagePercent: > 0m } ? sizing.SlippagePercent : DefaultSlippagePercent;
         var riskAmount = available * (profile.RiskPerTradePercent / 100m);
-        var quantity = PortfolioRisk.QuantityFromRiskUsdt(riskAmount, price, profile.StopLossPercent);
+        var sizingStop = profile.StopLossPercent;
+        if (sizing is { SizingStopLossPercent: > 0m } && sizing.SizingStopLossPercent > sizingStop)
+        {
+            sizingStop = sizing.SizingStopLossPercent;
+        }
+
+        var quantity = PortfolioRisk.QuantityFromRiskUsdt(riskAmount, price, sizingStop);
         var raisedToMinimum = false;
         var portfolioCap = profile.MaxPortfolioRiskPercent > 0m ? profile.MaxPortfolioRiskPercent : 4m;
         if (sizing is { StepSize: > 0m } || sizing is { MinQuantity: > 0m } || sizing is { MinNotional: > 0m } || sizing is { QuantityPrecision: >= 0 })
@@ -172,6 +184,27 @@ public sealed class RiskEngine : IRiskEngine
                 quantity = raised;
                 raisedToMinimum = true;
             }
+        }
+
+        if (sizing is { MaxMarginUsdt: > 0m }
+            && PortfolioRisk.IsolatedMargin(quantity * price, leverage) > sizing.MaxMarginUsdt)
+        {
+            var precision = sizing.QuantityPrecision
+                ?? PortfolioRisk.EffectiveQuantityPrecision(0, sizing.StepSize);
+            var capped = PortfolioRisk.FloorToStep(
+                sizing.MaxMarginUsdt * leverage / price,
+                sizing.StepSize,
+                precision);
+            var minQty = sizing.MinQuantity;
+            var minNotional = sizing.MinNotional;
+            if (capped <= 0m
+                || (minQty > 0m && capped < minQty)
+                || (minNotional > 0m && capped * price < minNotional))
+            {
+                return Denied("Calculated position size is below exchange minimum and cannot be traded within the configured risk.");
+            }
+
+            quantity = capped;
         }
 
         var notional = quantity * price;

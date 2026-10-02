@@ -212,6 +212,7 @@ internal static class StrategyTemplateEvaluator
             : StrategyTemplateKeys.IsResearch(p.TemplateKey)
                 || p.TemplateKey == StrategyTemplateKeys.FlowZone
                 || p.TemplateKey == StrategyTemplateKeys.SqueezeWatch
+                || p.TemplateKey == StrategyTemplateKeys.ImpulseCatch
             ? AdvancedStrategyEvaluator.Evaluate(p, candles, i, context, cache)
             : Wrap(p.TemplateKey switch
             {

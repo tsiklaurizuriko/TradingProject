@@ -84,6 +84,8 @@ public interface ITradingStore
     Task<decimal> SumClosedPnLSinceAsync(Guid botId, DateTimeOffset sinceUtc, CancellationToken cancellationToken = default);
     Task<(int ConsecutiveLosses, DateTimeOffset? LastLossAt)> GetLossStreakAsync(Guid botId, CancellationToken cancellationToken = default);
     Task<(int ConsecutiveLosses, DateTimeOffset? LastLossAt)> GetLossStreakForModeAsync(TradingMode mode, CancellationToken cancellationToken = default);
+    Task<(int ConsecutiveLosses, DateTimeOffset? LastLossAt)> GetSymbolLossStreakAsync(TradingMode mode, string symbol, CancellationToken cancellationToken = default);
+    Task<int> CollapseDuplicateClosedTripsAsync(CancellationToken cancellationToken = default);
     Task<Balance> GetOrCreateBalanceAsync(
         Guid exchangeAccountId,
         Guid? botId,

@@ -50,6 +50,7 @@ public static class StrategyTemplateKeys
     public const string BtcDailyMax10 = "btc_daily_max_10";
     public const string FlowZone = "flow_zone";
     public const string SqueezeWatch = "squeeze_watch";
+    public const string ImpulseCatch = "impulse_catch";
     public const string ScalpEmaMomentum = "scalp_ema_momentum";
     public const string ScalpVwapReclaim = "scalp_vwap_reclaim";
     public const string ScalpVwapReversion = "scalp_vwap_reversion";
@@ -232,7 +233,7 @@ public static class StrategyTemplateKeys
 
     public static readonly string[] Range = [FlatRange];
 
-    public static readonly string[] Flow = [FlowZone];
+    public static readonly string[] Flow = [FlowZone, ImpulseCatch];
 
     public static readonly string[] Positioning = [SqueezeWatch];
 
@@ -259,6 +260,7 @@ public static class StrategyTemplateKeys
         BtcDailyMax10,
         FlowZone,
         SqueezeWatch,
+        ImpulseCatch,
         FlatRange,
         MacContrarian710,
         ZigZagFade,
@@ -303,6 +305,11 @@ public static class StrategyTemplateKeys
         if (template is TsMomentum285 or BtcDailyMax10)
         {
             return ["1d"];
+        }
+
+        if (template == ImpulseCatch)
+        {
+            return ["15m"];
         }
 
         if (template is FlowZone or SqueezeWatch or FlatRange)
@@ -362,7 +369,7 @@ public static class StrategyTemplateKeys
     {
         var template = Normalize(key);
         return template is BtcEma20Ema50Long or TsMomentum285 or BtcDailyMax10
-            or BinHv45 or ClucMay72018 or CombinedBinHCluc or Hlhb
+            or BinHv45 or ClucMay72018 or CombinedBinHCluc or Hlhb or ImpulseCatch
             ? ["LONG"]
             : SupportedDirections;
     }
@@ -451,7 +458,7 @@ public static class StrategyTemplateKeys
         BollingerReversion or FlatRange or BinHv45 or ClucMay72018 or CombinedBinHCluc => "MEAN REVERSION",
         DonchianBreakout => "BREAKOUT / TREND",
         Bb202Break => "BREAKOUT / TREND",
-        VolSpikeEmaTrend or BtcEma20Ema50Long or TsMomentum285 or BtcDailyMax10 or FlowZone or FAdxSma or TripleSupertrend => "TREND",
+        VolSpikeEmaTrend or BtcEma20Ema50Long or TsMomentum285 or BtcDailyMax10 or FlowZone or ImpulseCatch or FAdxSma or TripleSupertrend => "TREND",
         var scalp when IsScalping(scalp) => "SCALPING",
         var pa when IsPriceAction(pa) => "SCALPING_PRICE_ACTION",
         var near when IsNearMiss(near) => "NEAR_MISS",
@@ -682,6 +689,12 @@ public static class StrategyTemplates
             StrategyTemplateKeys.BtcDailyMax10 => core with
             {
                 Timeframe = "1d",
+                AllowedSide = StrategySides.Long,
+                VolumeFilterEnabled = false
+            },
+            StrategyTemplateKeys.ImpulseCatch => core with
+            {
+                Timeframe = "15m",
                 AllowedSide = StrategySides.Long,
                 VolumeFilterEnabled = false
             },
@@ -1089,6 +1102,7 @@ public static class StrategyTemplates
         StrategyTemplateKeys.BtcDailyMax10 => "1d BTC 10-day High",
         StrategyTemplateKeys.FlowZone => "Flow Zone",
         StrategyTemplateKeys.SqueezeWatch => "Squeeze Watch",
+        StrategyTemplateKeys.ImpulseCatch => "Impulse Catch",
         StrategyTemplateKeys.ScalpEmaMomentum => "Scalp EMA Momentum",
         StrategyTemplateKeys.ScalpVwapReclaim => "Scalp VWAP Reclaim",
         StrategyTemplateKeys.ScalpVwapReversion => "Scalp VWAP Reversion",
@@ -1184,11 +1198,12 @@ public static class StrategyTemplates
         StrategyTemplateKeys.OiBreakoutConfirmation => "Research whether OI expansion adds incremental information to a volume-confirmed breakout. OI_SAMPLE_LIMITED.",
         StrategyTemplateKeys.VolSpikeEmaTrend => "ისტორიულად მორგებული BTCUSDT 15m კანდიდატი: volume spike + EMA21. არ არის validated alpha. SL 2.50% / TP 5.00% / 192 bar.",
         StrategyTemplateKeys.Bb202Break => "ისტორიულად მორგებული BTCUSDT 15m კანდიდატი: Bollinger (20,2) break. არ არის validated alpha. SL 4.00% / TP 5.00% / 192 bar.",
-        StrategyTemplateKeys.BtcEma20Ema50Long => "ყველა მონეტა, 30 წუთი, მხოლოდ ყიდვა. EMA(20) დახურულ ბარზე კვეთს EMA(50)-ს ზემოთ. გასვლა უკუ გადაკვეთაზე. სტოპი 1%. Take profit 20% შორი ჭერია, რადგან რისკის წიგნს მიზანი სჭირდება. არ არის validated.",
+        StrategyTemplateKeys.BtcEma20Ema50Long => "ყველა მონეტა, 30 წუთი, მხოლოდ ყიდვა. EMA(20) დახურულ ბარზე კვეთს EMA(50)-ს ზემოთ. გასვლა უკუ გადაკვეთაზე. სტოპი 1%. ტეიკი 3%. არ არის validated.",
         StrategyTemplateKeys.TsMomentum285 => "BTCUSDT, დღიური, მხოლოდ ყიდვა. 28 დღის ამონაგები საკუთარი ისტორიის ზედა მესამედშია — ლონგი. ხუთი დღე რჩება, შორტი არ არის. VAL-ზე ზრდა −11% იყო. Live ჩართვა Bots-ზეა, როცა LIVE რეჟიმი და API გასაღები გაქვს. თავისით არ ეშვება. რისკის წიგნი 1x, სტოპი 8% მხოლოდ ღობეა.",
         StrategyTemplateKeys.BtcDailyMax10 => "BTCUSDT, დღიური, მხოლოდ ყიდვა. დღე 10 დღის მაქსიმუმზე იხურება — მეორე დღეს ლონგი. შორტი არ არის. ამ ქეშზე IS −1%, VAL +8%, OOS −2% 12 bp ხარჯის შემდეგ. Live ჩართვა Bots-ზეა. თავისით არ ეშვება. რისკის წიგნი 1x, სტოპი 8% მხოლოდ ღობეა.",
-        StrategyTemplateKeys.FlowZone => "ყველა მონეტა, 1 საათი. ბოლო 24 საათის ზედა მეოთხედში და taker-ის ყიდვა ბარის 62%-ზე მეტია და ღია პოზიცია იზრდება — ყიდვა. ქვედა მეოთხედში, ძლიერი გაყიდვა და პოზიციის ზრდა — გაყიდვა. Taker ან ღია პოზიცია თუ არ მოდის, ორდერი არ იგზავნება. გასვლას სიგნალი აკეთებს, როცა ნაკადი ზონას ტოვებს. სტოპი და ტეიკი მხოლოდ ღობეა, თუ ბოტი გაითიშა. წარსულზე არ არის გაზომილი.",
-        StrategyTemplateKeys.SqueezeWatch => "1 საათი, ორივე მხარე. 24 საათში ფასი 3%-ზე ნაკლებს იცვლება, open interest მინიმუმ 15%-ით იზრდება და funding −0.10%-ზე დაბალია — ყიდვა (გადატვირთული შორტი). იგივე სიმშვიდე და open interest, funding +0.10%-ზე მაღალია — გაყიდვა (გადატვირთული ლონგი). Funding ან open interest თუ არ მოდის, ორდერი არ იგზავნება. რისკი 0.5%, სტოპი 4%, ტეიკი 8%, 2x, ერთდროულად 3.",
+        StrategyTemplateKeys.ImpulseCatch => "ყველა მონეტა, მხოლოდ ყიდვა. 15 წუთიან დახურულ სანთელზე შედის, როცა ფასმა ბოლო რამდენიმე საათში ახლახან 8% გადალახა და ეს სანთელი მაინც მაღლა დაიხურა. მოცულობა ბოლო საშუალოზე მაღალი უნდა იყოს. გასვლაა, როცა სანთელი 3%-ს უკან იხევს. სტოპი 6%, ტეიკი 20%, 2x, ერთდროულად 8. წარსულზე არ არის გაზომილი.",
+        StrategyTemplateKeys.FlowZone => "ყველა მონეტა, 1 საათი. ბოლო 24 საათის ზედა მეოთხედში და taker-ის ყიდვა ბარის 62%-ზე მეტია და ღია პოზიცია იზრდება — ყიდვა. ქვედა მეოთხედში, ძლიერი გაყიდვა და პოზიციის ზრდა — გაყიდვა. Taker ან ღია პოზიცია თუ არ მოდის, ორდერი არ იგზავნება. გასვლას სიგნალი აკეთებს, როცა ნაკადი ზონას ტოვებს, მაგრამ 0.20%-ზე პატარა სვლაზე არა — ეს საკომისიოს შიგნითაა. სტოპი 4% და ტეიკი 15% მხოლოდ ღობეა, თუ ბოტი გაითიშა. წარსულზე არ არის გაზომილი.",
+        StrategyTemplateKeys.SqueezeWatch => "1 საათი, ორივე მხარე. 24 საათში ფასი 3%-ზე ნაკლებს იცვლება, open interest მინიმუმ 15%-ით იზრდება და funding −0.10%-ზე დაბალია — ყიდვა (გადატვირთული შორტი). იგივე სიმშვიდე და open interest, funding +0.10%-ზე მაღალია — გაყიდვა (გადატვირთული ლონგი). Funding ან open interest თუ არ მოდის, ორდერი არ იგზავნება. ღია პოზიცია იხურება, როცა funding ამ ზღვარს ტოვებს ან ფასი შესვლის წინააღმდეგ 2%-ს გადის. რისკი 0.5%, სტოპი 4%, ტეიკი 8%, 2x, ერთდროულად 3.",
         StrategyTemplateKeys.ScalpEmaMomentum => "RESEARCH_ONLY scalping hypothesis: fast/slow EMA momentum on closed 1m–15m bars. Not a profit claim.",
         StrategyTemplateKeys.ScalpVwapReclaim => "RESEARCH_ONLY scalping hypothesis: session VWAP reclaim after a dip. Isolated book owns SL/TP.",
         StrategyTemplateKeys.ScalpVwapReversion => "RESEARCH_ONLY scalping hypothesis: ATR-scaled VWAP deviation fade. Isolated book owns SL/TP.",
@@ -1224,19 +1239,19 @@ public static class StrategyTemplates
         StrategyTemplateKeys.ZigZagFade =>
             "ZigZag fade. 30m, სვინგი 14, deviation 2% (BTC). ETH 6%, SOL 5%. რისკი 0.5%, სტოპი 4%, ტეიკი 8%, 3x.",
         StrategyTemplateKeys.DonchianV2 =>
-            "Donchian v2 daily. შესვლა 55, გასვლა 5, ATR 1.5. რისკი 0.5%, სტოპი 8%, ტეიკი 100% რომ 5-ბარიანი გასვლა ადრე მოხდეს, 1x.",
+            "Donchian v2 daily. შესვლა 55, გასვლა 5, ATR 1.5. რისკი 0.5%, სტოპი 8%, ტეიკი 30%, 1x.",
         StrategyTemplateKeys.BinHv45 =>
-            "BinHV45, 1 წუთი, მხოლოდ ლონგი. Bollinger(40, 2) ქვედა ზოლის ქვეშ დახურვა პატარა ქვედა ჩრდილით. გასვლის სიგნალი არ აქვს: ტეიკი 1.25%, სტოპი 5%.",
+            "BinHV45, 1 წუთი, მხოლოდ ლონგი. Bollinger(40, 2) ქვედა ზოლის ქვეშ დახურვა პატარა ქვედა ჩრდილით. გასვლაა, როცა დახურვა 2.5% მოგებაში ან 2.5% წაგებაშია. ჩრდილი არ ხურავს — სტოპი და ტეიკი ბირჟაზეა.",
         StrategyTemplateKeys.ClucMay72018 =>
             "Cluc, 5 წუთი, მხოლოდ ლონგი. დახურვა EMA(50)-ის და typical-price Bollinger ქვედა ზოლის 98.5%-ის ქვეშ, მოცულობა წინა 30 ბარის საშუალოს 20-ჯერ ნაკლებია. გასვლა შუა ზოლზე. ტეიკი 1%, სტოპი 5%.",
         StrategyTemplateKeys.CombinedBinHCluc =>
             "BinHV45 ან Cluc, 5 წუთი, მხოლოდ ლონგი. გასვლა შუა ზოლზე მხოლოდ მოგებაში. ტეიკი 5%, სტოპი 5%.",
         StrategyTemplateKeys.Hlhb =>
-            "HLHB, 4 საათი, მხოლოდ ლონგი. RSI(10) 50-ს კვეთს და EMA(5) EMA(10)-ს იმავე ბარზე, ADX 25-ზე მეტია. უკუ გადაკვეთა ხურავს. გამოქვეყნებული hyperopt: ტეიკი 62%, სტოპი 32%, მხოლოდ 1x.",
+            "HLHB, 4 საათი, მხოლოდ ლონგი. RSI(10) 50-ს კვეთს და EMA(5) EMA(10)-ს იმავე ბარზე, ADX 25-ზე მეტია. უკუ გადაკვეთა ხურავს. ცოცხალი ღობეა სტოპი 8%, ტეიკი 62%, მხოლოდ 1x. Hyperopt-ის 32% სტოპი აღარ გამოიყენება.",
         StrategyTemplateKeys.FAdxSma =>
             "Freqtrade FAdxSma, 1 საათი, ორივე მხარე. SMA(12) კვეთს SMA(48)-ს და ADX(14) 30-ზე მეტია. გასვლა, როცა ADX 30-ს ქვემოთ ჩამოდის. ტეიკი 5%, სტოპი 5%.",
         StrategyTemplateKeys.TripleSupertrend =>
-            "Freqtrade FSupertrend, 1 საათი, ორივე მხარე. ლონგი სამი Supertrend-ის up-ზე (8/4, 9/7, 8/1), შორტი სამი down-ზე (16/1, 18/3, 18/6). ტეიკი 10%, სტოპი 26.5%, მხოლოდ 1x.",
+            "Freqtrade FSupertrend, 1 საათი, ორივე მხარე. ლონგი სამი Supertrend-ის up-ზე (8/4, 9/7, 8/1), შორტი სამი down-ზე (16/1, 18/3, 18/6). ტეიკი 10%, სტოპი 8%, მხოლოდ 1x.",
         _ => "ახალ ტრენდს იწყებს: სწრაფი EMA ნელს კვეთს, RSI ადასტურებს. მიზანი — მიმართულების ცვლილება, სუსტი გადაკვეთების გარეშე."
     };
 

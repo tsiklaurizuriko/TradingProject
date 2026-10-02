@@ -911,17 +911,30 @@ public sealed class ExchangeAccountService : IExchangeAccountService
         var correlationId = string.IsNullOrWhiteSpace(trip.CloseTradeId)
             ? BinanceClosedFill.TradeKey(trip.Symbol + trip.ClosedAt.ToUnixTimeMilliseconds())
             : BinanceClosedFill.TradeKey(trip.CloseTradeId);
-        var around = (await _trading.FindClosedTradesAroundAsync(
-                trip.Symbol,
-                trip.OpenedAt,
-                trip.ClosedAt,
-                cancellationToken))
-            .Where(item =>
-                item.BotId == bot.Id
+        var nearby = await _trading.FindClosedTradesAroundAsync(
+            trip.Symbol,
+            trip.OpenedAt,
+            trip.ClosedAt,
+            cancellationToken);
+        if (trip.Quantity <= 0m
+            && nearby.Any(item =>
+                item.Quantity > 0m
                 && item.ClosedAt is { } closed
-                && item.OpenedAt <= trip.ClosedAt
-                && trip.OpenedAt <= closed
-                && item.Quantity == trip.Quantity)
+                && (closed - trip.ClosedAt).Duration() <= TimeSpan.FromMinutes(2)))
+        {
+            return;
+        }
+
+        var around = nearby
+            .Where(item => ClosedTripMatch.Same(
+                item.Symbol,
+                item.Quantity,
+                item.OpenedAt,
+                item.ClosedAt,
+                trip.Symbol,
+                trip.Quantity,
+                trip.OpenedAt,
+                trip.ClosedAt))
             .ToList();
         var existing = around.FirstOrDefault(item =>
                            string.Equals(item.CorrelationId, correlationId, StringComparison.OrdinalIgnoreCase))
@@ -943,11 +956,14 @@ public sealed class ExchangeAccountService : IExchangeAccountService
 
         void Apply(Trade trade)
         {
-            trade.BotId = bot.Id;
-            if (bot.StrategyVersion is not null)
+            if (trade.BotId == Guid.Empty || trade.BotId == bot.Id)
             {
-                trade.StrategyId = bot.StrategyVersion.StrategyId;
-                trade.StrategyVersionId = bot.StrategyVersionId;
+                trade.BotId = bot.Id;
+                if (bot.StrategyVersion is not null)
+                {
+                    trade.StrategyId = bot.StrategyVersion.StrategyId;
+                    trade.StrategyVersionId = bot.StrategyVersionId;
+                }
             }
 
             trade.Side = trip.EntrySide;

@@ -17,7 +17,8 @@ public sealed record BotDto(
     string? LastError,
     DateTimeOffset? StartedAt,
     Guid StrategyId,
-    Guid RiskProfileId);
+    Guid RiskProfileId,
+    DateTimeOffset CreatedAt);
 
 public sealed record PositionDto(
     Guid Id,

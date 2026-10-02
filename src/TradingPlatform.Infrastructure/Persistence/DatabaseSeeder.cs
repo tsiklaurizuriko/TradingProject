@@ -209,6 +209,7 @@ public sealed class DatabaseSeeder
         await UpsertSystemRiskAsync("1d Time-Series Momentum", ["ts_momentum_28_5", "TS-MOMENTUM-28-5"], TsMomentumBook(), cancellationToken);
         await UpsertSystemRiskAsync("1d BTC 10-day High", ["btc_daily_max_10", "BTC-DAILY-MAX-10"], TsMomentumBook(), cancellationToken);
         await UpsertSystemRiskAsync("Flow Zone", ["flow_zone", "FLOW-ZONE"], TsMomentumBook(), cancellationToken);
+        await UpsertSystemRiskAsync("Impulse Catch", ["impulse_catch", "IMPULSE-CATCH"], ImpulseCatchBook(), cancellationToken);
         await EnsureOneActiveAsync(cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
         await SeedStrategiesAsync(cancellationToken);
@@ -232,17 +233,18 @@ public sealed class DatabaseSeeder
             var flat = row.Key == StrategyTemplateKeys.FlatRange;
             var flow = row.Key == StrategyTemplateKeys.FlowZone;
             var squeeze = row.Key == StrategyTemplateKeys.SqueezeWatch;
+            var impulse = row.Key == StrategyTemplateKeys.ImpulseCatch;
             var zigzag = row.Key == StrategyTemplateKeys.ZigZagFade;
             var donchianV2 = row.Key == StrategyTemplateKeys.DonchianV2;
             var binhv = row.Key == StrategyTemplateKeys.BinHv45;
             var hlhb = row.Key == StrategyTemplateKeys.Hlhb;
             var hour = row.Key is StrategyTemplateKeys.FAdxSma or StrategyTemplateKeys.TripleSupertrend;
             var freqtradeLong = binhv || hlhb || row.Key is StrategyTemplateKeys.ClucMay72018 or StrategyTemplateKeys.CombinedBinHCluc;
-            var longOnly = emaCross || tsMomentum || freqtradeLong;
-                var parameters = StrategyTemplates.DefaultsFor(row.Key, qualityOn: !row.Research && !flat && !flow && !squeeze && !StrategyTemplateKeys.IsHistoricallyFitted(row.Key)) with
+            var longOnly = emaCross || tsMomentum || freqtradeLong || impulse;
+                var parameters = StrategyTemplates.DefaultsFor(row.Key, qualityOn: !row.Research && !flat && !flow && !squeeze && !impulse && !StrategyTemplateKeys.IsHistoricallyFitted(row.Key)) with
             {
                 AllowedSide = longOnly ? StrategySides.Long : StrategySides.Both,
-                Timeframe = binhv ? "1m" : hlhb ? "4h" : hour ? "1h" : donchianV2 ? "1d" : zigzag ? "30m" : tsMomentum ? "1d" : emaCross ? "30m" : flat || flow || squeeze ? "1h" : StrategyTemplateKeys.IsHistoricallyFitted(row.Key) || crossSection ? "15m" : "5m"
+                Timeframe = binhv ? "1m" : hlhb ? "4h" : hour ? "1h" : donchianV2 ? "1d" : zigzag ? "30m" : tsMomentum ? "1d" : emaCross ? "30m" : impulse ? "15m" : flat || flow || squeeze ? "1h" : StrategyTemplateKeys.IsHistoricallyFitted(row.Key) || crossSection ? "15m" : "5m"
             };
             if (strategy is null)
             {
@@ -268,7 +270,7 @@ public sealed class DatabaseSeeder
                     VersionNumber = 1,
                     DefinitionJson = StrategyTemplates.Build(strategy.Name, 1, parameters),
                     Symbol = "BTCUSDT",
-                    Timeframe = binhv ? Timeframe.OneMinute : hlhb ? Timeframe.FourHours : hour ? Timeframe.OneHour : donchianV2 ? Timeframe.OneDay : zigzag ? Timeframe.ThirtyMinutes : tsMomentum ? Timeframe.OneDay : emaCross ? Timeframe.ThirtyMinutes : flat || flow || squeeze ? Timeframe.OneHour : fitted || crossSection ? Timeframe.FifteenMinutes : Timeframe.FiveMinutes
+                    Timeframe = binhv ? Timeframe.OneMinute : hlhb ? Timeframe.FourHours : hour ? Timeframe.OneHour : donchianV2 ? Timeframe.OneDay : zigzag ? Timeframe.ThirtyMinutes : tsMomentum ? Timeframe.OneDay : emaCross ? Timeframe.ThirtyMinutes : impulse ? Timeframe.FifteenMinutes : flat || flow || squeeze ? Timeframe.OneHour : fitted || crossSection ? Timeframe.FifteenMinutes : Timeframe.FiveMinutes
                 });
                 _db.Strategies.Add(strategy);
                 existing.Add(strategy);
@@ -422,6 +424,40 @@ public sealed class DatabaseSeeder
             return;
         }
 
+        if (row.Key == StrategyTemplateKeys.ImpulseCatch)
+        {
+            strategy.TemplateKey = row.Key;
+            strategy.Name = row.Name;
+            strategy.AllowedSide = StrategySides.Long;
+            strategy.AppliesToAllSymbols = true;
+            strategy.AllowedSymbolsCsv = null;
+            strategy.IsEnabled = true;
+            strategy.IsArchived = false;
+            strategy.DeletedAt = null;
+            strategy.Description = row.Description;
+            strategy.ValidationStatus = StrategyValidationStatuses.ValidationPending;
+            var clock = strategy.Versions.OrderByDescending(v => v.VersionNumber).FirstOrDefault();
+            if (clock is null || clock.IsImmutable)
+            {
+                strategy.Versions.Add(new StrategyVersion
+                {
+                    Strategy = strategy,
+                    VersionNumber = (clock?.VersionNumber ?? 0) + 1,
+                    DefinitionJson = StrategyTemplates.Build(strategy.Name, (clock?.VersionNumber ?? 0) + 1, parameters),
+                    Symbol = "BTCUSDT",
+                    Timeframe = Timeframe.FifteenMinutes
+                });
+            }
+            else if (clock.Timeframe != Timeframe.FifteenMinutes)
+            {
+                clock.DefinitionJson = StrategyTemplates.Build(strategy.Name, clock.VersionNumber, parameters);
+                clock.Timeframe = Timeframe.FifteenMinutes;
+                clock.UpdatedAt = DateTimeOffset.UtcNow;
+            }
+
+            return;
+        }
+
         if (row.Key == StrategyTemplateKeys.FlowZone)
         {
             strategy.TemplateKey = row.Key;
@@ -429,7 +465,7 @@ public sealed class DatabaseSeeder
             strategy.AllowedSide = StrategySides.Both;
             strategy.AppliesToAllSymbols = true;
             strategy.AllowedSymbolsCsv = null;
-            strategy.IsEnabled = true;
+            strategy.IsEnabled = false;
             strategy.IsArchived = false;
             strategy.DeletedAt = null;
             strategy.Description = row.Description;
@@ -644,9 +680,11 @@ public sealed class DatabaseSeeder
         (StrategyTemplateKeys.Bb202Break, "BTC 15m Bollinger Break",
             "HISTORICALLY_FITTED_CANDIDATE. BTCUSDT 15m BOTH. Close cross of Bollinger (20,2). Use risk book BTC 15m BB Break (SL 4.00% / TP 5.00%). Not validated alpha. LIVE off.", true),
         (StrategyTemplateKeys.FlowZone, "Flow Zone",
-            "All USD-M coins, 1h, both sides. Buy the upper quarter of the last 24 hours when taker buy is the majority and open interest rose. Sell the lower quarter when taker sell is the majority and open interest rose. Missing taker or open interest sends no order. The signal closes the position when that flow leaves the zone. The 8% stop and 30% take are only the rail if the bot is off. Not measured on the past. Not auto-started.", true),
+            "All USD-M coins, 1h, both sides. Buy the upper quarter of the last 24 hours when taker buy is the majority and open interest rose. Sell the lower quarter when taker sell is the majority and open interest rose. Missing taker or open interest sends no order. The signal closes the position when that flow leaves the zone, but not while the move is still inside a 0.20% round-trip fee. The 4% stop and 15% take are only the rail if the bot is off. Not measured on the past. Not auto-started.", true),
+        (StrategyTemplateKeys.ImpulseCatch, "Impulse Catch",
+            "All USD-M coins, 15m, long only. Buys the closed bar that first crosses +8% versus the close 16 bars earlier, when that bar closes higher in its top half and volume is at least 1.5× the prior 20-bar average. Exits when a closed bar falls 3% from the prior close. Book is risk 0.5%, stop 6%, take 20%, leverage 2x, 8 positions. Not measured on the past. Not auto-started.", true),
         (StrategyTemplateKeys.SqueezeWatch, "Squeeze Watch",
-            "1h, both sides. Price moved less than 3% over 24 hours, open interest rose at least 15%, and funding is at or below -0.10% — buy the crowded shorts. The same quiet price and open-interest rise with funding at or above +0.10% — sell the crowded longs. Missing funding or open interest sends no order. Book is risk 0.5%, stop 4%, take 8%, leverage 2x, 3 positions. Not measured on the past.", false),
+            "1h, both sides. Price moved less than 3% over 24 hours, open interest rose at least 15%, and funding is at or below -0.10% — buy the crowded shorts. The same quiet price and open-interest rise with funding at or above +0.10% — sell the crowded longs. Missing funding or open interest sends no order. While open, exit when funding leaves that extreme or price moves 2% against the entry. Book is risk 0.5%, stop 4%, take 8%, leverage 2x, 3 positions. Not measured on the past.", false),
         (StrategyTemplateKeys.FlatRange, "Flat Range",
             "ფლეტზე წინა 24 საათის ზედა და ქვედა ზღვარი იკეტება. ლონგი ქვედა 20%-ში, შორტი ზედა 20%-ში. სტოპი შესვლის ზღვარია, ტეიკ-პროფიტი მოპირდაპირე ზღვარი. პოზიციის ზომა ისე ითვლება, რომ სტოპმა დაგეგმილი რისკი წაიღოს. 24 საათში იხურება.", false),
         (StrategyTemplateKeys.MacContrarian710, "Contrarian SMA 7/10",
@@ -654,19 +692,19 @@ public sealed class DatabaseSeeder
         (StrategyTemplateKeys.ZigZagFade, "ZigZag Fade",
             "Fade a ZigZag swing break. BTC 30m: length 14, deviation 2%, ATR 1.5. ETH deviation 6%. SOL 5%. Order book is risk 0.5%, stop 4%, take 8%, leverage 3x.", true),
         (StrategyTemplateKeys.DonchianV2, "Donchian 55/5",
-            "Donchian v2 daily. Entry 55, exit 5, ATR stop 1.5. Order book is risk 0.5%, stop 8%, take 100% so the 5-bar exit closes first, leverage 1x.", true),
+            "Donchian v2 daily. Entry 55, exit 5, ATR stop 1.5. Order book is risk 0.5%, stop 8%, take 30%, leverage 1x.", true),
         (StrategyTemplateKeys.BinHv45, "BinHV45",
-            "Freqtrade BinHV45. 1m LONG. Close under the prior Bollinger(40, 2) lower band with a short lower wick. No exit signal. ROI 1.25%, stop 5%. Not measured on this futures book.", true),
+            "Freqtrade BinHV45. 1m LONG. Close under the prior Bollinger(40, 2) lower band with a short lower wick. Exit when the close reaches 2.5% profit or 2.5% loss. A wick does not exit; the exchange stop and take own it. Not measured on this futures book.", true),
         (StrategyTemplateKeys.ClucMay72018, "Cluc May 2018",
             "Freqtrade ClucMay72018. 5m LONG. Close under EMA(50) and 98.5% of the typical-price lower band, volume below 20× the prior 30-bar mean. Exit at the middle band. ROI 1%, stop 5%.", true),
         (StrategyTemplateKeys.CombinedBinHCluc, "Combined BinH Cluc",
             "Freqtrade CombinedBinHAndCluc. 5m LONG. BinHV45 or Cluc entry. Middle-band exit only while in profit. ROI 5%, stop 5%.", true),
         (StrategyTemplateKeys.Hlhb, "HLHB",
-            "Freqtrade hlhb. 4h LONG. RSI(10) of (open+close)/2 crosses 50 and EMA(5) crosses EMA(10) on the same bar, ADX above 25. Opposite cross exits. Published hyperopt: take 62%, stop 32%, leverage 1x.", true),
+            "Freqtrade hlhb. 4h LONG. RSI(10) of (open+close)/2 crosses 50 and EMA(5) crosses EMA(10) on the same bar, ADX above 25. Opposite cross exits. Live rail is stop 8%, take 62%, leverage 1x. The published hyperopt stop of 32% is not used.", true),
         (StrategyTemplateKeys.FAdxSma, "ADX SMA Cross",
             "Freqtrade FAdxSmaStrategy. 1h BOTH. SMA(12) crosses SMA(48) while ADX(14) is above 30. Exit when ADX falls below 30. ROI 5%, stop 5%.", true),
         (StrategyTemplateKeys.TripleSupertrend, "Triple Supertrend",
-            "Freqtrade FSupertrendStrategy. 1h BOTH. Long when Supertrend 8/4, 9/7 and 8/1 are up. Short when 16/1, 18/3 and 18/6 are down. Exit long on 18/3 down, exit short on 9/7 up. Take 10%, stop 26.5%, leverage 1x.", true),
+            "Freqtrade FSupertrendStrategy. 1h BOTH. Long when Supertrend 8/4, 9/7 and 8/1 are up. Short when 16/1, 18/3 and 18/6 are down. Exit long on 18/3 down, exit short on 9/7 up. Take 10%, stop 8%, leverage 1x.", true),
         (StrategyTemplateKeys.BtcEma20Ema50Long, "30m EMA Cross",
             "HISTORICALLY_FITTED_CANDIDATE. All USD-M coins, 30m LONG only. EMA20 cross above EMA50; exit on the cross back below. Use risk book 30m EMA Cross (R 0.50% / SL 1.00% / TP 3% cap). Not validated alpha. LIVE off.", true),
         (StrategyTemplateKeys.TsMomentum285, "1d Time-Series Momentum",
@@ -855,21 +893,22 @@ public sealed class DatabaseSeeder
         [StrategyTemplateKeys.MarketStructureTrend] = (0.5m, 3.5m, 7m, 2m, 2),
         [StrategyTemplateKeys.VolSpikeEmaTrend] = (0.5m, 2.5m, 5m, 3m, 1),
         [StrategyTemplateKeys.Bb202Break] = (0.5m, 4m, 5m, 3m, 1),
-        [StrategyTemplateKeys.BtcEma20Ema50Long] = (0.5m, 1m, 20m, 3m, 1),
+        [StrategyTemplateKeys.BtcEma20Ema50Long] = (0.5m, 1m, 3m, 3m, 1),
         [StrategyTemplateKeys.TsMomentum285] = (2m, 8m, 30m, 1m, 1),
         [StrategyTemplateKeys.BtcDailyMax10] = (2m, 8m, 30m, 1m, 1),
-        [StrategyTemplateKeys.FlowZone] = (0.5m, 8m, 30m, 1m, 5),
+        [StrategyTemplateKeys.FlowZone] = (0.5m, 4m, 15m, 1m, 5),
         [StrategyTemplateKeys.SqueezeWatch] = (0.5m, 4m, 8m, 2m, 3),
+        [StrategyTemplateKeys.ImpulseCatch] = (0.5m, 6m, 20m, 2m, 8),
         [StrategyTemplateKeys.FlatRange] = (0.5m, 2m, 4m, 3m, 5),
         [StrategyTemplateKeys.MacContrarian710] = (0.5m, 5m, 5m, 3m, 5),
         [StrategyTemplateKeys.ZigZagFade] = (0.5m, 4m, 8m, 3m, 5),
-        [StrategyTemplateKeys.DonchianV2] = (0.5m, 8m, 100m, 1m, 1),
-        [StrategyTemplateKeys.BinHv45] = (0.5m, 5m, 1.25m, 3m, 5),
+        [StrategyTemplateKeys.DonchianV2] = (0.5m, 8m, 30m, 1m, 1),
+        [StrategyTemplateKeys.BinHv45] = (0.5m, 2.5m, 2.5m, 3m, 5),
         [StrategyTemplateKeys.ClucMay72018] = (0.5m, 5m, 1m, 3m, 5),
         [StrategyTemplateKeys.CombinedBinHCluc] = (0.5m, 5m, 5m, 3m, 5),
-        [StrategyTemplateKeys.Hlhb] = (0.5m, 32m, 62m, 1m, 5),
+        [StrategyTemplateKeys.Hlhb] = (0.5m, 8m, 62m, 1m, 5),
         [StrategyTemplateKeys.FAdxSma] = (0.5m, 5m, 5m, 3m, 5),
-        [StrategyTemplateKeys.TripleSupertrend] = (0.5m, 26.5m, 10m, 1m, 5),
+        [StrategyTemplateKeys.TripleSupertrend] = (0.5m, 8m, 10m, 1m, 5),
     };
 
     private static string? AliasRiskName(string? templateKey) => StrategyTemplateKeys.Normalize(templateKey) switch
@@ -880,6 +919,7 @@ public sealed class DatabaseSeeder
         StrategyTemplateKeys.TsMomentum285 => "1d Time-Series Momentum",
         StrategyTemplateKeys.BtcDailyMax10 => "1d BTC 10-day High",
         StrategyTemplateKeys.FlowZone => "Flow Zone",
+        StrategyTemplateKeys.ImpulseCatch => "Impulse Catch",
         _ => null
     };
 
@@ -1175,6 +1215,23 @@ public sealed class DatabaseSeeder
             MaxDailyLossPercent = 3m,
             MaxPortfolioRiskPercent = 4m,
             MaxSimultaneousPositions = 1,
+            MaxConsecutiveLosses = 5,
+            CooldownMinutes = 30,
+            MinimumLiquidationSafetyBufferPercent = 1m,
+            AllowLive = true,
+            IsActive = false
+        };
+
+    private static RiskProfile ImpulseCatchBook() =>
+        new()
+        {
+            RiskPerTradePercent = 0.5m,
+            StopLossPercent = 6m,
+            TakeProfitPercent = 20m,
+            MaxLeverage = 2m,
+            MaxDailyLossPercent = 3m,
+            MaxPortfolioRiskPercent = 4m,
+            MaxSimultaneousPositions = 8,
             MaxConsecutiveLosses = 5,
             CooldownMinutes = 30,
             MinimumLiquidationSafetyBufferPercent = 1m,

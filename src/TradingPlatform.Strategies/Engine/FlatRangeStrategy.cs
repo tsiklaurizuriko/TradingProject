@@ -19,6 +19,7 @@ public static class FlatRangeStrategy
     public const decimal EntryFrac = 0.20m;
     public const decimal WidthRankMax = 0.30m;
     public const decimal MinStopPercent = 0.20m;
+    public const decimal MaxEntryMarginUsdt = 8m;
 
     public static StrategySignalDetail Evaluate(
         IReadOnlyList<MarketCandle> candles,

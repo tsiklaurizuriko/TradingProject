@@ -169,7 +169,7 @@ public sealed class NewsTradeAdapterTests
             Called = true;
             throw new InvalidOperationException("Live order must not be sent.");
         }
-        public Task<ProtectiveStopsResult> PlaceClosePositionStopsAsync(string symbol, OrderSide closeSide, decimal stopLossPrice, decimal takeProfitPrice, string stopClientOrderId, string takeProfitClientOrderId, CancellationToken cancellationToken = default, bool placeStop = true, bool placeTake = true) => throw new NotSupportedException();
+        public Task<ProtectiveStopsResult> PlaceClosePositionStopsAsync(string symbol, OrderSide closeSide, decimal stopLossPrice, decimal takeProfitPrice, string stopClientOrderId, string takeProfitClientOrderId, CancellationToken cancellationToken = default, bool placeStop = true, bool placeTake = true, bool acceptExisting = true) => throw new NotSupportedException();
         public Task CancelOrderAsync(string symbol, string? clientOrderId, string? exchangeOrderId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task CancelAllOrdersAsync(string symbol, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task SubscribeMarketDataAsync(string symbol, Timeframe timeframe, CancellationToken cancellationToken = default) => throw new NotSupportedException();

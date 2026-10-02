@@ -2,6 +2,7 @@ using TradingPlatform.Application.Abstractions.Exchange;
 using TradingPlatform.Application.Trading;
 using TradingPlatform.Domain.Bots;
 using TradingPlatform.Domain.Positions;
+using TradingPlatform.Domain.Trades;
 using TradingPlatform.Domain.Trading;
 using TradingPlatform.Risk;
 
@@ -173,6 +174,36 @@ public static class IsolatedOccupancy
     public static bool IsOwner(Bot bot, IReadOnlyList<Bot> peers, IReadOnlyList<Position> book) =>
         PickLiveOwner(bot.Symbol, peers, book, bot.Mode)?.Id == bot.Id;
 
+    /// <summary>
+    /// A bot created after the fill cannot be the strategy that opened it.
+    /// Flat Range on every coin was adopting older Isolated positions and the open count collapsed onto it.
+    /// </summary>
+    public static bool BotExistedAtOpen(DateTimeOffset botCreatedAt, DateTimeOffset openedAt) =>
+        botCreatedAt <= openedAt.AddSeconds(60);
+
+    /// <summary>
+    /// Give an adopted fill back to a bot on that coin that already existed when it opened.
+    /// Prefer a running bot, then the one created latest before the fill.
+    /// </summary>
+    public static Bot? PriorOwner(
+        IEnumerable<Bot> bots,
+        string symbol,
+        DateTimeOffset openedAt,
+        Guid exceptBotId)
+    {
+        var key = CoinKey(symbol);
+        return bots
+            .Where(bot =>
+                bot.Id != exceptBotId
+                && bot.StrategyVersion is not null
+                && string.Equals(CoinKey(bot.Symbol), key, StringComparison.OrdinalIgnoreCase)
+                && BotExistedAtOpen(bot.CreatedAt, openedAt))
+            .OrderBy(bot => bot.Status == BotStatus.Running ? 0 : 1)
+            .ThenByDescending(bot => bot.CreatedAt)
+            .ThenBy(bot => bot.Id)
+            .FirstOrDefault();
+    }
+
     public static bool IsExchangeLedgerKey(string? correlationId) =>
         !string.IsNullOrWhiteSpace(correlationId)
         && (correlationId.StartsWith("BNT", StringComparison.OrdinalIgnoreCase)
@@ -190,53 +221,8 @@ public static class IsolatedOccupancy
         Func<T, DateTimeOffset?> closedAt,
         Func<T, string?> correlationId,
         Func<T, decimal>? fees = null,
-        Func<T, string?>? strategy = null)
-    {
-        var chosen = new List<T>(rows.Count);
-        foreach (var row in rows)
-        {
-            if (closedAt(row) is null)
-            {
-                chosen.Add(row);
-                continue;
-            }
-
-            var index = chosen.FindIndex(existing =>
-                closedAt(existing) is not null
-                && SameStrategy(strategy, existing, row)
-                && SameIsolatedTrip(
-                    symbol(existing),
-                    quantity(existing),
-                    openedAt(existing),
-                    closedAt(existing),
-                    symbol(row),
-                    quantity(row),
-                    openedAt(row),
-                    closedAt(row)));
-            if (index < 0)
-            {
-                chosen.Add(row);
-                continue;
-            }
-
-            if (PreferClosedTrip(row, chosen[index], correlationId, fees))
-            {
-                chosen[index] = row;
-            }
-        }
-
-        return chosen;
-    }
-
-    private static bool SameStrategy<T>(Func<T, string?>? strategy, T left, T right)
-    {
-        if (strategy is null)
-        {
-            return true;
-        }
-
-        return string.Equals(strategy(left)?.Trim(), strategy(right)?.Trim(), StringComparison.OrdinalIgnoreCase);
-    }
+        Func<T, string?>? strategy = null) =>
+        ClosedTripMatch.Unique(rows, symbol, quantity, openedAt, closedAt, correlationId, fees, strategy);
 
     public static bool SameIsolatedTrip(
         string leftSymbol,
@@ -246,60 +232,16 @@ public static class IsolatedOccupancy
         string rightSymbol,
         decimal rightQty,
         DateTimeOffset rightOpened,
-        DateTimeOffset? rightClosed)
-    {
-        if (!string.Equals(CoinKey(leftSymbol), CoinKey(rightSymbol), StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        var scale = Math.Max(0.00000001m, Math.Abs(leftQty) * 0.0001m);
-        if (Math.Abs(leftQty - rightQty) > scale)
-        {
-            return false;
-        }
-
-        if (leftClosed is null || rightClosed is null)
-        {
-            return false;
-        }
-
-        return leftOpened <= rightClosed && rightOpened <= leftClosed;
-    }
-
-    private static bool PreferClosedTrip<T>(
-        T candidate,
-        T existing,
-        Func<T, string?> correlationId,
-        Func<T, decimal>? fees)
-    {
-        var candidateRank = ClosedTripRank(correlationId(candidate), fees?.Invoke(candidate) ?? 0m);
-        var existingRank = ClosedTripRank(correlationId(existing), fees?.Invoke(existing) ?? 0m);
-        if (candidateRank != existingRank)
-        {
-            return candidateRank > existingRank;
-        }
-
-        var candidateFees = fees?.Invoke(candidate) ?? 0m;
-        var existingFees = fees?.Invoke(existing) ?? 0m;
-        return candidateFees > existingFees;
-    }
-
-    private static int ClosedTripRank(string? correlationId, decimal fees)
-    {
-        if (IsExchangeLedgerKey(correlationId))
-        {
-            return 3;
-        }
-
-        if (!string.IsNullOrWhiteSpace(correlationId)
-            && correlationId.StartsWith("binance-fill", StringComparison.OrdinalIgnoreCase))
-        {
-            return 2;
-        }
-
-        return fees > 0m ? 1 : 0;
-    }
+        DateTimeOffset? rightClosed) =>
+        ClosedTripMatch.Same(
+            leftSymbol,
+            leftQty,
+            leftOpened,
+            leftClosed,
+            rightSymbol,
+            rightQty,
+            rightOpened,
+            rightClosed);
 
     private static bool OwnsStrategy(
         Position row,

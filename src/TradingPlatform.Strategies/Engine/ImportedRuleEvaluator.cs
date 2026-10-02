@@ -217,7 +217,8 @@ public static class ImportedRuleEvaluator
 
     /// <summary>
     /// freqtrade BinHV45. Close Bollinger(40, 2). Published gates are 0.008, 0.0175 and a wick under 0.25 of the band.
-    /// No separate exit signal. minimal_roi 1.25%, stoploss 5%. Long only.
+    /// Exit when the close reaches 2.5% either way. A wick through the level does not exit: the exchange stop and take own the wick.
+    /// Long only. The published 1.25% take against a 5% stop cannot pay at the win rate this book has shown.
     /// </summary>
     private static StrategySignalDetail BinHv45(
         IReadOnlyList<MarketCandle> candles,
@@ -235,11 +236,11 @@ public static class ImportedRuleEvaluator
             bbRatio: 0.008m,
             closeRatio: 0.0175m,
             tailRatio: 0.25m,
-            stopPct: 0.05m,
-            roiPct: 0.0125m,
+            stopPct: 0.025m,
+            roiPct: 0.025m,
             exitProfitOnly: false,
             entryReason: "BinHV45 close is under the prior lower band with a short lower wick.",
-            exitReason: "BinHV45 minimal ROI or 5% stop.");
+            exitReason: "BinHV45 close reached the 2.5% take or the 2.5% stop.");
 
     /// <summary>freqtrade ClucMay72018. Typical-price Bollinger(20, 2), EMA(50), volume cap. ROI 1%, stop 5%.</summary>
     private static StrategySignalDetail ClucMay72018(
@@ -347,7 +348,7 @@ public static class ImportedRuleEvaluator
             return false;
         }
 
-        return bar.Low <= entry * (1m - stopPct) || bar.High >= entry * (1m + roiPct);
+        return bar.Close <= entry * (1m - stopPct) || bar.Close >= entry * (1m + roiPct);
     }
 
     private static bool BinHvEntry(

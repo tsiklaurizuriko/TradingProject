@@ -368,6 +368,34 @@ public sealed class IsolatedOccupancyTests
     }
 
     [Fact]
+    public void PriorOwner_returns_the_bot_that_existed_when_the_fill_opened()
+    {
+        var opened = DateTimeOffset.Parse("2026-09-20T12:00:00Z");
+        var adx = new Bot
+        {
+            Name = "AKE ADX",
+            Symbol = "AKEUSDT",
+            Status = BotStatus.Running,
+            Mode = TradingMode.Live,
+            CreatedAt = opened.AddDays(-2),
+            StrategyVersion = new StrategyVersion { Strategy = new Strategy { Name = "ADX SMA Cross" } }
+        };
+        var flat = new Bot
+        {
+            Name = "AKE Flat Range",
+            Symbol = "AKEUSDT",
+            Status = BotStatus.Running,
+            Mode = TradingMode.Live,
+            CreatedAt = opened.AddDays(1),
+            StrategyVersion = new StrategyVersion { Strategy = new Strategy { Name = "Flat Range" } }
+        };
+
+        IsolatedOccupancy.BotExistedAtOpen(flat.CreatedAt, opened).Should().BeFalse();
+        IsolatedOccupancy.BotExistedAtOpen(adx.CreatedAt, opened).Should().BeTrue();
+        IsolatedOccupancy.PriorOwner([flat, adx], "AKEUSDT", opened, flat.Id)!.Id.Should().Be(adx.Id);
+    }
+
+    [Fact]
     public void UniqueClosedTrips_keeps_the_binance_fill_when_two_bots_recorded_the_same_isolated_close()
     {
         var opened = DateTimeOffset.Parse("2026-09-23T09:44:36Z");
@@ -409,6 +437,53 @@ public sealed class IsolatedOccupancyTests
             t => t.ClosedAt,
             t => t.CorrelationId,
             t => t.Fees).Should().HaveCount(2);
+    }
+
+    [Fact]
+    public void UniqueClosedTrips_keeps_a_later_same_size_trip_that_only_overlaps_a_stale_window()
+    {
+        var firstOpen = DateTimeOffset.Parse("2026-09-26T08:00:00Z");
+        var rows = new[]
+        {
+            new Trip("XPLUSDT", 210m, 0.12m, 0.11m, 2m, 0.02m, firstOpen, firstOpen.AddHours(4), "BNT-ghost"),
+            new Trip("XPLUSDT", 210m, 0.11m, 0.12m, -1m, 0.02m, firstOpen.AddHours(1), firstOpen.AddHours(2), "BNT-next")
+        };
+
+        IsolatedOccupancy.UniqueClosedTrips(
+            rows,
+            t => t.Symbol,
+            t => t.Quantity,
+            t => t.OpenedAt,
+            t => t.ClosedAt,
+            t => t.CorrelationId,
+            t => t.Fees).Should().HaveCount(2);
+    }
+
+    [Fact]
+    public void UniqueClosedTrips_drops_zero_quantity_shards_when_a_sized_fill_covers_them()
+    {
+        var opened = DateTimeOffset.Parse("2026-09-26T10:54:35Z");
+        var closed = opened.AddHours(10);
+        var rows = new[]
+        {
+            new Trip("XPLUSDT", 210m, 0.12104m, 0.11135m, 2.0349m, 0.0244m, opened, closed, "BNT325094579"),
+            new Trip("XPLUSDT", 210m, 0.12104m, 0.11135m, 2.0349m, 0.0244m, opened, closed, "BNT325094579"),
+            new Trip("XPLUSDT", 0m, 0m, 0m, 1.44381m, 0m, closed, closed, "BNT325094577"),
+            new Trip("XPLUSDT", 0m, 0m, 0m, 0.44574m, 0m, closed, closed, "BNT325094578")
+        };
+
+        var unique = IsolatedOccupancy.UniqueClosedTrips(
+            rows,
+            t => t.Symbol,
+            t => t.Quantity,
+            t => t.OpenedAt,
+            t => t.ClosedAt,
+            t => t.CorrelationId,
+            t => t.Fees);
+
+        unique.Should().ContainSingle();
+        unique[0].PnL.Should().Be(2.0349m);
+        unique[0].Quantity.Should().Be(210m);
     }
 
     [Fact]
