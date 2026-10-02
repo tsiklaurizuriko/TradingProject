@@ -4,7 +4,7 @@ This describes the current bot cycle. It is not a claim that live trading is saf
 
 ## Gates
 
-New live entries go through `LiveEntryGate.Block`. Paper mode is not blocked. An exit or other exposure-reducing action is not blocked by the gate.
+New entries go through `LiveEntryGate.Block`. Paper and testnet are rejected. They are not mapped to live. An exit of an already open live position is not blocked by the entry flag.
 
 The gate refuses a new live entry unless all of these are true:
 
@@ -35,7 +35,7 @@ A position, execution, and realized PnL change only for the new executed delta. 
 
 ## Fees
 
-On the Binance connector, `ExchangeOrder.Fee` is the cumulative USDT commission from the order payload or from `GET /fapi/v1/userTrades` for that order id. It is not a per-fill delta. `FeeKnown` is false when the commission was missing or was not USDT. A missing fee is stored as unresolved, not as an actual zero. `FillAccounting` subtracts the fee already booked and applies only the positive delta. A cumulative fee that moves backwards is `Uncertain`. Replaying the same cumulative fee books nothing.
+On the Binance connector, `ExchangeOrder.Fee` is the cumulative commission for that order. The asset is read from `commissionAsset` on the order payload or from `GET /fapi/v1/userTrades`. It is not a per-fill delta and it is not assumed to be USDT. `FeeKnown` is false when the amount or the asset is missing, or when the assets disagree. A non-USDT commission is stored with that asset and is not converted. Fees in different assets are not added together. A missing fee is not stored as an actual zero. `FillAccounting` subtracts the fee already booked in the same asset and applies only the positive delta. A cumulative fee that moves backwards, or an asset that changes, is `Uncertain`. Replaying the same cumulative fee books nothing. Booking ids use a `local-fill:` or `local-fee:` prefix so they are not exchange trade ids.
 
 ## Recovery
 
@@ -60,7 +60,7 @@ Stop and take-profit orders are queried on the algo endpoint as well as the orde
 
 ## Risk
 
-`RiskLiveGuard.EnsureAllowed` rejects a live start when the profile is missing, `AllowLive` is false, or risk-per-trade, stop, leverage, daily loss, exposure, or position count is missing or out of range. It does not fill those in with a silent substitute. Paper mode is not rejected here.
+`RiskLiveGuard.EnsureAllowed` rejects a start when the mode is not live, when the profile is missing, when `AllowLive` is false, or when risk-per-trade, stop, leverage, daily loss, exposure, or position count is missing or out of range. It does not fill those in with a silent substitute.
 
 `RiskLiveGuard.Reject`, used before a live submit, also checks the kill switch, equity, available margin, daily realized loss, open exposure, position counts, leverage, stop distance, minimum quantity, minimum notional, required margin, and the loss cooldown. A missing equity, missing margin, or unknown drawdown flag fails closed and names the missing input. The bot cycle enforces daily realized loss. It does not have a peak-equity drawdown series, so that separate metric is not calculated.
 

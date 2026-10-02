@@ -36,9 +36,9 @@ public sealed class FillAccountingTests
         first.BlocksNewEntries.Should().BeFalse();
 
         var repeat = FillAccounting.Apply(
-            new BookedFill(first.FilledQuantity, 100m, 0.4m),
+            new BookedFill(first.FilledQuantity, 100m, 0.4m, "USDT"),
             1m,
-            new ExchangeFillReport(OrderStatus.Filled, 1m, 100m, 0.4m, "ex-1", null));
+            new ExchangeFillReport(OrderStatus.Filled, 1m, 100m, 0.4m, "ex-1", null, FeeAsset: "USDT"));
         repeat.NewFill.Should().BeNull();
         repeat.AdditionalFee.Should().Be(0m);
         repeat.Status.Should().Be(OrderStatus.Filled);
@@ -50,23 +50,23 @@ public sealed class FillAccountingTests
         var first = FillAccounting.Apply(
             new BookedFill(0m, null, 0m),
             1m,
-            new ExchangeFillReport(OrderStatus.PartiallyFilled, 0.4m, 100m, 0.1m, "ex-1", null));
+            new ExchangeFillReport(OrderStatus.PartiallyFilled, 0.4m, 100m, 0.1m, "ex-1", null, FeeAsset: "USDT"));
         first.NewFill!.Quantity.Should().Be(0.4m);
         first.NewFill.Price.Should().Be(100m);
 
         var second = FillAccounting.Apply(
-            new BookedFill(0.4m, 100m, 0.1m),
+            new BookedFill(0.4m, 100m, 0.1m, "USDT"),
             1m,
-            new ExchangeFillReport(OrderStatus.Filled, 1.0m, 110m, 0.25m, "ex-1", null));
+            new ExchangeFillReport(OrderStatus.Filled, 1.0m, 110m, 0.25m, "ex-1", null, FeeAsset: "USDT"));
         second.NewFill!.Quantity.Should().Be(0.6m);
         second.NewFill.Price.Should().BeApproximately(116.6666667m, 0.0000001m);
         second.NewFill.Fee.Should().Be(0.15m);
         second.AverageFillPrice.Should().Be(110m);
 
         var replay = FillAccounting.Apply(
-            new BookedFill(1.0m, 110m, 0.25m),
+            new BookedFill(1.0m, 110m, 0.25m, "USDT"),
             1m,
-            new ExchangeFillReport(OrderStatus.Filled, 1.0m, 110m, 0.25m, "ex-1", null));
+            new ExchangeFillReport(OrderStatus.Filled, 1.0m, 110m, 0.25m, "ex-1", null, FeeAsset: "USDT"));
         replay.NewFill.Should().BeNull();
         replay.AdditionalFee.Should().Be(0m);
     }
@@ -103,9 +103,9 @@ public sealed class FillAccountingTests
     {
         var first = Apply(0m, 1m, OrderStatus.PartiallyFilled, 0.3m, 110m, 0.02m);
         var more = FillAccounting.Apply(
-            new BookedFill(0.3m, 110m, 0.02m),
+            new BookedFill(0.3m, 110m, 0.02m, "USDT"),
             1m,
-            new ExchangeFillReport(OrderStatus.Filled, 1m, 112m, 0.08m, "ex-1", null));
+            new ExchangeFillReport(OrderStatus.Filled, 1m, 112m, 0.08m, "ex-1", null, FeeAsset: "USDT"));
         more.Status.Should().Be(OrderStatus.Filled);
         more.NewFill!.Quantity.Should().Be(0.7m);
         more.NewFill.Price.Should().BeApproximately(112.8571428m, 0.0000001m);
@@ -124,15 +124,15 @@ public sealed class FillAccountingTests
         quote.NewFill.Should().BeNull();
 
         var fee = FillAccounting.Apply(
-            new BookedFill(1m, 100m, 0.4m),
+            new BookedFill(1m, 100m, 0.4m, "USDT"),
             1m,
-            new ExchangeFillReport(OrderStatus.Filled, 1m, 100m, 0.1m, "ex-1", null));
+            new ExchangeFillReport(OrderStatus.Filled, 1m, 100m, 0.1m, "ex-1", null, FeeAsset: "USDT"));
         fee.Uncertain.Should().BeTrue();
 
         var perFill = FillAccounting.Apply(
             new BookedFill(0.4m, 100m, 0m),
             1m,
-            new ExchangeFillReport(OrderStatus.Filled, 1m, 110m, 0.05m, "ex-1", null, FeeIsCumulative: false));
+            new ExchangeFillReport(OrderStatus.Filled, 1m, 110m, 0.05m, "ex-1", null, FeeIsCumulative: false, FeeAsset: "USDT"));
         perFill.NewFill!.Fee.Should().Be(0.05m);
         perFill.NewFill.FeeKnown.Should().BeTrue();
 
@@ -174,6 +174,38 @@ public sealed class FillAccountingTests
         noPrice.NewFill.Should().BeNull();
     }
 
+    [Fact]
+    public void Missing_or_inconsistent_fee_asset_is_not_booked_as_usdt()
+    {
+        var missingAsset = FillAccounting.Apply(
+            new BookedFill(0m, null, 0m),
+            1m,
+            new ExchangeFillReport(OrderStatus.Filled, 1m, 100m, 0.2m, "ex-1", null));
+        missingAsset.Uncertain.Should().BeTrue();
+        missingAsset.Reason.Should().Contain("asset");
+
+        var later = FillAccounting.Apply(
+            new BookedFill(1m, 100m, 0m),
+            1m,
+            new ExchangeFillReport(OrderStatus.Filled, 1m, 100m, 0.2m, "ex-1", null, FeeAsset: "USDT"));
+        later.NewFill.Should().BeNull();
+        later.AdditionalFee.Should().Be(0.2m);
+        later.AdditionalFeeKnown.Should().BeTrue();
+
+        var replay = FillAccounting.Apply(
+            new BookedFill(1m, 100m, 0.2m, "USDT"),
+            1m,
+            new ExchangeFillReport(OrderStatus.Filled, 1m, 100m, 0.2m, "ex-1", null, FeeAsset: "USDT"));
+        replay.AdditionalFee.Should().Be(0m);
+
+        var changed = FillAccounting.Apply(
+            new BookedFill(1m, 100m, 0.2m, "USDT"),
+            1m,
+            new ExchangeFillReport(OrderStatus.Filled, 1m, 100m, 0.3m, "ex-1", null, FeeAsset: "BNB"));
+        changed.Uncertain.Should().BeTrue();
+        changed.Reason.Should().Contain("asset");
+    }
+
     private static FillApplication Apply(
         decimal previous,
         decimal requested,
@@ -181,7 +213,7 @@ public sealed class FillAccountingTests
         decimal executed,
         decimal? price,
         decimal? fee) =>
-        FillAccounting.Apply(previous, requested, new ExchangeFillReport(status, executed, price, fee, "ex-1", null));
+        FillAccounting.Apply(previous, requested, new ExchangeFillReport(status, executed, price, fee, "ex-1", null, FeeAsset: fee is null ? null : "USDT"));
 }
 
 public sealed class OrderRecoveryTests
@@ -212,15 +244,15 @@ public sealed class OrderRecoveryTests
     {
         var partial = OrderRecovery.Decide(OrderLookup.Found(Sample(OrderStatus.PartiallyFilled, 0.4m)));
         var applied = FillAccounting.Apply(0m, 1m, new ExchangeFillReport(
-            partial.Order!.Status, partial.Order.FilledQuantity, 100m, 0.1m, partial.Order.ExchangeOrderId, null));
+            partial.Order!.Status, partial.Order.FilledQuantity, 100m, 0.1m, partial.Order.ExchangeOrderId, null, FeeAsset: "USDT"));
         applied.NewFill!.Quantity.Should().Be(0.4m);
         FillAccounting.Apply(applied.FilledQuantity, 1m, new ExchangeFillReport(
-            partial.Order.Status, partial.Order.FilledQuantity, 100m, 0.1m, partial.Order.ExchangeOrderId, null))
+            partial.Order.Status, partial.Order.FilledQuantity, 100m, 0.1m, partial.Order.ExchangeOrderId, null, FeeAsset: "USDT"))
             .NewFill.Should().BeNull();
 
         var full = OrderRecovery.Decide(OrderLookup.Found(Sample(OrderStatus.Filled, 1m)));
         var booked = FillAccounting.Apply(0m, 1m, new ExchangeFillReport(
-            full.Order!.Status, full.Order.FilledQuantity, 101m, 0.2m, full.Order.ExchangeOrderId, null));
+            full.Order!.Status, full.Order.FilledQuantity, 101m, 0.2m, full.Order.ExchangeOrderId, null, FeeAsset: "USDT"));
         booked.Status.Should().Be(OrderStatus.Filled);
         booked.NewFill!.Quantity.Should().Be(1m);
     }
@@ -234,9 +266,9 @@ public sealed class OrderRecoveryTests
         uncertain.Uncertain.Should().BeTrue();
         uncertain.NewFill.Should().BeNull();
 
-        var late = FillAccounting.Apply(uncertain.FilledQuantity, 1m, new ExchangeFillReport(OrderStatus.Filled, 1m, 99m, 0.3m, "ex-late", null));
+        var late = FillAccounting.Apply(uncertain.FilledQuantity, 1m, new ExchangeFillReport(OrderStatus.Filled, 1m, 99m, 0.3m, "ex-late", null, FeeAsset: "USDT"));
         late.NewFill!.Quantity.Should().Be(1m);
-        FillAccounting.Apply(late.FilledQuantity, 1m, new ExchangeFillReport(OrderStatus.Filled, 1m, 99m, 0.3m, "ex-late", null))
+        FillAccounting.Apply(late.FilledQuantity, 1m, new ExchangeFillReport(OrderStatus.Filled, 1m, 99m, 0.3m, "ex-late", null, FeeAsset: "USDT"))
             .NewFill.Should().BeNull();
 
         OrderRecovery.Decide(OrderLookup.Unavailable("5xx")).Kind.Should().Be(missed.Kind);
@@ -292,7 +324,7 @@ public sealed class LiveEntryGateTests
     {
         LiveEntryGate.Block(Facts(true, false, true, false, true, true, true, false)).Should().BeNull();
         LiveEntryGate.Block(Facts(false, true, false, true, false, false, false, true)).Should().BeNull();
-        LiveEntryGate.BlockNewEntry(TradingMode.Paper, false).Should().BeNull();
+        LiveEntryGate.BlockNewEntry(TradingMode.Paper, false).Should().Contain("Only live mode");
         LiveEntryGate.BlockNewEntry(TradingMode.Live, false).Should().NotBeNull();
     }
 
@@ -346,7 +378,7 @@ public sealed class LiveRiskBoundaryTests
         RiskLiveGuard.ProfileProblem(TradingMode.Live, new RiskProfile { AllowLive = false }).Should().Contain("not allowed");
         RiskLiveGuard.ProfileProblem(TradingMode.Live, new RiskProfile { AllowLive = true, RiskPerTradePercent = 0m })
             .Should().Contain("Risk per trade");
-        RiskLiveGuard.ProfileProblem(TradingMode.Paper, new RiskProfile { AllowLive = false }).Should().BeNull();
+        RiskLiveGuard.ProfileProblem(TradingMode.Paper, new RiskProfile { AllowLive = false }).Should().Contain("Only live mode");
     }
 
     private static RiskProfile Profile() => new()
@@ -435,6 +467,49 @@ public sealed class ReconciliationSafetyTests
         position.Quantity.Should().Be(0.01m);
         position.RealizedPnL.Should().Be(0m);
         position.ClosedAt.Should().BeNull();
+        (await db.Trades.SingleAsync()).ClosedAt.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Missing_position_without_a_strategy_is_left_open()
+    {
+        await using var db = await SeedLivePositionAsync();
+        var bot = await db.Bots.SingleAsync();
+        bot.StrategyVersionId = Guid.NewGuid();
+        bot.StrategyVersion = null!;
+        await db.SaveChangesAsync();
+        var live = new LiveAccountCache();
+        live.Set(FreshBook([], []));
+        var state = new ReconciliationState();
+        await Reconciler(db, live, state).ReconcileAsync();
+        await Reconciler(db, live, state).ReconcileAsync();
+
+        state.BlockReason.Should().Contain("no strategy version");
+        var position = await db.Positions.SingleAsync();
+        position.Quantity.Should().Be(0.01m);
+        position.RealizedPnL.Should().Be(0m);
+        position.ClosedAt.Should().BeNull();
+        (await db.Trades.SingleAsync()).ClosedAt.Should().BeNull();
+        (await db.Executions.CountAsync()).Should().Be(0);
+        LiveEntryGate.Block(new LiveEntryFacts(TradingMode.Live, true, false, false, true, true, true, true, false))
+            .Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task Missing_position_without_a_bot_is_left_open()
+    {
+        await using var db = await SeedLivePositionAsync(includeBot: false);
+        var live = new LiveAccountCache();
+        live.Set(FreshBook([], []));
+        var state = new ReconciliationState();
+        await Reconciler(db, live, state).ReconcileAsync();
+
+        state.BlockReason.Should().Contain("no bot record");
+        var position = await db.Positions.SingleAsync();
+        position.Quantity.Should().Be(0.01m);
+        position.ClosedAt.Should().BeNull();
+        position.RealizedPnL.Should().Be(0m);
+        (await db.Orders.CountAsync()).Should().Be(0);
     }
 
     [Fact]
@@ -485,7 +560,10 @@ public sealed class ReconciliationSafetyTests
         OpenOrders = orders
     };
 
-    private static async Task<TradingDbContext> SeedLivePositionAsync(bool includePosition = true)
+    private static async Task<TradingDbContext> SeedLivePositionAsync(
+        bool includePosition = true,
+        bool includeStrategy = true,
+        bool includeBot = true)
     {
         var options = new DbContextOptionsBuilder<TradingDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
@@ -508,30 +586,119 @@ public sealed class ReconciliationSafetyTests
             User = user,
             UserId = user.Id,
             ExchangeAccount = account,
-            StrategyVersion = version,
+            StrategyVersion = includeStrategy ? version : null!,
+            StrategyVersionId = includeStrategy ? version.Id : Guid.Empty,
             Name = "BTC",
             Status = BotStatus.Running,
             Mode = TradingMode.Live,
             Symbol = "BTCUSDT",
             Timeframe = Timeframe.FifteenMinutes
         };
-        db.AddRange(user, strategy, account, bot);
+        db.AddRange(user, strategy, account);
+        if (includeBot)
+        {
+            db.Bots.Add(bot);
+        }
+
         if (includePosition)
         {
-            db.Positions.Add(new Position
+            var position = new Position
             {
-                Bot = bot,
+                Bot = includeBot ? bot : null!,
+                BotId = includeBot ? bot.Id : Guid.NewGuid(),
                 Symbol = "BTCUSDT",
                 Side = PositionSide.Long,
                 Quantity = 0.01m,
                 AverageEntryPrice = 50_000m,
                 CurrentPrice = 50_100m,
                 OpenedAt = DateTimeOffset.UtcNow.AddMinutes(-5)
-            });
+            };
+            db.Positions.Add(position);
+            if (includeBot)
+            {
+                db.Trades.Add(new TradingPlatform.Domain.Trades.Trade
+                {
+                    Bot = bot,
+                    Strategy = strategy,
+                    StrategyVersion = includeStrategy ? version : null!,
+                    Symbol = "BTCUSDT",
+                    Side = OrderSide.Buy,
+                    Quantity = 0.01m,
+                    EntryPrice = 50_000m,
+                    OpenedAt = position.OpenedAt
+                });
+            }
         }
 
         await db.SaveChangesAsync();
         return db;
+    }
+}
+
+public sealed class CommissionReaderTests
+{
+    [Fact]
+    public void Commission_uses_the_reported_asset_and_does_not_guess_usdt()
+    {
+        var usdt = TradingPlatform.Binance.CommissionReader.FromUserTrades(Json("""
+            [{"commission":"0.1","commissionAsset":"USDT"},{"commission":"0.2","commissionAsset":"USDT"}]
+            """));
+        usdt.Known.Should().BeTrue();
+        usdt.Amount.Should().Be(0.3m);
+        usdt.Asset.Should().Be("USDT");
+
+        var bnb = TradingPlatform.Binance.CommissionReader.FromUserTrades(Json("""
+            [{"commission":"0.01","commissionAsset":"BNB"}]
+            """));
+        bnb.Known.Should().BeTrue();
+        bnb.Asset.Should().Be("BNB");
+
+        var missingAmount = TradingPlatform.Binance.CommissionReader.FromUserTrades(Json("""
+            [{"commissionAsset":"USDT"}]
+            """));
+        missingAmount.Known.Should().BeFalse();
+
+        var missingAsset = TradingPlatform.Binance.CommissionReader.FromOrderPayload(Json("""
+            {"commission":"0.4"}
+            """));
+        missingAsset.Known.Should().BeFalse();
+        missingAsset.Asset.Should().BeNull();
+
+        var mixed = TradingPlatform.Binance.CommissionReader.FromUserTrades(Json("""
+            [{"commission":"0.1","commissionAsset":"USDT"},{"commission":"0.1","commissionAsset":"BNB"}]
+            """));
+        mixed.Known.Should().BeFalse();
+        mixed.Problem.Should().Contain("disagree");
+    }
+
+    private static System.Text.Json.JsonElement Json(string text) =>
+        System.Text.Json.JsonDocument.Parse(text).RootElement;
+}
+
+public sealed class LiveConfigurationTests
+{
+    [Fact]
+    public void Api_and_worker_settings_keep_live_submission_disabled()
+    {
+        var root = RepoRoot();
+        var api = File.ReadAllText(Path.Combine(root, "src", "TradingPlatform.Api", "appsettings.json"));
+        var workers = File.ReadAllText(Path.Combine(root, "src", "TradingPlatform.Workers", "appsettings.json"));
+        api.Should().Contain("\"LiveTradingEnabled\": false");
+        workers.Should().Contain("\"LiveTradingEnabled\": false");
+        api.Should().NotContain("DefaultMode");
+        workers.Should().NotContain("PaperFeeBps");
+        workers.Should().NotContain("PaperSlippageBps");
+    }
+
+    private static string RepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "TradingPlatform.slnx")))
+        {
+            dir = dir.Parent;
+        }
+
+        return dir?.FullName ?? throw new DirectoryNotFoundException("TradingPlatform.slnx");
     }
 }
 

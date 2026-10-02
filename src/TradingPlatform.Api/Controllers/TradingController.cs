@@ -176,30 +176,30 @@ public sealed class TradingController : ControllerBase
 
     [HttpPost("bots/sample-paper/start")]
     [HttpPost("bots/top-volume-paper/start")]
-    public Task<IReadOnlyList<BotDto>> StartTopVolumePaper(CancellationToken cancellationToken) =>
-        _lifecycle.StartTopVolumePaperBotsAsync(UserId(), cancellationToken);
+    public Task<IReadOnlyList<BotDto>> StartTopVolumePaper(CancellationToken cancellationToken)
+    {
+        _ = cancellationToken;
+        throw new DomainException(ErrorCodes.ValidationFailed, "Paper trading is not supported. No paper bot was started.");
+    }
 
     [HttpPost("bots/start-symbol")]
     public Task<BotDto> StartSymbol([FromBody] StartSymbolRequest request, CancellationToken cancellationToken)
     {
-        var mode = Enum.TryParse<TradingMode>(request.Mode, true, out var parsed) ? parsed : TradingMode.Paper;
+        var mode = RequireLive(request.Mode);
         return _lifecycle.StartSymbolAsync(UserId(), request.Symbol, mode, request.StrategyId, request.RiskProfileId, cancellationToken);
     }
 
     [HttpPost("bots/create")]
     public Task<CreateBotsResult> CreateBots([FromBody] CreateBotsRequest request, CancellationToken cancellationToken)
     {
-        var mode = Enum.TryParse<TradingMode>(request.Mode, true, out var parsed) ? parsed : TradingMode.Paper;
+        var mode = RequireLive(request.Mode);
         return _lifecycle.CreateSymbolBotsAsync(UserId(), mode, request.StrategyId, request.RiskProfileId, request.Symbols ?? [], cancellationToken);
     }
 
     [HttpPost("bots/start-all")]
     public Task<StartBotsResult> StartAll([FromBody] StartBotsRequest request, CancellationToken cancellationToken)
     {
-        if (!Enum.TryParse<TradingMode>(request.Mode, true, out var parsed) || parsed is not (TradingMode.Paper or TradingMode.Live))
-        {
-            throw new DomainException(ErrorCodes.ValidationFailed, "Use Paper or Live.");
-        }
+        var parsed = RequireLive(request.Mode);
 
         return _lifecycle.StartAllIdleAsync(UserId(), parsed, request.PreferredStrategyId, cancellationToken);
     }
@@ -207,10 +207,7 @@ public sealed class TradingController : ControllerBase
     [HttpPost("bots/start-strategy")]
     public Task<StartBotsResult> StartStrategy([FromBody] StrategyBotsRequest request, CancellationToken cancellationToken)
     {
-        if (!Enum.TryParse<TradingMode>(request.Mode, true, out var parsed) || parsed is not (TradingMode.Paper or TradingMode.Live))
-        {
-            throw new DomainException(ErrorCodes.ValidationFailed, "Use Paper or Live.");
-        }
+        var parsed = RequireLive(request.Mode);
 
         if (request.StrategyId == Guid.Empty)
         {
@@ -223,10 +220,7 @@ public sealed class TradingController : ControllerBase
     [HttpPost("bots/stop-all")]
     public Task<StopBotsResult> StopAll([FromBody] StartBotsRequest request, CancellationToken cancellationToken)
     {
-        if (!Enum.TryParse<TradingMode>(request.Mode, true, out var parsed) || parsed is not (TradingMode.Paper or TradingMode.Live))
-        {
-            throw new DomainException(ErrorCodes.ValidationFailed, "Use Paper or Live.");
-        }
+        var parsed = RequireLive(request.Mode);
 
         return _lifecycle.StopAllRunningAsync(UserId(), parsed, request.PreferredStrategyId, cancellationToken);
     }
@@ -234,10 +228,7 @@ public sealed class TradingController : ControllerBase
     [HttpPost("bots/stop-strategy")]
     public Task<StopBotsResult> StopStrategy([FromBody] StrategyBotsRequest request, CancellationToken cancellationToken)
     {
-        if (!Enum.TryParse<TradingMode>(request.Mode, true, out var parsed) || parsed is not (TradingMode.Paper or TradingMode.Live))
-        {
-            throw new DomainException(ErrorCodes.ValidationFailed, "Use Paper or Live.");
-        }
+        var parsed = RequireLive(request.Mode);
 
         if (request.StrategyId == Guid.Empty)
         {
@@ -317,10 +308,7 @@ public sealed class TradingController : ControllerBase
     [HttpPost("bots/delete")]
     public Task<DeleteBotsResult> DeleteMany([FromBody] DeleteBotsRequest request, CancellationToken cancellationToken)
     {
-        if (!Enum.TryParse<TradingMode>(request.Mode, true, out var parsed) || parsed is not (TradingMode.Paper or TradingMode.Live))
-        {
-            throw new DomainException(ErrorCodes.ValidationFailed, "Use Paper or Live.");
-        }
+        var parsed = RequireLive(request.Mode);
 
         return _lifecycle.DeleteBotsAsync(request.Ids ?? [], parsed, cancellationToken);
     }
@@ -460,6 +448,16 @@ public sealed class TradingController : ControllerBase
     [HttpGet("research/contextual-price-action")]
     public Task<ContextualPriceActionSummaryDto> ContextualPriceAction(CancellationToken cancellationToken) =>
         _priceAction.GetContextualSummaryAsync(cancellationToken);
+
+    private static TradingMode RequireLive(string? mode)
+    {
+        if (!string.Equals(mode, "Live", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new DomainException(ErrorCodes.ValidationFailed, $"Trading mode '{mode}' is not supported. Only Live is accepted.");
+        }
+
+        return TradingMode.Live;
+    }
 
     private Guid UserId()
     {

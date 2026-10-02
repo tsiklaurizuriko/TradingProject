@@ -74,7 +74,7 @@ Decisions that materially affect the platform. Newest first within each ID seque
 
 **Status:** Accepted
 
-**Decision:** Paper trading is an `IExchangeConnector` implementation (`PaperExchangeConnector`) that consumes real public market data and simulates fills. Testnet/live use `BinanceExchangeConnector` with different base URLs and a live-guard.
+**Decision:** Paper runtime execution was removed. Live is the only supported trading mode. Order submission stays off until `Trading:LiveTradingEnabled` is set. Historical Paper rows are not rewritten and cannot be started. Backtests remain a separate research path.
 
 **Why:** Three separate engines drift. Bugs would appear only in live.
 

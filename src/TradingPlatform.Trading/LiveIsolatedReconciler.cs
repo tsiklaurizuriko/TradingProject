@@ -63,7 +63,7 @@ public sealed class LiveIsolatedReconciler
 
             var book = await _store.GetOpenPositionsForModeAsync(TradingMode.Live, cancellationToken);
         var now = _clock.UtcNow;
-        var closed = 0;
+        var missing = 0;
         foreach (var position in book)
         {
             if (!IsolatedOccupancy.IsLiveGhost(position, live.OpenPositions, now))
@@ -72,31 +72,13 @@ public sealed class LiveIsolatedReconciler
             }
 
             var bot = position.Bot ?? await _store.GetBotAsync(position.BotId, cancellationToken);
-            if (bot is null || bot.StrategyVersion is null)
-            {
-                bot = bot is null ? null : await _store.GetBotAsync(bot.Id, cancellationToken) ?? bot;
-            }
-
-            if (bot?.StrategyVersion is null)
-            {
-                await CloseSnapshotWithoutStrategyAsync(bot, position, now, cancellationToken);
-                closed++;
-                _logger.LogInformation(
-                    "LIVE Isolated {Symbol} is flat on Binance. Closed leftover snapshot without a strategy record.",
-                    position.Symbol);
-                continue;
-            }
-
-            if (await CloseGhostAsync(bot, position, cancellationToken))
-            {
-                closed++;
-            }
+            await RecordMissingPositionAsync(bot, position, cancellationToken);
+            missing++;
         }
 
-        if (closed > 0)
+        if (missing > 0)
         {
             await _store.SaveChangesAsync(cancellationToken);
-            _logger.LogInformation("Reconciled {Count} Isolated snapshot(s) that Binance no longer holds.", closed);
         }
 
         var unknown = new List<string>();
@@ -147,55 +129,23 @@ public sealed class LiveIsolatedReconciler
         }
     }
 
-    private async Task CloseSnapshotWithoutStrategyAsync(
-        Bot? bot,
-        Position position,
-        DateTimeOffset now,
-        CancellationToken cancellationToken)
+    private Task RecordMissingPositionAsync(Bot? bot, Position position, CancellationToken cancellationToken)
     {
-        var quantity = position.Quantity;
-        var exit = position.CurrentPrice > 0m ? position.CurrentPrice : position.AverageEntryPrice;
-        if (_cache.TryGetTicker(position.Symbol, out var mark) && mark > 0m)
-        {
-            exit = mark;
-        }
-
-        var direction = position.Side == PositionSide.Short ? -1m : 1m;
-        var pnl = direction * (exit - position.AverageEntryPrice) * quantity;
-        position.Quantity = 0m;
-        position.CurrentPrice = exit;
-        position.UnrealizedPnL = 0m;
-        position.RealizedPnL += pnl;
-        position.ClosedAt = now;
-        if (bot is null)
-        {
-            return;
-        }
-
-        var openTrade = await _store.GetOpenTradeAsync(bot.Id, cancellationToken);
-        if (openTrade is null ||
-            !string.Equals(openTrade.Symbol, position.Symbol, StringComparison.OrdinalIgnoreCase))
-        {
-            return;
-        }
-
-        var pnlPercent = position.AverageEntryPrice == 0m
-            ? 0m
-            : direction * (exit - position.AverageEntryPrice) / position.AverageEntryPrice * 100m;
-        openTrade.Quantity = quantity > 0m ? quantity : openTrade.Quantity;
-        openTrade.ExitPrice = exit;
-        openTrade.PnL = pnl;
-        openTrade.PnLPercent = pnlPercent;
-        openTrade.ClosedAt = now;
-    }
-
-    private Task<bool> CloseGhostAsync(Bot bot, Position position, CancellationToken cancellationToken)
-    {
-        var reason = $"Local position {position.Symbol} is absent from a fresh exchange snapshot. It was left open. No exchange fill or realized PnL was created.";
+        _ = cancellationToken;
+        var who = bot is null
+            ? "no bot record"
+            : bot.StrategyVersion is null
+                ? "bot " + bot.Id + " has no strategy version"
+                : "bot " + bot.Id;
+        var reason = $"Local position {position.Symbol} ({who}) is absent from a fresh exchange snapshot. It was left open. No exchange fill, trade close, or realized PnL was created.";
         _state.Fail(reason, _clock.UtcNow);
-        bot.LastError = reason;
+        if (bot is not null)
+        {
+            bot.LastError = reason;
+        }
+
         _logger.LogError("Reconciliation discrepancy for {Symbol}. {Reason}", position.Symbol, reason);
-        return Task.FromResult(false);
+        return Task.CompletedTask;
     }
 
     private async Task CancelProtectiveRowAsync(string clientOrderId, CancellationToken cancellationToken)

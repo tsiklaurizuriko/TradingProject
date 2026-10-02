@@ -77,9 +77,9 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
     /// <summary>
     /// Read-only query. A Binance "order does not exist" (-2013/-2011) from both the order and algo
     /// endpoints is <see cref="OrderLookupKind.ConfirmedAbsent"/>. Timeouts, 429, and 5xx stay unavailable.
-    /// Commission on <see cref="ExchangeOrder.Fee"/> is the cumulative USDT commission from the order
-    /// payload or from user trades for that order id. It is not a per-fill delta. A missing commission
-    /// leaves <see cref="ExchangeOrder.FeeKnown"/> false and must not be stored as an actual zero fee.
+    /// Commission on <see cref="ExchangeOrder.Fee"/> is the cumulative commission for that order, with the
+    /// asset read from the payload or from user trades. It is not a per-fill delta and it is not assumed
+    /// to be USDT. A missing amount or asset leaves <see cref="ExchangeOrder.FeeKnown"/> false.
     /// </summary>
     public async Task<OrderLookup> GetOrderAsync(string? clientOrderId, string? exchangeOrderId, string symbol, CancellationToken cancellationToken = default)
     {
@@ -128,14 +128,32 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
         try
         {
             var trades = await _signed.GetFuturesUserTradesAsync(key, secret, order.Symbol, order.ExchangeOrderId, cancellationToken);
-            var (total, complete, asset) = SumCommission(trades);
-            if (complete)
+            var commission = CommissionReader.FromUserTrades(trades);
+            if (commission.Known)
             {
-                return OrderLookup.Found(order with { Fee = total, FeeKnown = true, FeeAsset = asset });
+                if (order.FeeKnown
+                    && !string.IsNullOrWhiteSpace(order.FeeAsset)
+                    && !string.Equals(order.FeeAsset, commission.Asset, StringComparison.OrdinalIgnoreCase))
+                {
+                    return OrderLookup.Unavailable("Order commission asset does not match user trades. The fill was not booked.");
+                }
+
+                return OrderLookup.Found(order with { Fee = commission.Amount, FeeKnown = true, FeeAsset = commission.Asset });
             }
+
+            if (order.FeeKnown && !string.IsNullOrWhiteSpace(order.FeeAsset))
+            {
+                return lookup;
+            }
+
+            return OrderLookup.Found(order with { Fee = 0m, FeeKnown = false, FeeAsset = null });
         }
         catch (DomainException)
         {
+            if (order.FeeKnown && string.IsNullOrWhiteSpace(order.FeeAsset))
+            {
+                return OrderLookup.Found(order with { Fee = 0m, FeeKnown = false, FeeAsset = null });
+            }
         }
 
         return lookup;
@@ -187,10 +205,23 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
                     request.Symbol,
                     mapped.ExchangeOrderId,
                     cancellationToken);
-                var (fromTrades, complete, asset) = SumCommission(trades);
-                if (complete)
+                var fromTrades = CommissionReader.FromUserTrades(trades);
+                if (fromTrades.Known)
                 {
-                    mapped = mapped with { Fee = fromTrades, FeeKnown = true, FeeAsset = asset };
+                    if (mapped.FeeKnown
+                        && !string.IsNullOrWhiteSpace(mapped.FeeAsset)
+                        && !string.Equals(mapped.FeeAsset, fromTrades.Asset, StringComparison.OrdinalIgnoreCase))
+                    {
+                        mapped = mapped with { Fee = 0m, FeeKnown = false, FeeAsset = null };
+                    }
+                    else
+                    {
+                        mapped = mapped with { Fee = fromTrades.Amount, FeeKnown = true, FeeAsset = fromTrades.Asset };
+                    }
+                }
+                else if (!mapped.FeeKnown || string.IsNullOrWhiteSpace(mapped.FeeAsset))
+                {
+                    mapped = mapped with { Fee = 0m, FeeKnown = false, FeeAsset = null };
                 }
             }
             catch (DomainException)
@@ -593,8 +624,7 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
 
         var avg = ReadFillPrice(payload, executed) ?? (request.Price is > 0m ? request.Price : null);
         long? transact = payload.TryGetProperty("transactTime", out var timeEl) ? timeEl.GetInt64() : null;
-        var feeKnown = payload.TryGetProperty("commission", out _)
-            || (payload.TryGetProperty("fills", out var fills) && fills.ValueKind == JsonValueKind.Array);
+        var commission = CommissionReader.FromOrderPayload(payload);
         return new ExchangeOrder(
             payload.TryGetProperty("clientOrderId", out var cid) ? cid.GetString() ?? request.ClientOrderId : request.ClientOrderId,
             payload.TryGetProperty("orderId", out var oid) ? oid.ToString() : null,
@@ -607,10 +637,10 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
             avg,
             avg,
             transact is null ? null : DateTimeOffset.FromUnixTimeMilliseconds(transact.Value),
-            feeKnown ? ReadCommission(payload) : 0m,
-            feeKnown,
+            commission.Known ? commission.Amount : 0m,
+            commission.Known,
             payload.TryGetProperty("cumQuote", out var quoteEl) ? Dec(quoteEl) : null,
-            feeKnown ? "USDT" : null);
+            commission.Known ? commission.Asset : null);
     }
 
     private static ExchangeOrder MapAlgoOrder(JsonElement payload)
@@ -637,61 +667,6 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
             false,
             null,
             null);
-    }
-
-    private static decimal ReadCommission(JsonElement payload)
-    {
-        var total = 0m;
-        if (payload.TryGetProperty("commission", out var commissionEl))
-        {
-            total += Dec(commissionEl);
-        }
-
-        if (payload.TryGetProperty("fills", out var fills) && fills.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var fill in fills.EnumerateArray())
-            {
-                if (fill.TryGetProperty("commission", out var fillCommission))
-                {
-                    total += Dec(fillCommission);
-                }
-            }
-        }
-
-        return total;
-    }
-
-    /// <summary>
-    /// Sums commission on user trades. The result is cumulative for the queried order, not a delta.
-    /// A non-USDT commission is not converted, so the total is left unknown instead of stored as zero.
-    /// </summary>
-    private static (decimal Total, bool Complete, string? Asset) SumCommission(JsonElement trades)
-    {
-        if (trades.ValueKind != JsonValueKind.Array)
-        {
-            return (0m, false, null);
-        }
-
-        var total = 0m;
-        var saw = false;
-        foreach (var trade in trades.EnumerateArray())
-        {
-            if (!trade.TryGetProperty("commission", out var commissionEl))
-            {
-                continue;
-            }
-
-            saw = true;
-            if (trade.TryGetProperty("commissionAsset", out var assetEl)
-                && !string.Equals(assetEl.GetString(), "USDT", StringComparison.OrdinalIgnoreCase))
-            {
-                return (0m, false, assetEl.GetString());
-            }
-
-            total += Dec(commissionEl);
-        }
-
-        return saw ? (total, true, "USDT") : (0m, false, null);
     }
 
     private static decimal? ReadFillPrice(JsonElement payload, decimal executed)

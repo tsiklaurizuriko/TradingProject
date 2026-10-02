@@ -135,13 +135,11 @@ export class FillsPage {
     }
     <app-confirm-modal
       [open]="!!pending()"
-      [title]="ui.isLive() ? 'Close LIVE position' : 'Close paper position'"
-      [message]="pending() ? (ui.isLive()
-        ? 'Flatten ' + pending()!.symbol + ' on Binance with a reduce-only market order. The exit is stored as a bot close.'
-        : 'Flatten ' + pending()!.symbol + ' in paper. The exit is stored as a bot close.') : ''"
-      [warning]="ui.isLive() ? 'This sends a real Binance USD-M order. Size and fill are live.' : ''"
-      [confirmLabel]="ui.isLive() ? 'Close on Binance' : 'Close position'"
-      [danger]="ui.isLive()"
+      [title]="'Close live position'"
+      [message]="pending() ? ('Flatten ' + pending()!.symbol + ' on Binance with a reduce-only market order when live submission is allowed.') : ''"
+      [warning]="'This can send a real Binance USD-M order. A missing fill is not invented from the mark.'"
+      [confirmLabel]="'Close on Binance'"
+      [danger]="true"
       (cancel)="pending.set(null)"
       (confirm)="confirmClose()"
     />
@@ -207,7 +205,7 @@ export class PositionsPage {
       await this.trading.refresh();
       await this.trading.refreshPerformance();
       this.toast.show(
-        this.ui.isLive() ? 'LIVE position closed' : 'Paper position closed',
+        'Close submitted. The position stays open until Binance reports the fill.',
         `${row.symbol} was flattened and stored as a bot exit.`,
         this.ui.isLive() ? 'error' : 'success',
       );

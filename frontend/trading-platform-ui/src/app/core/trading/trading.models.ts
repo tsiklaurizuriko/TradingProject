@@ -267,7 +267,12 @@ export interface ExchangeConnectionDto {
 export interface SystemHealthDto {
   status: string;
   liveTradingEnabled: boolean;
+  supportedMode?: string;
   defaultMode: string;
+  liveEntryGateOpen?: boolean;
+  unresolvedOrderCount?: number;
+  reconciliationReady?: boolean;
+  blockedReason?: string | null;
   entries: Record<string, { status: string; description?: string }>;
 }
 

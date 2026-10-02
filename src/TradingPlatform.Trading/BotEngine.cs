@@ -21,7 +21,6 @@ using TradingPlatform.Risk;
 using TradingPlatform.Strategies.Engine;
 using TradingPlatform.Strategies.Indicators;
 using ExecutionFill = TradingPlatform.Domain.Orders.Execution;
-using PaperFillModel = TradingPlatform.Execution.PaperFillModel;
 using PaperOrderStateMachine = TradingPlatform.Execution.OrderStateMachine;
 
 namespace TradingPlatform.Trading;
@@ -198,9 +197,19 @@ public sealed class BotEngine : IBotEngine
 
     private async Task ApplyRecoveredFillAsync(Order order, ExchangeOrder confirmed, CancellationToken cancellationToken)
     {
-        var bookedFee = order.Executions?.Where(item => !string.IsNullOrWhiteSpace(item.FeeAsset)).Sum(item => item.Fee) ?? 0m;
+        var feeRows = order.Executions?.Where(item => item.Fee > 0m || !string.IsNullOrWhiteSpace(item.FeeAsset)).ToList() ?? [];
+        var feeAssets = feeRows.Select(item => item.FeeAsset).Where(item => !string.IsNullOrWhiteSpace(item)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (feeRows.Count > 0 && (feeAssets.Count != 1 || feeRows.Any(item => string.IsNullOrWhiteSpace(item.FeeAsset))))
+        {
+            Record(order, OrderStatus.Uncertain, "binance-live");
+            order.RejectReason = "Booked commission assets disagree or are missing. The fill was not applied.";
+            _reconciliation.Fail(order.RejectReason, _clock.UtcNow);
+            return;
+        }
+
+        var bookedFee = feeRows.Sum(item => item.Fee);
         var application = FillAccounting.Apply(
-            new BookedFill(order.FilledQuantity, order.AverageFillPrice, bookedFee),
+            new BookedFill(order.FilledQuantity, order.AverageFillPrice, bookedFee, feeAssets.SingleOrDefault()),
             order.Quantity,
             ReportOf(confirmed));
         Record(order, application.Status, "binance-live");
@@ -220,7 +229,7 @@ public sealed class BotEngine : IBotEngine
             await _store.AddExecutionAsync(new ExecutionFill
             {
                 OrderId = order.Id,
-                ExchangeTradeId = (confirmed.ExchangeOrderId ?? order.ClientOrderId) + ":fee:" + (bookedFee + application.AdditionalFee).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ExchangeTradeId = "local-fee:" + order.ClientOrderId + ":" + (bookedFee + application.AdditionalFee).ToString(System.Globalization.CultureInfo.InvariantCulture) + ":" + (confirmed.FeeAsset ?? ""),
                 Price = order.AverageFillPrice ?? 0m,
                 Quantity = 0m,
                 Fee = application.AdditionalFee,
@@ -312,7 +321,7 @@ public sealed class BotEngine : IBotEngine
         await _store.AddExecutionAsync(new ExecutionFill
         {
             OrderId = order.Id,
-            ExchangeTradeId = (confirmed.ExchangeOrderId ?? order.ClientOrderId) + ":" + application.FilledQuantity.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ExchangeTradeId = "local-fill:" + order.ClientOrderId + ":" + application.FilledQuantity.ToString(System.Globalization.CultureInfo.InvariantCulture),
             Price = price,
             Quantity = booked,
             Fee = application.NewFill.FeeKnown ? fee : 0m,
@@ -404,14 +413,14 @@ public sealed class BotEngine : IBotEngine
             bot.ExchangeAccountId,
             null,
             "USDT",
-            bot.Mode == TradingMode.Live ? TradingMode.Live : TradingMode.Paper,
-            bot.Mode == TradingMode.Live ? 0m : _options.PaperDefaultBalance,
+            TradingMode.Live,
+            0m,
             cancellationToken);
         var baseAsset = await _store.GetOrCreateBalanceAsync(
             bot.ExchangeAccountId,
             null,
             market?.BaseAsset ?? position.Symbol.Replace("USDT", "", StringComparison.OrdinalIgnoreCase),
-            bot.Mode == TradingMode.Live ? TradingMode.Live : TradingMode.Paper,
+            TradingMode.Live,
             0m,
             cancellationToken);
 
@@ -456,9 +465,7 @@ public sealed class BotEngine : IBotEngine
             CorrelationId = correlationId
         }, cancellationToken);
 
-        bot.LastError = bot.Mode == TradingMode.Live
-            ? "Manual close submitted to Binance."
-            : "Paper position closed manually.";
+        bot.LastError = "Manual close submitted to Binance.";
 
         DropLiveOverlay(liveOverlay ?? new LiveOpenPosition(
             position.Symbol,
@@ -710,9 +717,12 @@ public sealed class BotEngine : IBotEngine
             return;
         }
 
-        if (bot.Mode is not TradingMode.Paper and not TradingMode.Live)
+        if (bot.Mode != TradingMode.Live)
         {
-            throw new DomainException(ErrorCodes.LiveTradingDisabled, "This bot mode cannot run.");
+            bot.Status = BotStatus.Stopped;
+            bot.StoppedAt = _clock.UtcNow;
+            bot.LastError = $"This bot is stored as {bot.Mode}. Only live bots can run. The historical record was not executed.";
+            return;
         }
 
         var klineLimit = TemplateKey(bot) is StrategyTemplateKeys.TsMomentum285 or StrategyTemplateKeys.BtcDailyMax10 ? 500 : (int?)null;
@@ -816,48 +826,8 @@ public sealed class BotEngine : IBotEngine
             HitsProtectiveExit(position, lastPrice, out var protectiveReason) &&
             (bot.Mode == TradingMode.Live || !StrategyTemplateKeys.IsImported(TemplateKey(bot))))
         {
-            if (bot.Mode == TradingMode.Live)
-            {
-                if (IsolatedOccupancy.IsOwner(bot, running, book))
-                {
-                    await ClosePositionAsync(position.Id, cancellationToken);
-                    bot.LastError = $"Live {protectiveReason} filled from the mark.";
-                }
-
-                return;
-            }
-
-            var usdtProtect = await _store.GetOrCreateBalanceAsync(
-                bot.ExchangeAccountId,
-                null,
-                "USDT",
-                TradingMode.Paper,
-                _options.PaperDefaultBalance,
-                cancellationToken);
-            var baseProtect = await _store.GetOrCreateBalanceAsync(
-                bot.ExchangeAccountId,
-                null,
-                symbol?.BaseAsset ?? "BTC",
-                TradingMode.Paper,
-                0m,
-                cancellationToken);
-            var stamp = now.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture);
-            var flattenId = $"px{bot.Id:N}"[..12] + (stamp.Length <= 10 ? stamp : stamp[^10..]);
-            var closeSide = position.Side == PositionSide.Short ? OrderSide.Buy : OrderSide.Sell;
-            await PlaceAndFillAsync(
-                bot,
-                closeSide,
-                position.Quantity,
-                flattenId,
-                _correlation.GetOrCreate(),
-                usdtProtect,
-                baseProtect,
-                position,
-                lastPrice,
-                0m,
-                cancellationToken,
-                flatten: true);
-            bot.LastError = $"Paper {protectiveReason} filled.";
+            bot.LastError = $"Local {protectiveReason} was reached. That is not an exchange fill. The position stays open until Binance reports the protective order.";
+            _reconciliation.Fail(bot.LastError, now);
             return;
         }
 
@@ -1064,14 +1034,14 @@ public sealed class BotEngine : IBotEngine
             bot.ExchangeAccountId,
             null,
             "USDT",
-            bot.Mode == TradingMode.Live ? TradingMode.Live : TradingMode.Paper,
-            bot.Mode == TradingMode.Live ? 0m : _options.PaperDefaultBalance,
+            TradingMode.Live,
+            0m,
             cancellationToken);
         var btc = await _store.GetOrCreateBalanceAsync(
             bot.ExchangeAccountId,
             null,
             symbol?.BaseAsset ?? "BTC",
-            bot.Mode == TradingMode.Live ? TradingMode.Live : TradingMode.Paper,
+            TradingMode.Live,
             0m,
             cancellationToken);
 
@@ -1403,7 +1373,12 @@ public sealed class BotEngine : IBotEngine
             Mode = bot.Mode,
             CorrelationId = correlationId
         };
-        var source = bot.Mode == TradingMode.Live ? "binance-live" : "paper-engine";
+        if (bot.Mode != TradingMode.Live)
+        {
+            throw new DomainException(ErrorCodes.ValidationFailed, "Only a live bot can submit an order.");
+        }
+
+        var source = "binance-live";
         Record(order, OrderStatus.Submitting, source);
         order.SubmittedAt = _clock.UtcNow;
         await _store.AddOrderAsync(order, cancellationToken);
@@ -1507,22 +1482,10 @@ public sealed class BotEngine : IBotEngine
 
         quantity = application.NewFill.Quantity;
         var fillPrice = application.NewFill.Price;
-        if (bot.Mode != TradingMode.Live)
-        {
-            if (lastPrice <= 0m)
-            {
-                throw new DomainException(ErrorCodes.ExchangeUnavailable, "Paper simulator has no last price yet.");
-            }
-
-            fillPrice = PaperFillModel.ApplySlippage(lastPrice, side, _options.PaperSlippageBps);
-        }
-
         order.Price = fillPrice;
-        order.AverageFillPrice = bot.Mode == TradingMode.Live
-            ? application.AverageFillPrice ?? fillPrice
-            : fillPrice > 0m ? fillPrice : null;
+        order.AverageFillPrice = application.AverageFillPrice ?? fillPrice;
 
-        if (!flatten && bot.Mode == TradingMode.Live && fillPrice <= 0m)
+        if (!flatten && fillPrice <= 0m)
         {
             await _store.SaveChangesAsync(cancellationToken);
             bot.LastError =
@@ -1534,19 +1497,17 @@ public sealed class BotEngine : IBotEngine
             return;
         }
         var notional = fillPrice * quantity;
-        var feeKnown = bot.Mode != TradingMode.Live || application.NewFill.FeeKnown;
-        var fee = bot.Mode == TradingMode.Live
-            ? application.NewFill.FeeKnown ? application.NewFill.Fee : 0m
-            : PaperFillModel.Fee(notional, _options.PaperFeeBps);
+        var feeKnown = application.NewFill.FeeKnown && !string.IsNullOrWhiteSpace(confirmed.FeeAsset);
+        var fee = feeKnown ? application.NewFill.Fee : 0m;
         await _store.AddExecutionAsync(new ExecutionFill
         {
             OrderId = order.Id,
             Order = order,
-            ExchangeTradeId = PaperFillModel.NewPaperFillId(),
+            ExchangeTradeId = "local-fill:" + order.ClientOrderId + ":" + application.FilledQuantity.ToString(System.Globalization.CultureInfo.InvariantCulture),
             Price = fillPrice,
             Quantity = quantity,
             Fee = fee,
-            FeeAsset = feeKnown ? confirmed.FeeAsset ?? "USDT" : "",
+            FeeAsset = feeKnown ? confirmed.FeeAsset! : "",
             IsMaker = false,
             ExchangeTimestamp = confirmed.ExchangeTimestamp ?? _clock.UtcNow,
             CorrelationId = correlationId
@@ -1577,17 +1538,7 @@ public sealed class BotEngine : IBotEngine
             var leverage = plan?.Leverage ?? Math.Max(1m, bot.RiskProfile.MaxLeverage);
             var slPercent = plan?.StopLossPercent ?? stopLossPercent;
             var tpPercent = plan?.TakeProfitPercent ?? 0m;
-            if (bot.Mode != TradingMode.Live)
-            {
-                var margin = plan?.IsolatedMargin ?? PortfolioRisk.IsolatedMargin(notional, leverage);
-                usdt.Free -= margin + fee;
-                usdt.Locked += margin;
-                openedMargin = margin;
-            }
-            else
-            {
-                openedMargin = plan?.IsolatedMargin ?? PortfolioRisk.IsolatedMargin(notional, leverage);
-            }
+            openedMargin = plan?.IsolatedMargin ?? PortfolioRisk.IsolatedMargin(notional, leverage);
 
             decimal slPrice;
             decimal tpPrice;
@@ -1719,12 +1670,6 @@ public sealed class BotEngine : IBotEngine
                     ? $"Live {(openedSide == PositionSide.Short ? "short" : "buy")} filled at {fillPrice}. Isolated SL {slPrice} / TP {tpPrice} placed."
                     : $"Live {(openedSide == PositionSide.Short ? "short" : "buy")} filled at {fillPrice}. Isolated SL {slPrice} placed. TP {tpPrice} failed: {stops.TakeError}";
             }
-            else
-            {
-                bot.LastError =
-                    $"Paper {(openedSide == PositionSide.Short ? "short" : "buy")} filled. Risk {opened.InitialRiskUsdt:0.##} USDT on {notional:0.##} notional.";
-            }
-
             return;
         }
 
@@ -2704,16 +2649,8 @@ public sealed class BotEngine : IBotEngine
             ClampStopToProfile(position, bot, mark, market);
             if (HitsProtectiveExit(position, mark, out var reason))
             {
-                try
-                {
-                    await ClosePositionAsync(position.Id, cancellationToken);
-                    bot.LastError = $"Unattended {position.Symbol} {reason} filled from the mark.";
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Could not flatten unattended {Symbol}", position.Symbol);
-                }
-
+                bot.LastError = $"Local {reason} was reached on unattended {position.Symbol}. That is not an exchange fill. The position stays open.";
+                _reconciliation.Fail(bot.LastError, _clock.UtcNow);
                 continue;
             }
 

@@ -19,6 +19,7 @@ Log.Logger = new LoggerConfiguration()
 try
 {
     var builder = Host.CreateApplicationBuilder(args);
+    TradingPlatform.Application.Trading.TradingHostConfiguration.RejectUnsupportedMode(builder.Configuration);
 
     builder.Services.AddSerilog((services, configuration) =>
         configuration

@@ -65,8 +65,12 @@ public sealed class BotLifecycleService : IBotLifecycleService
 
     public static string PaperBotName(string symbol) => $"{symbol.ToUpperInvariant()} EMA RSI Paper";
 
-    public Task<BotDto> StartSamplePaperBotAsync(Guid userId, CancellationToken cancellationToken = default) =>
-        StartSymbolAsync(userId, "BTCUSDT", TradingMode.Paper, null, null, cancellationToken);
+    public Task<BotDto> StartSamplePaperBotAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        _ = userId;
+        _ = cancellationToken;
+        throw new DomainException(ErrorCodes.ValidationFailed, "Paper trading is not supported. A sample paper bot was not started.");
+    }
 
     public async Task<IReadOnlyList<BotDto>> StartTopVolumePaperBotsAsync(Guid userId, CancellationToken cancellationToken = default)
     {
@@ -122,9 +126,9 @@ public sealed class BotLifecycleService : IBotLifecycleService
 
         await EnsureTradeEligibleAsync(name, cancellationToken);
 
-        if (mode is not TradingMode.Paper and not TradingMode.Live)
+        if (mode != TradingMode.Live)
         {
-            throw new DomainException(ErrorCodes.ValidationFailed, "Use Paper or Live.");
+            throw new DomainException(ErrorCodes.ValidationFailed, $"Trading mode {mode} is not supported. Only live mode is accepted.");
         }
 
         var user = userId == Guid.Empty
@@ -165,8 +169,7 @@ public sealed class BotLifecycleService : IBotLifecycleService
         }
         else
         {
-            account = await _store.GetOrCreatePaperAccountAsync(user.Id, cancellationToken);
-            await _store.GetOrCreateBalanceAsync(account.Id, null, "USDT", TradingMode.Paper, _options.PaperDefaultBalance, cancellationToken);
+            throw new DomainException(ErrorCodes.ValidationFailed, "Only a live account can be used. A paper account was not created.");
         }
 
         await _store.UpsertSymbolAsync(
@@ -233,9 +236,9 @@ public sealed class BotLifecycleService : IBotLifecycleService
         IReadOnlyList<string> symbols,
         CancellationToken cancellationToken = default)
     {
-        if (mode is not TradingMode.Paper and not TradingMode.Live)
+        if (mode != TradingMode.Live)
         {
-            throw new DomainException(ErrorCodes.ValidationFailed, "Use Paper or Live.");
+            throw new DomainException(ErrorCodes.ValidationFailed, $"Trading mode {mode} is not supported. Only live mode is accepted.");
         }
 
         var requested = (symbols ?? [])
@@ -273,8 +276,7 @@ public sealed class BotLifecycleService : IBotLifecycleService
         }
         else
         {
-            account = await _store.GetOrCreatePaperAccountAsync(user.Id, cancellationToken);
-            await _store.GetOrCreateBalanceAsync(account.Id, null, "USDT", TradingMode.Paper, _options.PaperDefaultBalance, cancellationToken);
+            throw new DomainException(ErrorCodes.ValidationFailed, "Only a live account can be used. A paper account was not created.");
         }
 
         var universe = (await _market.GetPaperUniverseAsync(cancellationToken))
@@ -361,20 +363,18 @@ public sealed class BotLifecycleService : IBotLifecycleService
         var bot = await _store.GetBotAsync(botId, cancellationToken)
             ?? throw new DomainException(ErrorCodes.BotNotFound, "Bot was not found.");
 
-        if (bot.Mode == TradingMode.Live)
+        if (bot.Mode != TradingMode.Live)
         {
-            var keys = await _credentials.GetAsync(bot.ExchangeAccountId, cancellationToken);
-            if (keys is null)
-            {
-                throw new DomainException(ErrorCodes.LiveTradingDisabled, "Save a Binance API key on Exchanges before starting a live bot.");
-            }
+            throw new DomainException(ErrorCodes.ValidationFailed, $"This bot is stored as {bot.Mode}. It cannot be started.");
+        }
 
-            RiskLiveGuard.EnsureAllowed(bot.Mode, bot.RiskProfile ?? await _store.GetConservativeRiskAsync(cancellationToken));
-        }
-        else if (bot.Mode != TradingMode.Paper)
+        var keys = await _credentials.GetAsync(bot.ExchangeAccountId, cancellationToken);
+        if (keys is null)
         {
-            throw new DomainException(ErrorCodes.LiveTradingDisabled, "Only paper or live bots can be started.");
+            throw new DomainException(ErrorCodes.LiveTradingDisabled, "Save a Binance API key on Exchanges before starting a live bot.");
         }
+
+        RiskLiveGuard.EnsureAllowed(bot.Mode, bot.RiskProfile ?? await _store.GetConservativeRiskAsync(cancellationToken));
 
         if (bot.Status == BotStatus.Running)
         {
@@ -398,9 +398,9 @@ public sealed class BotLifecycleService : IBotLifecycleService
             throw new DomainException(ErrorCodes.KillSwitchActive, "Kill switch is active.");
         }
 
-        if (mode is not TradingMode.Paper and not TradingMode.Live)
+        if (mode != TradingMode.Live)
         {
-            throw new DomainException(ErrorCodes.ValidationFailed, "Use Paper or Live.");
+            throw new DomainException(ErrorCodes.ValidationFailed, $"Trading mode {mode} is not supported. Only live mode is accepted.");
         }
 
         var user = userId == Guid.Empty
@@ -474,9 +474,9 @@ public sealed class BotLifecycleService : IBotLifecycleService
         Guid? strategyId = null,
         CancellationToken cancellationToken = default)
     {
-        if (mode is not TradingMode.Paper and not TradingMode.Live)
+        if (mode != TradingMode.Live)
         {
-            throw new DomainException(ErrorCodes.ValidationFailed, "Use Paper or Live.");
+            throw new DomainException(ErrorCodes.ValidationFailed, $"Trading mode {mode} is not supported. Only live mode is accepted.");
         }
 
         var user = userId == Guid.Empty
@@ -964,8 +964,8 @@ public sealed class TradingQueryService : ITradingQueryService
         TickerDto? ticker = tickers.FirstOrDefault(t => t.Symbol == "BTCUSDT") ?? tickers.FirstOrDefault();
 
         return new PortfolioDto(
-            paperEquity > 0m || balances.Count > 0 ? paperEquity : _options.PaperDefaultBalance,
-            paperFree > 0m || balances.Count > 0 ? paperFree : _options.PaperDefaultBalance,
+            paperEquity,
+            paperFree,
             paperUnrealized,
             paperRealized,
             paperTodays,
@@ -1233,7 +1233,20 @@ public sealed class TradingQueryService : ITradingQueryService
 
     public async Task<PerformanceDto> GetPerformanceAsync(string mode, CancellationToken cancellationToken = default)
     {
-        var tradingMode = string.Equals(mode, "Live", StringComparison.OrdinalIgnoreCase) ? TradingMode.Live : TradingMode.Paper;
+        TradingMode tradingMode;
+        if (string.Equals(mode, "Live", StringComparison.OrdinalIgnoreCase))
+        {
+            tradingMode = TradingMode.Live;
+        }
+        else if (string.Equals(mode, "Paper", StringComparison.OrdinalIgnoreCase))
+        {
+            tradingMode = TradingMode.Paper;
+        }
+        else
+        {
+            throw new DomainException(ErrorCodes.ValidationFailed, $"Trading mode '{mode}' is not supported.");
+        }
+
         var modeLabel = tradingMode == TradingMode.Live ? "Live" : "Paper";
         var rawTrades = await _store.GetPerformanceTradesAsync(tradingMode, cancellationToken);
         var rows = IsolatedOccupancy.UniqueClosedTrips(
@@ -1268,7 +1281,7 @@ public sealed class TradingQueryService : ITradingQueryService
             bots,
             unrealized,
             openPositions,
-            tradingMode == TradingMode.Paper ? _options.PaperDefaultBalance : 0m,
+            0m,
             strategyResults);
     }
 
@@ -1889,30 +1902,16 @@ public sealed class TradingQueryService : ITradingQueryService
     public async Task<RiskPreviewDto> PreviewRiskAsync(string mode, decimal price, CancellationToken cancellationToken = default)
     {
         var profile = await _store.GetConservativeRiskAsync(cancellationToken);
-        decimal available;
-        if (string.Equals(mode, "Live", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(mode, "Live", StringComparison.OrdinalIgnoreCase))
         {
-            await RefreshLiveCacheIfStaleAsync(cancellationToken);
-            available = _live.Current.UsdtFree ?? _live.Current.FuturesUsdt;
-        }
-        else
-        {
-            var user = await _store.GetFirstAdminAsync(cancellationToken);
-            var account = await _store.GetOrCreatePaperAccountAsync(user.Id, cancellationToken);
-            var usdt = await _store.GetOrCreateBalanceAsync(
-                account.Id,
-                null,
-                "USDT",
-                TradingMode.Paper,
-                _options.PaperDefaultBalance,
-                cancellationToken);
-            available = usdt.Free;
+            throw new DomainException(ErrorCodes.ValidationFailed, $"Trading mode '{mode}' is not supported. Risk preview uses the live wallet.");
         }
 
+        await RefreshLiveCacheIfStaleAsync(cancellationToken);
+        var available = _live.Current.UsdtFree ?? _live.Current.FuturesUsdt;
+
         var entry = price > 0m ? price : 100_000m;
-        var open = await _store.GetOpenPositionsForModeAsync(
-            string.Equals(mode, "Live", StringComparison.OrdinalIgnoreCase) ? TradingMode.Live : TradingMode.Paper,
-            cancellationToken);
+        var open = await _store.GetOpenPositionsForModeAsync(TradingMode.Live, cancellationToken);
         var openRisk = available > 0m ? open.Sum(p => p.InitialRiskUsdt) / available * 100m : 0m;
         var plan = RiskEngine.Plan(profile, available, entry, PositionSide.Long, openRisk, null);
         return new RiskPreviewDto(

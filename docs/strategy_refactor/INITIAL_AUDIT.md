@@ -10,7 +10,7 @@ The bot evaluates a strategy template on closed candles and sends at most one Is
 - `StrategyEngine.Evaluate` uses only the closed-candle list it is given. `BacktestReplay` drops candles with `IsClosed = false` unless a prebuilt cache is supplied.
 - A signal becomes an order in `BotEngine`. The client order id is one key per bot and candle open time. A repeated candle hits `HasClientOrderAsync` and does not create a second order.
 - Position size, leverage, daily loss, and the consecutive-loss cooldown come from the saved risk book via `RiskEngine`. Leverage caps notional. It does not replace stop-distance sizing when a structural stop is honored.
-- Paper fills use `PaperFillModel` and `TradingOptions.PaperSlippageBps`. Live order send stays behind `Trading:LiveTradingEnabled`. Both `src/TradingPlatform.Api/appsettings.json` and `src/TradingPlatform.Workers/appsettings.json` have that flag set to `false`.
+- Paper runtime fills were removed. Live order send stays behind `Trading:LiveTradingEnabled`. Both `src/TradingPlatform.Api/appsettings.json` and `src/TradingPlatform.Workers/appsettings.json` have that flag set to `false`.
 - Backtests use the same strategy engine and `RiskEngine`. Entries and signal exits fill at the next bar open. A pending entry with no following bar is dropped.
 
 ## Position ownership

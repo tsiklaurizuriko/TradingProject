@@ -231,9 +231,9 @@ export class DashboardPage {
   readonly startAllTitle = computed(() => (this.isLive() ? 'LIVE TRADING WARNING' : 'Start All Bots'));
   readonly startAllMessage = computed(() => {
     if (!this.isLive()) {
-      return 'This starts every stopped bot in this PAPER workspace. LIVE bots are not touched.';
+      return 'This starts stopped live bots. Order submission still requires Trading:LiveTradingEnabled.';
     }
-    return `LIVE bots only. Paper stays stopped. Isolated still allows only one open LIVE position per coin. Each bot uses the stop, take, size, and leverage saved on its strategy. Available Balance ${money(this.available())}.`;
+    return `Live bots only. Isolated still allows only one open position per coin. Each bot uses the stop, take, size, and leverage saved on its strategy. Available Balance ${money(this.available())}.`;
   });
   readonly startAllWarning = computed(() =>
     this.isLive()

@@ -33,16 +33,9 @@ On timeout after send:
 3. If found, adopt exchange state
 4. If not found after a bounded retry window, mark `FAILED` / `RECONCILIATION_REQUIRED` rather than blindly resending a new order
 
-## Paper connector
+## Runtime connector
 
-`PaperExchangeConnector` implements `IExchangeConnector`:
-
-- Uses real public market data for last price
-- Applies configured fee bps and slippage bps
-- Maintains virtual balances and positions
-- Never calls Binance signed order endpoints
-
-Paper fills are labeled as paper in audit metadata. The UI must not present them as Binance exchange fills.
+Live is the only runtime connector. `ExchangeConnectorFactory` rejects Paper and Testnet. Historical Paper rows stay in the database and are not executed. They must not be shown as Binance fills.
 
 ## Live guard
 

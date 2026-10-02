@@ -189,7 +189,7 @@ public sealed class SecondPassStrategyTests
     public void Live_entries_stay_blocked_until_the_operator_turns_the_flag_on()
     {
         LiveEntryGate.BlockNewEntry(TradingMode.Live, liveTradingEnabled: false).Should().Be(LiveEntryGate.BlockedMessage);
-        LiveEntryGate.BlockNewEntry(TradingMode.Paper, liveTradingEnabled: false).Should().BeNull();
+        LiveEntryGate.BlockNewEntry(TradingMode.Paper, liveTradingEnabled: false).Should().Contain("Only live mode");
         LiveEntryGate.BlockNewEntry(TradingMode.Live, liveTradingEnabled: true).Should().BeNull();
         File.ReadAllText(Path.Combine(RepoRoot(), "src", "TradingPlatform.Api", "appsettings.json")).Should().Contain("\"LiveTradingEnabled\": false");
         File.ReadAllText(Path.Combine(RepoRoot(), "src", "TradingPlatform.Workers", "appsettings.json")).Should().Contain("\"LiveTradingEnabled\": false");

@@ -29,7 +29,7 @@
       <div class="connection-meta">
         <div><span>WebSocket</span><span>{{ hub.connected() ? 'On' : 'Offline' }}</span></div>
         <div><span>REST API</span><span>{{ trading.restLatencyMs() ? trading.restLatencyMs() + 'ms' : '—' }}</span></div>
-        <div><span>Account</span><span>{{ ui.isLive() ? (trading.overview()?.liveTradingEnabled ? 'Keys saved' : 'No API key') : 'Paper' }}</span></div>
+        <div><span>Account</span><span>{{ trading.health()?.liveTradingEnabled ? 'Live orders enabled' : 'Live orders off' }}</span></div>
       </div>
       @if (ui.isLive()) {
         <a class="btn sm danger" routerLink="/exchanges" style="margin-top:10px;width:100%">API keys</a>
@@ -58,9 +58,9 @@
           }
         </div>
       </div>
-      <div class="topbar-mode mode-switch" role="group" aria-label="Trading mode">
-        <button class="paper" type="button" [class.is-on]="ui.mode() === 'paper'" (click)="setMode('paper')">PAPER</button>
-        <button class="live" type="button" [class.is-on]="ui.mode() === 'live'" (click)="setMode('live')">LIVE</button>
+      <div class="topbar-mode" role="status" aria-label="Trading mode">
+        <span class="badge badge-live">LIVE</span>
+        <span class="tiny">{{ trading.health()?.liveTradingEnabled ? 'Orders enabled' : 'Orders disabled' }}</span>
       </div>
       <div class="topbar-actions">
         <label class="search">
@@ -80,7 +80,7 @@
       <div class="live-rail" role="status">
         <span class="live-rail-led" aria-hidden="true"></span>
         <span class="live-rail-tag">LIVE</span>
-        <span class="live-rail-copy">Real money on Binance USD-M futures</span>
+        <span class="live-rail-copy">{{ trading.health()?.liveTradingEnabled ? 'Live order submission is enabled' : 'Live order submission is disabled' }}{{ trading.health()?.blockedReason ? ' — ' + trading.health()?.blockedReason : '' }}</span>
       </div>
     }
 

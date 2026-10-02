@@ -57,7 +57,7 @@ Missing candidate config is treated as off. Scalping config is unchanged and off
 
 ## Paper and LIVE
 
-Paper uses `PaperExchangeConnector`. It does not send a Binance order. Fees and slippage stay on the existing paper model. Sizing, Isolated semantics, and portfolio checks stay on the existing risk engine.
+Paper runtime execution was removed. A near-miss candidate does not send a Binance order unless live submission is explicitly enabled. Sizing, Isolated semantics, and portfolio checks stay on the existing risk engine.
 
 LIVE uses the existing market order, then the existing `STOP_MARKET` and `TAKE_PROFIT_MARKET` close-position orders. If the stop cannot be placed, the existing path leaves the position open and retries the stop. It does not add a new flatten. The global LIVE switch blocks near-miss LIVE even when Price Action LIVE is later turned on.
 

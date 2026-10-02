@@ -4,6 +4,7 @@ Status: **not ready for real-money trading.** `Trading:LiveTradingEnabled` is fa
 
 ## What this build does
 
+- Live is the only runtime mode. Historical Paper rows are kept and cannot be started. Paper fill simulation was removed.
 - One evaluator per canonical strategy id. An obsolete `*_v2` id does not run the retired code.
 - Startup migrates those ids, preserves parameter numbers, reports incompatible fields, and stops if two enabled rows share an id or a definition cannot be parsed.
 - New live entries are blocked until the operator sets the flag. Open-position exits are not blocked by that flag.
@@ -20,12 +21,12 @@ Status: **not ready for real-money trading.** `Trading:LiveTradingEnabled` is fa
 ## Remaining blockers
 
 1. No test placed or observed a real Binance order. Stop and take-profit fills are applied only when the REST order or algo query returns an executed quantity and price. There is no separate user-data socket consumer.
-2. A local position missing from a fresh snapshot is left open and blocks new entries. It is not closed from a mark price.
+2. A local position missing from a fresh snapshot is left open, including when the bot or strategy version is missing. It is not closed from a mark price, and the trade is not marked closed.
 3. Daily realized loss is enforced. A peak-to-trough equity drawdown series is not stored. If a caller cannot say whether drawdown is known, the risk check fails closed.
 4. Every canonical strategy stays `NOT VALIDATED`. Backtests that do run still assume the stop wins when stop and target are both inside one bar, and they do not model partial exits.
 5. A stored timeframe that is not the canonical default is left as-is and only logged.
-6. PostgreSQL Testcontainers tests were not executed. Docker is not installed on this machine, and the integration project does not start a PostgreSQL container. Migration behavior was tested in memory.
-7. There is no Dockerfile in this repository, so no image was built.
+6. Integration tests passed locally against PostgreSQL on localhost:5432. They are not Testcontainers. The GitHub Actions job now starts PostgreSQL 16 for that same connection, but that workflow has not been run for this change.
+7. Docker image builds were not run.
 8. GitHub Actions was not run. These changes are local and uncommitted. Do not treat the local test run as a CI result.
 
 ## Tests run on this machine
@@ -34,7 +35,7 @@ No test uses a live Binance order connector. `dotnet restore` completed. `dotnet
 
 | Command | Result |
 | --- | --- |
-| `dotnet test TradingPlatform.slnx -c Release` | UnitTests 317 passed, 0 failed. ResearchTests 130 passed, 0 failed. BacktestingTests 52 passed, 0 failed. TradingTests 4 passed, 0 failed. IntegrationTests 4 passed, 0 failed. |
+| `dotnet test TradingPlatform.slnx -c Release` | UnitTests 321 passed, 0 failed. ResearchTests 130 passed, 0 failed. BacktestingTests 52 passed, 0 failed. TradingTests 4 passed, 0 failed. IntegrationTests 4 passed, 0 failed. |
 | `dotnet test tests/TradingPlatform.NewsTests/TradingPlatform.NewsTests.csproj -c Release` | 45 passed, 0 failed. This project is not in the solution test pass above. |
 | `npm run build` in `frontend/trading-platform-ui` | Succeeded. One budget warning: `strategies.page.scss` is 5.19 kB against a 4.00 kB budget. |
 | PostgreSQL Testcontainers | Not executed. Docker is not installed. |

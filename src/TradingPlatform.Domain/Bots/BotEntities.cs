@@ -18,7 +18,7 @@ public sealed class Bot : SoftDeletableEntity
     public RiskProfile RiskProfile { get; set; } = null!;
     public string Name { get; set; } = string.Empty;
     public BotStatus Status { get; set; } = BotStatus.Created;
-    public TradingMode Mode { get; set; } = TradingMode.Paper;
+    public TradingMode Mode { get; set; } = TradingMode.Live;
     public string Symbol { get; set; } = "BTCUSDT";
     public Timeframe Timeframe { get; set; } = Timeframe.FiveMinutes;
     public bool CancelOpenOrdersOnEmergencyStop { get; set; } = true;

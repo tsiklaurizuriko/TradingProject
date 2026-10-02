@@ -460,8 +460,8 @@ export class BotsPage {
         : 'LIVE positions on Binance stay open. This only removes the bot from this workspace.';
     }
     return running
-      ? `${running} running paper bot(s) will stop. Simulated positions stay open.`
-      : 'Paper positions stay open. This only removes the bot record.';
+      ? `${running} running live bot(s) will stop. Exchange positions stay open until Binance reports a fill.`
+      : 'This removes the bot record. Historical fills stay stored.';
   }
 
   async confirmDeleteBots(): Promise<void> {

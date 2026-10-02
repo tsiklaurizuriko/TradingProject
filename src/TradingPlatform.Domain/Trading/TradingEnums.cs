@@ -4,15 +4,26 @@ namespace TradingPlatform.Domain.Trading;
 
 public enum TradingMode
 {
+    /// <summary>Historical rows only. Runtime start and execution reject this value.</summary>
     Paper = 0,
+    /// <summary>Historical rows only. Runtime start and execution reject this value.</summary>
     Testnet = 1,
     Live = 2
 }
 
 public static class TradingWorkspaces
 {
-    public static TradingMode Parse(string? mode) =>
-        string.Equals(mode, "Live", StringComparison.OrdinalIgnoreCase) ? TradingMode.Live : TradingMode.Paper;
+    public static TradingMode Parse(string? mode)
+    {
+        if (string.Equals(mode, "Live", StringComparison.OrdinalIgnoreCase))
+        {
+            return TradingMode.Live;
+        }
+
+        throw new DomainException(
+            ErrorCodes.ValidationFailed,
+            $"Trading mode '{mode}' is not supported. Only Live is accepted.");
+    }
 
     public static void EnsureMatch(TradingMode actual, TradingMode expected, string kind)
     {

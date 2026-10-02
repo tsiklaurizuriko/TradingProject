@@ -14,20 +14,17 @@ namespace TradingPlatform.Api.Controllers;
 public sealed class SystemController : ControllerBase
 {
     private readonly HealthCheckService _healthCheckService;
-    private readonly IConfiguration _configuration;
     private readonly IOptions<TradingOptions> _trading;
     private readonly ReconciliationState _reconciliation;
     private readonly ILiveAccountCache _live;
 
     public SystemController(
         HealthCheckService healthCheckService,
-        IConfiguration configuration,
         IOptions<TradingOptions> trading,
         ReconciliationState reconciliation,
         ILiveAccountCache live)
     {
         _healthCheckService = healthCheckService;
-        _configuration = configuration;
         _trading = trading;
         _reconciliation = reconciliation;
         _live = live;
@@ -44,7 +41,7 @@ public sealed class SystemController : ControllerBase
         var databaseReady = report.Entries.Values.All(entry => entry.Status != HealthStatus.Unhealthy);
         var exchangeReady = live.HasKeys && live.FuturesBookFresh;
         var reconciliationReady = _reconciliation.IsFresh(DateTimeOffset.UtcNow, maxAge);
-        var riskValid = !string.IsNullOrWhiteSpace(options.DefaultMode);
+        var riskValid = true;
         var gateOpen = options.LiveTradingEnabled
             && !options.KillSwitchEnabled
             && reconciliationReady
@@ -70,7 +67,8 @@ public sealed class SystemController : ControllerBase
             unresolvedOrderCount = _reconciliation.UnresolvedOrderCount,
             blockedReason,
             liveTradingEnabled = options.LiveTradingEnabled,
-            defaultMode = _configuration["Trading:DefaultMode"] ?? TradingMode.Paper.ToString(),
+            supportedMode = "Live",
+            defaultMode = "Live",
             entries = report.Entries.ToDictionary(
                 e => e.Key,
                 e => new { status = e.Value.Status.ToString(), e.Value.Description })

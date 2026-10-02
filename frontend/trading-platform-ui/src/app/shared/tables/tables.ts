@@ -202,7 +202,7 @@ export class BotTableComponent {
     </section>
     <app-confirm-modal
       [open]="!!pending()"
-      [title]="ui.isLive() ? 'Close LIVE position' : 'Close paper position'"
+      [title]="'Close live position'"
       [message]="pending() ? 'Flatten ' + pending()!.symbol + ' and store the exit as a bot close.' : ''"
       [warning]="ui.isLive() ? 'This sends a real reduce-only market order on Binance.' : ''"
       [confirmLabel]="ui.isLive() ? 'Close on Binance' : 'Close position'"
@@ -281,7 +281,7 @@ export class PositionTableComponent {
       await this.trading.refresh();
       await this.trading.refreshPerformance();
       this.toast.show(
-        this.ui.isLive() ? 'LIVE position closed' : 'Paper position closed',
+        'Close submitted. The position stays open until Binance reports the fill.',
         `${row.symbol} was flattened and stored as a bot exit.`,
         this.ui.isLive() ? 'error' : 'success',
       );

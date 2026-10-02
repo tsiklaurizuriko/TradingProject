@@ -40,7 +40,7 @@ public static class RiskLiveGuard
     {
         if (mode != TradingMode.Live)
         {
-            return null;
+            return "Only live mode is supported.";
         }
 
         if (risk is null)

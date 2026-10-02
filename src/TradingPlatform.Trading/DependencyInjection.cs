@@ -17,7 +17,6 @@ public static class DependencyInjection
         services.AddSingleton<ILiveAccountCache, LiveAccountCache>();
         services.AddSingleton<ReconciliationState>();
         services.AddSingleton<ITradingRealtimePublisher, NullTradingRealtimePublisher>();
-        services.AddSingleton<PaperExchangeConnector>();
         services.AddScoped<IExchangeConnectorFactory, ExchangeConnectorFactory>();
         services.AddScoped<LiveIsolatedReconciler>();
         services.AddScoped<IBotEngine, BotEngine>();

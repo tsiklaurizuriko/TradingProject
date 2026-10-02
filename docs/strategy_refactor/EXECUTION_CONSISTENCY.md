@@ -7,7 +7,7 @@ Status of the historical books: **NOT VALIDATED**. Nothing below is a profitabil
 | Step | Backtest | Paper | Live |
 | --- | --- | --- | --- |
 | Signal bar | Closed candles only. An unclosed bar is dropped, and v2 also returns no signal if `IsClosed` is false. | The bot evaluates the closed series it loaded. | Same evaluator. `Trading:LiveTradingEnabled` is false, so this process does not send exchange orders. |
-| Entry price | Next bar open, then slippage. If that bar does not exist, the order is not invented. | Last price plus `PaperSlippageBps`. | Would use the exchange order path. It is not enabled. |
+| Entry price | Next bar open, then slippage. If that bar does not exist, the order is not invented. | Paper runtime fills were removed. | Uses the exchange order path only when `Trading:LiveTradingEnabled` is true. The default is false. |
 | Signal exit | Next bar open, then slippage. | Market-style paper close. | Not enabled. |
 | Stop / target | Intrabar high/low. v2 templates set `HonorSuggestedStops` and `PreserveNullTake`, so the fill-adjusted signal stop is the working stop and a missing target is left open. | Protective prices from the signal, rounded with the contract tick. | Same protective path, gated by the live flag. |
 | Same-bar stop and target | Stop is tested first. The favorable target is not chosen. | Exchange stop and take can both rest. The replay cannot see which traded first, so it keeps the stop. | Unchanged. |

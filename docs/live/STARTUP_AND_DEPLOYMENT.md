@@ -4,7 +4,7 @@ Live trading stays off unless an operator sets `Trading:LiveTradingEnabled` to `
 
 ## What startup does
 
-1. Load configuration. `Trading:DefaultMode` is `PAPER`. `Trading:LiveTradingEnabled` is false. `Trading:ReconciliationMaxAgeSeconds` defaults to 90 when it is omitted.
+1. Load configuration. Live is the only runtime mode. `Trading:LiveTradingEnabled` is false in both the API and the worker settings. A `Trading:DefaultMode` value other than `Live` stops the process. `Trading:ReconciliationMaxAgeSeconds` defaults to 90 when it is omitted. Historical Paper rows stay in the database and are not started.
 2. Apply EF migrations (`Database.MigrateAsync`) in every environment, not only Development.
 3. Run the canonical strategy data migration inside a transaction on a relational database. It rewrites obsolete template ids, disables a duplicate alias row, and leaves parameter numbers in place. Incompatible parameters and timeframe mismatches are warnings, not silent rewrites.
 4. In Development, seed the catalog, then run the canonical migration again so a seed cannot leave two enabled rows for one id.
@@ -24,8 +24,8 @@ The bot cycle starts only after that. Each cycle refreshes the futures book, rec
 4. Start the API. Read the log for `Build` and `Canonical strategies`.
 5. If startup throws `Canonical strategy migration cannot finish safely`, do not turn live on. The message names the strategy ids. Disable one of the two enabled rows that share an id, or fix the definition JSON that could not be parsed, then start again. The failed plan is not applied.
 6. Read every `Canonical strategy review` warning. A 5m book on a strategy whose default is 15m is left on 5m. The numbers are not rewritten. Decide whether that book should stay before you start it.
-7. Start one paper bot and confirm the template id in the definition has no `_v2` suffix.
-8. Only after that, and only with an explicit decision, set `Trading:LiveTradingEnabled` to true and restart. That flag is the gate for new live entries. This repository does not set it.
+7. Confirm a strategy template id has no `_v2` suffix before you start that live bot. Do not start it while the flag is false if you expect an entry; the entry gate stays closed.
+8. Only after that, and only with an explicit decision, set `Trading:LiveTradingEnabled` to true in both the API and the worker, then restart both. The two files must match. This repository does not set the flag.
 
 ## Rollback
 

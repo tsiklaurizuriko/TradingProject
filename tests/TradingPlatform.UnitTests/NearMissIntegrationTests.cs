@@ -108,10 +108,10 @@ public sealed class NearMissIntegrationTests
     [Fact]
     public void Paper_connector_is_not_the_live_connector()
     {
-        var paper = new PaperExchangeConnector(new EmptyMarketDataCache(), new FixedClock(), Microsoft.Extensions.Options.Options.Create(new TradingOptions()));
-        var factory = new ExchangeConnectorFactory(paper, []);
-        factory.Create(TradingMode.Paper, null).Mode.Should().Be(TradingMode.Paper);
-        factory.Create(TradingMode.Paper, null).Name.Should().Be("PaperSimulator");
+        var factory = new ExchangeConnectorFactory([]);
+        var paper = () => factory.Create(TradingMode.Paper, null);
+        paper.Should().Throw<TradingPlatform.Domain.Errors.DomainException>()
+            .Which.Message.Should().Contain("not supported");
         var live = () => factory.Create(TradingMode.Live, Guid.NewGuid());
         live.Should().Throw<TradingPlatform.Domain.Errors.DomainException>();
     }

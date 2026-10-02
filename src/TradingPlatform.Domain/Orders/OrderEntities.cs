@@ -27,7 +27,7 @@ public sealed class Order : Entity
     public string ClientOrderId { get; set; } = string.Empty;
     public string? ExchangeOrderId { get; set; }
     public string IdempotencyKey { get; set; } = string.Empty;
-    public TradingMode Mode { get; set; } = TradingMode.Paper;
+    public TradingMode Mode { get; set; } = TradingMode.Live;
     public string CorrelationId { get; set; } = string.Empty;
     public string? RejectReason { get; set; }
     public DateTimeOffset? SubmittedAt { get; set; }

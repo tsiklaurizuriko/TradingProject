@@ -28,7 +28,7 @@ const DEFAULT_NOTIFY: NotifyPrefs = { bots: true, trades: true, risk: true, conn
 
 @Injectable({ providedIn: 'root' })
 export class UiStateService {
-  readonly mode = signal<TradingMode>(readMode());
+  readonly mode = signal<TradingMode>('live');
   readonly navOpen = signal(false);
   readonly compact = signal(readFlag(COMPACT_KEY, false));
   readonly hour12 = signal(readFlag(HOUR12_KEY, false));
@@ -43,33 +43,24 @@ export class UiStateService {
   readonly confirmStartAll = signal(readFlag(CONFIRM_START_KEY, false));
   readonly preferredStrategyId = signal(readString(STRATEGY_KEY, ''));
   readonly preferredRiskId = signal(readString(RISK_KEY, ''));
-  readonly isLive = computed(() => this.mode() === 'live');
+  readonly isLive = computed(() => true);
   readonly liveSetup = signal(false);
-  readonly showLiveChrome = computed(() => this.isLive() || this.liveSetup());
-  readonly liveWarning = computed(() => this.isLive());
-  readonly workspace = computed<WorkspaceMode>(() => (this.isLive() ? 'Live' : 'Paper'));
+  readonly showLiveChrome = computed(() => true);
+  readonly liveWarning = computed(() => true);
+  readonly workspace = computed<WorkspaceMode>(() => 'Live');
 
   constructor() {
     window.setInterval(() => this.now.set(new Date()), 1000);
   }
 
-  setMode(mode: TradingMode, liveEnabled: boolean): { accepted: boolean; message: string } {
-    if (mode === 'live' && !liveEnabled) {
-      return { accepted: false, message: 'Save your Binance API key on Live Connection first. LIVE shows your real spot wallet, not paper.' };
+  setMode(mode: TradingMode, _liveEnabled: boolean): { accepted: boolean; message: string } {
+    if (mode !== 'live') {
+      return { accepted: false, message: 'Paper and testnet are not supported. Live is the only trading mode, and order submission stays off until it is enabled.' };
     }
-    if (mode === 'testnet') {
-      return { accepted: false, message: 'Testnet is not used. Stay on Paper or Live.' };
-    }
-    this.mode.set(mode);
-    localStorage.setItem(MODE_KEY, mode);
-    if (mode === 'paper') {
-      this.liveSetup.set(false);
-    }
-    if (mode === 'live') {
-      this.liveSetup.set(false);
-      return { accepted: true, message: 'LIVE workspace. Buttons, bots, and orders use Binance USD-M USDT perpetuals only.' };
-    }
-    return { accepted: true, message: 'PAPER workspace. Buttons, bots, and orders stay in the simulator.' };
+    this.mode.set('live');
+    localStorage.setItem(MODE_KEY, 'live');
+    this.liveSetup.set(false);
+    return { accepted: true, message: 'Live mode. Order submission stays off until Trading:LiveTradingEnabled is true.' };
   }
 
   beginLiveSetup(): void {

@@ -369,8 +369,8 @@ export class SettingsPage {
         </article>
       }
       <article class="card">
-        <div class="metric-label">Default mode</div>
-        <div class="metric-value">{{ trading.health()?.defaultMode ?? 'Paper' }}</div>
+        <div class="metric-label">Order submission</div>
+        <div class="metric-value">{{ trading.health()?.liveTradingEnabled ? 'Enabled' : 'Disabled' }}</div>
       </article>
       <article class="card">
         <div class="metric-label">Kill switch</div>

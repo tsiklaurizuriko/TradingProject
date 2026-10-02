@@ -315,13 +315,34 @@ public sealed class TradingStore : ITradingStore
     {
         try
         {
-            return await _db.Positions
+            var rows = await _db.Positions
                 .Include(p => p.Events)
-                .Include(p => p.Bot)
-                .ThenInclude(b => b.StrategyVersion)
-                .Where(p => p.ClosedAt == null && p.Quantity > 0m && p.Bot.Mode == mode)
+                .Where(p => p.ClosedAt == null && p.Quantity > 0m)
                 .OrderByDescending(p => p.OpenedAt)
                 .ToListAsync(cancellationToken);
+            var botIds = rows.Select(position => position.BotId).Distinct().ToList();
+            var bots = await _db.Bots
+                .Where(bot => botIds.Contains(bot.Id))
+                .ToListAsync(cancellationToken);
+            var versionIds = bots.Select(bot => bot.StrategyVersionId).Distinct().ToList();
+            var versions = await _db.StrategyVersions
+                .Where(version => versionIds.Contains(version.Id))
+                .ToListAsync(cancellationToken);
+            foreach (var bot in bots)
+            {
+                bot.StrategyVersion = versions.FirstOrDefault(version => version.Id == bot.StrategyVersionId)!;
+            }
+
+            foreach (var position in rows)
+            {
+                position.Bot = bots.FirstOrDefault(bot => bot.Id == position.BotId)!;
+            }
+
+            return rows
+                .Where(position => position.Bot is null
+                    ? mode == TradingMode.Live
+                    : position.Bot.Mode == mode)
+                .ToList();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

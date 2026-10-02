@@ -16,7 +16,7 @@ import { ConfirmModalComponent } from '../ui/ui-kit';
     <app-confirm-modal
       [open]="open()"
       title="Emergency Stop"
-      [message]="ui.isLive() ? 'This stops every running LIVE bot.' : 'This stops every running paper bot.'"
+      [message]="'This stops every running live bot. It does not place a new order.'"
       [warning]="ui.isLive() ? 'Real Binance bots in this workspace stop.' : 'Simulator bots in this workspace stop.'"
       confirmLabel="Emergency Stop"
       [danger]="true"

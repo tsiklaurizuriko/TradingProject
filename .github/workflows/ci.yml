@@ -8,6 +8,22 @@ on:
 jobs:
   build-test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: admin
+          POSTGRES_PASSWORD: admin
+          POSTGRES_DB: TradingProject
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U admin -d TradingProject"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ConnectionStrings__TradingPlatform: Host=127.0.0.1;Port=5432;Database=TradingProject;Username=admin;Password=admin
     steps:
       - uses: actions/checkout@v4
 

@@ -11,7 +11,7 @@ export interface StrategyRating {
 }
 
 export const verdictLabels: Record<StrategyUseVerdict, string> = {
-  paper: 'გამოიყენე PAPER-ზე',
+  paper: 'Paper runtime is removed. This is not a live approval.',
   weak: 'სუსტი',
   avoid: 'არ გამოიყენო',
   blocked: 'ვერ გაეშვება',

@@ -12,7 +12,7 @@
           <div class="settings-stat">
             <span class="metric-label">Workspace</span>
             <strong>{{ ui.workspace() }}</strong>
-            <span class="tiny">Switch PAPER / LIVE in the header.</span>
+            <span class="tiny">Live is the only trading mode. Order submission stays off until it is enabled.</span>
           </div>
           <label class="field">Default coin
             <select [ngModel]="ui.selectedSymbol()" (ngModelChange)="ui.setSymbol($event)">
@@ -48,10 +48,10 @@
           <label class="field">
             <span class="settings-check">
               <input type="checkbox" [ngModel]="ui.confirmStartAll()" (ngModelChange)="ui.setConfirmStartAll($event)" />
-              Confirm before Start all on Paper
+              Confirm before Start all
             </span>
           </label>
-          <p class="tiny">Each strategy keeps its own stop, take, and size. Paper and LIVE share that row. Size uses the current workspace wallet.</p>
+          <p class="tiny">Each strategy keeps its own stop, take, and size. Size uses the live wallet. Orders are not sent while live submission is disabled.</p>
           <a class="btn sm" routerLink="/bots">Open Bots</a>
         </div>
       </section>

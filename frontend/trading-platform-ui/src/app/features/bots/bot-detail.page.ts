@@ -111,7 +111,7 @@ import { ConfirmModalComponent, StatusBadgeComponent } from '../../shared/ui/ui-
       [open]="confirmDelete()"
       title="Delete bot"
       [message]="'Remove ' + (bot()?.symbol ?? 'this bot') + ' from this workspace? It will stop if running.'"
-      [warning]="ui.isLive() ? 'LIVE positions on Binance stay open.' : 'Paper positions stay open.'"
+      [warning]="'Stopping the bot leaves the Binance position open until an exchange fill closes it.'"
       confirmLabel="Delete"
       [danger]="true"
       (cancel)="confirmDelete.set(false)"
@@ -181,7 +181,7 @@ export class BotDetailPage {
   askDelete(): void {
     const bot = this.bot();
     if (!bot || !this.trading.belongsToWorkspace(bot)) {
-      this.toast.show('Wrong workspace', 'Switch PAPER/LIVE to match this bot first.', 'error');
+      this.toast.show('Live only', 'This bot is not a live bot, so it cannot be started.', 'error');
       return;
     }
     this.confirmDelete.set(true);

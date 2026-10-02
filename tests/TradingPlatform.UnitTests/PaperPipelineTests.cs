@@ -28,48 +28,12 @@ namespace TradingPlatform.UnitTests;
 public sealed class PaperPipelineTests
 {
     [Fact]
-    public void Paper_fill_applies_slippage_and_uses_paper_ids()
+    public void Paper_mode_is_rejected_by_the_connector_factory()
     {
-        PaperFillModel.ApplySlippage(100m, OrderSide.Buy, 5m).Should().Be(100.05m);
-        PaperFillModel.ApplySlippage(100m, OrderSide.Sell, 5m).Should().Be(99.95m);
-        PaperFillModel.Fee(1000m, 10m).Should().Be(1m);
-        PaperFillModel.NewPaperOrderId().Should().StartWith("PAPER-");
-        PaperFillModel.NewPaperFillId().Should().StartWith("PAPER-FILL-");
-    }
-
-    [Fact]
-    public async Task Paper_connector_fills_immediately_without_binance_order_id()
-    {
-        var cache = new MarketDataCache();
-        cache.SetTicker("BTCUSDT", 50_000m, DateTimeOffset.UtcNow);
-        var connector = new PaperExchangeConnector(
-            cache,
-            new SystemClock(),
-            Options.Create(new TradingOptions { PaperSlippageBps = 5m }));
-
-        var fill = await connector.PlaceOrderAsync(new PlaceOrderRequest(
-            "c1",
-            "BTCUSDT",
-            OrderSide.Buy,
-            OrderType.Market,
-            0.01m,
-            null,
-            null));
-
-        fill.Status.Should().Be(OrderStatus.Filled);
-        fill.ExchangeOrderId.Should().StartWith("PAPER-");
-        fill.AverageFillPrice.Should().Be(50_025m);
-        connector.Name.Should().Be("PaperSimulator");
-
-        var protective = connector.PlaceClosePositionStopsAsync(
-            "BTCUSDT",
-            OrderSide.Sell,
-            49_000m,
-            52_000m,
-            "sl-paper",
-            "tp-paper");
-        await protective;
-        protective.IsCompletedSuccessfully.Should().BeTrue();
+        var factory = new ExchangeConnectorFactory(Array.Empty<ILiveExchangeConnectorFactory>());
+        var act = () => factory.Create(TradingMode.Paper, null);
+        act.Should().Throw<Domain.Errors.DomainException>()
+            .Which.Message.Should().Contain("not supported");
     }
 
     [Fact]
@@ -83,9 +47,7 @@ public sealed class PaperPipelineTests
     [Fact]
     public void Live_connector_is_rejected_without_live_factory()
     {
-        var factory = new ExchangeConnectorFactory(
-            new PaperExchangeConnector(new MarketDataCache(), new SystemClock(), Options.Create(new TradingOptions())),
-            Array.Empty<ILiveExchangeConnectorFactory>());
+        var factory = new ExchangeConnectorFactory(Array.Empty<ILiveExchangeConnectorFactory>());
         var act = () => factory.Create(TradingMode.Live, null);
         act.Should().Throw<Domain.Errors.DomainException>().Which.Code.Should().Be("LIVE_TRADING_DISABLED");
     }
@@ -178,9 +140,7 @@ public sealed class PaperPipelineTests
             new StrategyEngine(),
             new StrategyDefinitionValidator(),
             new RiskEngine(),
-            new ExchangeConnectorFactory(
-                new PaperExchangeConnector(cache, new SystemClock(), Options.Create(new TradingOptions())),
-                Array.Empty<ILiveExchangeConnectorFactory>()),
+            new ExchangeConnectorFactory(Array.Empty<ILiveExchangeConnectorFactory>()),
             live,
             new NullTradingRealtimePublisher(),
             clock,
@@ -191,19 +151,11 @@ public sealed class PaperPipelineTests
 
         await engine.EvaluateRunningBotsAsync();
 
-        (await db.Orders.CountAsync()).Should().Be(1);
-        var order = await db.Orders.SingleAsync();
-        order.Status.Should().Be(OrderStatus.Filled);
-        order.ExchangeOrderId.Should().StartWith("PAPER-");
-        order.Mode.Should().Be(TradingMode.Paper);
-        (await db.Positions.CountAsync(p => p.ClosedAt == null)).Should().Be(1);
-        (await db.Executions.SingleAsync()).ExchangeTradeId.Should().StartWith("PAPER-FILL-");
-        var usdt = await db.Balances.SingleAsync(b => b.Asset == "USDT");
-        var position = await db.Positions.SingleAsync(p => p.ClosedAt == null);
-        position.MarginUsdt.Should().BeGreaterThan(0m);
-        usdt.Locked.Should().Be(position.MarginUsdt);
-        (usdt.Free + usdt.Locked).Should().BeApproximately(10_000m - (await db.Executions.SingleAsync()).Fee, 0.0001m);
-        usdt.Free.Should().BeGreaterThan(10_000m - position.Quantity * position.AverageEntryPrice);
+        (await db.Orders.CountAsync()).Should().Be(0);
+        (await db.Positions.CountAsync()).Should().Be(0);
+        (await db.Executions.CountAsync()).Should().Be(0);
+        bot.Status.Should().Be(BotStatus.Stopped);
+        bot.LastError.Should().Contain("not executed");
     }
 
     [Fact]
@@ -300,9 +252,7 @@ public sealed class PaperPipelineTests
             new StrategyEngine(),
             new StrategyDefinitionValidator(),
             new RiskEngine(),
-            new ExchangeConnectorFactory(
-                new PaperExchangeConnector(cache, new SystemClock(), Options.Create(new TradingOptions())),
-                Array.Empty<ILiveExchangeConnectorFactory>()),
+            new ExchangeConnectorFactory(Array.Empty<ILiveExchangeConnectorFactory>()),
             live,
             new NullTradingRealtimePublisher(),
             clock,
@@ -313,11 +263,10 @@ public sealed class PaperPipelineTests
 
         await engine.EvaluateRunningBotsAsync();
 
-        var position = await db.Positions.SingleAsync(p => p.ClosedAt == null);
-        position.Side.Should().Be(TradingPlatform.Domain.Positions.PositionSide.Short);
-        (await db.Orders.CountAsync()).Should().Be(1);
-        var order = await db.Orders.SingleAsync();
-        order.Side.Should().Be(OrderSide.Sell);
+        (await db.Orders.CountAsync()).Should().Be(0);
+        (await db.Positions.CountAsync()).Should().Be(0);
+        bot.Status.Should().Be(BotStatus.Stopped);
+        bot.LastError.Should().Contain("not executed");
     }
 
     [Theory]
@@ -433,9 +382,7 @@ public sealed class PaperPipelineTests
             new StrategyEngine(),
             new StrategyDefinitionValidator(),
             new RiskEngine(),
-            new ExchangeConnectorFactory(
-                new PaperExchangeConnector(cache, clock, Options.Create(new TradingOptions())),
-                [liveOrders]),
+            new ExchangeConnectorFactory([liveOrders]),
             live,
             new NullTradingRealtimePublisher(),
             clock,
@@ -446,9 +393,9 @@ public sealed class PaperPipelineTests
 
         await engine.EvaluateRunningBotsAsync();
 
-        liveOrders.Placed.Should().Contain(order => order.Side == OrderSide.Sell);
-        (await db.Positions.CountAsync(p => p.ClosedAt == null)).Should().Be(0);
-        bot.LastError.Should().NotContain("SL/TP own the exit");
+        liveOrders.Placed.Should().BeEmpty();
+        (await db.Positions.CountAsync(p => p.ClosedAt == null)).Should().Be(1);
+        bot.LastError.Should().Contain("not an exchange fill");
     }
 
     private static List<MarketCandle> CrossingCandles()

@@ -137,9 +137,7 @@ export class Shell {
 
   private async bootstrap(): Promise<void> {
     await Promise.all([this.trading.refresh(), this.trading.refreshMarkets(), this.trading.refreshHealth(), this.trading.refreshRisk(), this.trading.refreshCatalog(), this.trading.refreshPerformance()]);
-    if (this.ui.isLive() && !this.trading.overview()?.liveHasKeys) {
-      this.ui.setMode('paper', true);
-    }
+    this.ui.setMode('live', true);
     try {
       await this.hub.connect();
     } catch {
@@ -160,38 +158,8 @@ export class Shell {
   }
 
   async setMode(mode: TradingMode): Promise<void> {
-    if (mode === 'live') {
-      try {
-        const status = await this.trading.exchangeStatus();
-        if (!status.hasKeys) {
-          this.ui.setMode('paper', true);
-          this.ui.beginLiveSetup();
-          this.toast.show('Mode blocked', 'Save your Binance API key on Live Connection first.', 'error', 'connection');
-          void this.router.navigateByUrl('/exchanges');
-          return;
-        }
-        const result = this.ui.setMode('live', true);
-        await Promise.all([this.trading.refresh(), this.trading.refreshCatalog(), this.trading.refreshRisk(), this.trading.refreshPerformance()]);
-        const usdt = this.trading.overview()?.liveAvailable ?? status.usdtFree;
-        this.toast.show(
-          result.accepted ? 'LIVE Binance USD-M' : 'Mode blocked',
-          result.accepted
-            ? `Futures USDT: ${usdt ?? 0}. This is your real USD-M wallet. Nothing trades until you start a coin.`
-            : result.message,
-          result.accepted ? 'info' : 'error',
-        );
-      } catch {
-        this.ui.setMode('paper', true);
-        this.toast.show('Live unavailable', 'Could not read Binance account. Check the API and your key on Live Connection.', 'error', 'connection');
-      }
-      return;
-    }
-
     const result = this.ui.setMode(mode, true);
-    if (result.accepted) {
-      await Promise.all([this.trading.refresh(), this.trading.refreshCatalog(), this.trading.refreshRisk(), this.trading.refreshPerformance()]);
-    }
-    this.toast.show(result.accepted ? 'Trading mode' : 'Mode blocked', result.message, result.accepted ? 'info' : 'error');
+    this.toast.show(result.accepted ? 'Live mode' : 'Mode blocked', result.message, result.accepted ? 'info' : 'error');
   }
 
   logout(): void {

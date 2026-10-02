@@ -12,7 +12,7 @@
       label="Total Equity"
       [loading]="trading.loading() && !trading.overview()"
       [value]="formatUsd(equity())"
-      [sub]="isLive() ? liveWalletSub() : 'Paper · ' + signedMoney(todaysPnL()) + ' today'"
+      [sub]="liveWalletSub()"
       [subClass]="pnlClass(todaysPnL())"
     />
   </div>
@@ -22,7 +22,7 @@
       label="Available Balance"
       [loading]="trading.loading() && !trading.overview()"
       [value]="formatUsd(available())"
-      [sub]="isLive() ? 'Free USD-M USDT' : 'Free paper USDT'"
+      [sub]="'Free USD-M USDT'"
     />
   </div>
   <div class="dash-kpi">
@@ -135,7 +135,7 @@
   </section>
 
   <div class="dash-bots">
-    <app-bot-table [title]="isLive() ? 'Live Bots' : 'Paper Bots'" [bots]="modeBots()" [positions]="modePositions()" [signals]="trading.workspaceSignals()" (start)="startBot($event)" (stop)="stopBot($event)" />
+    <app-bot-table title="Live Bots" [bots]="modeBots()" [positions]="modePositions()" [signals]="trading.workspaceSignals()" (start)="startBot($event)" (stop)="stopBot($event)" />
   </div>
   <div class="dash-book">
     <app-ledger-book

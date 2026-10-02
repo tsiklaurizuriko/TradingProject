@@ -3,7 +3,7 @@ using TradingPlatform.Domain.Trading;
 namespace TradingPlatform.Trading;
 
 /// <summary>Quantity and fee already booked from earlier reports for the same order.</summary>
-public readonly record struct BookedFill(decimal Quantity, decimal? AveragePrice, decimal BookedFee);
+public readonly record struct BookedFill(decimal Quantity, decimal? AveragePrice, decimal BookedFee, string? FeeAsset = null);
 
 /// <summary>
 /// One exchange report. Executed quantity and average price are cumulative.
@@ -240,6 +240,25 @@ public static class FillAccounting
         if (report.Fee < 0m)
         {
             reason = "Exchange fee is negative. No position change.";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(report.FeeAsset))
+        {
+            reason = "Commission asset is missing. The fee was not booked.";
+            return false;
+        }
+
+        if (booked.BookedFee > 0m && string.IsNullOrWhiteSpace(booked.FeeAsset))
+        {
+            reason = "A booked fee has no asset. The new commission was not added.";
+            return false;
+        }
+
+        if (booked.BookedFee > 0m
+            && !string.Equals(booked.FeeAsset, report.FeeAsset, StringComparison.OrdinalIgnoreCase))
+        {
+            reason = "Commission asset changed. Fees in different assets were not added together.";
             return false;
         }
 

@@ -23,7 +23,12 @@ public static class LiveEntryGate
 
     public static string? Block(LiveEntryFacts facts)
     {
-        if (facts.Mode != TradingMode.Live || facts.ReducingExposure)
+        if (facts.Mode != TradingMode.Live)
+        {
+            return "Only live mode is supported. This request was rejected and was not treated as live.";
+        }
+
+        if (facts.ReducingExposure)
         {
             return null;
         }

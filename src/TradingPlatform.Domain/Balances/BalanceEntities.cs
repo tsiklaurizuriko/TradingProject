@@ -13,7 +13,7 @@ public sealed class Balance : Entity
     public string Asset { get; set; } = string.Empty;
     public decimal Free { get; set; }
     public decimal Locked { get; set; }
-    public TradingMode Mode { get; set; } = TradingMode.Paper;
+    public TradingMode Mode { get; set; } = TradingMode.Live;
     public uint RowVersion { get; set; }
 }
 

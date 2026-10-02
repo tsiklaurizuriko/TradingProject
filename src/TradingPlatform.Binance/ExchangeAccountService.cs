@@ -634,7 +634,8 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                         cancellationToken,
                         trade.Fee,
                         trade.TradeId,
-                        trade.RealizedPnl);
+                        trade.RealizedPnl,
+                        trade.FeeAsset);
                 }
             }
             catch (Exception ex)
@@ -657,7 +658,7 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                              item.Side,
                              item.Price,
                              item.Quantity,
-                             item.Fee,
+                             item.Fee ?? 0m,
                              item.Time,
                              item.TradeId,
                              item.RealizedPnl)).ToList()))
@@ -779,7 +780,8 @@ public sealed class ExchangeAccountService : IExchangeAccountService
         CancellationToken cancellationToken,
         decimal? fee = null,
         string? tradeId = null,
-        decimal? realizedPnl = null)
+        decimal? realizedPnl = null,
+        string? feeAsset = null)
     {
         var fillRow = !string.IsNullOrWhiteSpace(tradeId);
         var clientKey = OrderLedger.ClientKey(clientOrderId, fillRow ? null : exchangeOrderId);
@@ -881,8 +883,8 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                 ExchangeTradeId = tradeId,
                 Price = price ?? 0m,
                 Quantity = filled,
-                Fee = fee ?? 0m,
-                FeeAsset = "USDT",
+                Fee = string.IsNullOrWhiteSpace(feeAsset) ? 0m : fee ?? 0m,
+                FeeAsset = string.IsNullOrWhiteSpace(feeAsset) ? "" : feeAsset,
                 IsMaker = false,
                 ExchangeTimestamp = createdAt,
                 CorrelationId = "binance-ledger"
@@ -1058,10 +1060,11 @@ public sealed class ExchangeAccountService : IExchangeAccountService
         OrderSide Side,
         decimal Price,
         decimal Quantity,
-        decimal Fee,
+        decimal? Fee,
         DateTimeOffset Time,
         string TradeId,
-        decimal RealizedPnl);
+        decimal RealizedPnl,
+        string? FeeAsset);
 
     private static IReadOnlyList<IncomeRow> ParseIncome(JsonElement json)
     {
@@ -1122,15 +1125,20 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                 created = DateTimeOffset.FromUnixTimeMilliseconds(ms);
             }
 
+            var feeAsset = row.TryGetProperty("commissionAsset", out var assetEl) ? assetEl.GetString() : null;
+            decimal? fee = row.TryGetProperty("commission", out _) && !string.IsNullOrWhiteSpace(feeAsset)
+                ? Math.Abs(ParseDecimal(row, "commission"))
+                : null;
             yield return new UserTradeFill(
                 orderId,
                 OrderLedger.ParseSide(row.TryGetProperty("side", out var sideEl) ? sideEl.GetString() : null),
                 ParseDecimal(row, "price"),
                 ParseDecimal(row, "qty"),
-                Math.Abs(ParseDecimal(row, "commission")),
+                fee,
                 created,
                 tradeId,
-                ParseDecimal(row, "realizedPnl"));
+                ParseDecimal(row, "realizedPnl"),
+                string.IsNullOrWhiteSpace(feeAsset) ? null : feeAsset);
         }
     }
 

@@ -196,7 +196,7 @@ export class TradingService {
   }
 
   workspaceMismatchMessage(bot: BotDto): string {
-    return `This bot is ${bot.mode}. Switch the header to ${bot.mode.toUpperCase()} first.`;
+    return `This bot is stored as ${bot.mode}. Only live bots can be started.`;
   }
 
   startWorkspaceSymbol(symbol: string, strategyId?: string, riskProfileId?: string): Promise<BotDto> {
