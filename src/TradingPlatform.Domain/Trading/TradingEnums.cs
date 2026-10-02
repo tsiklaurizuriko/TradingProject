@@ -71,7 +71,8 @@ public enum OrderStatus
     Cancelled = 6,
     Rejected = 7,
     Expired = 8,
-    Failed = 9
+    Failed = 9,
+    Uncertain = 10
 }
 
 public enum Timeframe

@@ -172,6 +172,7 @@ public sealed class NewsLiveWorker : BackgroundService
             .Select(group => group.First())
             .ToList();
         var session = await database.GetOrCreateSessionAsync(cancellationToken);
+        var trading = scope.ServiceProvider.GetRequiredService<IOptions<TradingOptions>>().Value;
         var risk = scope.ServiceProvider.GetRequiredService<IRiskEngine>();
         var profile = await scope.ServiceProvider.GetRequiredService<ITradingStore>().GetConservativeRiskAsync(cancellationToken);
         var scoped = events
@@ -196,7 +197,8 @@ public sealed class NewsLiveWorker : BackgroundService
             connector = scope.ServiceProvider.GetRequiredService<IExchangeConnectorFactory>().Create(TradingMode.Live, null);
         }
 
-        await PersistSignalsAsync(database, events, report, session, profile, risk, connector, now, options, cancellationToken);
+        var reconciliation = scope.ServiceProvider.GetRequiredService<ReconciliationState>();
+        await PersistSignalsAsync(database, events, report, session, profile, risk, connector, now, options, trading, reconciliation, cancellationToken);
 
         await NewsLiveAnalyzer.WriteAsync(root, report, options.Strategy.Timeframes.Execution, cancellationToken);
         var candidates = report.Decisions.Count(item => item.Signal != NewsMarketSignals.NoTrade);
@@ -218,6 +220,8 @@ public sealed class NewsLiveWorker : BackgroundService
         IExchangeConnector? connector,
         DateTimeOffset now,
         NewsOptions options,
+        TradingOptions trading,
+        ReconciliationState reconciliation,
         CancellationToken cancellationToken)
     {
         var eventsById = events.ToDictionary(item => item.EventId, StringComparer.Ordinal);
@@ -264,7 +268,7 @@ public sealed class NewsLiveWorker : BackgroundService
             };
             var handoff = price <= 0m && direction != "NO_TRADE"
                 ? new NewsRiskHandoff(direction, "Rejected", "No reference price.", 0, 0, 0, 0, 0, 0, "REJECTED", null)
-                : NewsTradeAdapter.Handoff(direction, price <= 0m ? 1m : price, 0.01m, profile, snapshot, risk, now, session.Running && string.Equals(session.Mode, "Live", StringComparison.OrdinalIgnoreCase), session.Running);
+                : NewsTradeAdapter.Handoff(direction, price <= 0m ? 1m : price, 0.01m, profile, snapshot, risk, now, trading.LiveTradingEnabled && session.Running && string.Equals(session.Mode, "Live", StringComparison.OrdinalIgnoreCase), session.Running);
             if (direction == "NO_TRADE")
             {
                 handoff = NewsTradeAdapter.Handoff(direction, 1m, 0.01m, profile, snapshot, risk, now, false, false);
@@ -280,7 +284,20 @@ public sealed class NewsLiveWorker : BackgroundService
             {
                 var leverage = (int)Math.Max(1m, Math.Floor(handoff.Leverage));
                 await connector.PrepareSymbolRiskAsync(decision.Symbol, MarginMode.Isolated, leverage, cancellationToken);
-                var fill = await NewsTradeAdapter.SubmitAsync(connector, handoff.Request, liveTradingEnabled: true, cancellationToken);
+                var fill = await NewsTradeAdapter.SubmitAsync(
+                    connector,
+                    handoff.Request,
+                    new LiveEntryFacts(
+                        TradingMode.Live,
+                        trading.LiveTradingEnabled,
+                        trading.KillSwitchEnabled,
+                        reconciliation.IsFresh(now, TimeSpan.FromSeconds(Math.Max(1, trading.ReconciliationMaxAgeSeconds))),
+                        reconciliation.BlockReason is not null,
+                        true,
+                        true,
+                        true,
+                        false),
+                    cancellationToken);
                 exchangeId = fill?.ExchangeOrderId;
                 if (fill is not null && handoff.StopLossPrice > 0m && handoff.TakeProfitPrice > 0m)
                 {

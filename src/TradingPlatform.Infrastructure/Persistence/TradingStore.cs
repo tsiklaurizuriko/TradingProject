@@ -316,6 +316,7 @@ public sealed class TradingStore : ITradingStore
         try
         {
             return await _db.Positions
+                .Include(p => p.Events)
                 .Include(p => p.Bot)
                 .ThenInclude(b => b.StrategyVersion)
                 .Where(p => p.ClosedAt == null && p.Quantity > 0m && p.Bot.Mode == mode)
@@ -417,6 +418,30 @@ public sealed class TradingStore : ITradingStore
 
     public Task<Order?> GetOrderByClientOrderIdAsync(string clientOrderId, CancellationToken cancellationToken = default) =>
         _db.Orders.FirstOrDefaultAsync(o => o.ClientOrderId == clientOrderId, cancellationToken);
+
+    public async Task<IReadOnlyList<Order>> GetUnresolvedLiveOrdersAsync(CancellationToken cancellationToken = default) =>
+        await _db.Orders
+            .Include(order => order.Bot)
+            .ThenInclude(bot => bot.StrategyVersion)
+            .Where(order => order.Mode == TradingMode.Live
+                && order.Type == OrderType.Market
+                && (order.Status == OrderStatus.Uncertain || order.Status == OrderStatus.Submitting))
+            .ToListAsync(cancellationToken);
+
+    public async Task AddPositionEventAsync(PositionEvent positionEvent, CancellationToken cancellationToken = default)
+    {
+        await _db.PositionEvents.AddAsync(positionEvent, cancellationToken);
+    }
+
+    public Task<bool> HasUnresolvedEntryAsync(Guid botId, string symbol, CancellationToken cancellationToken = default) =>
+        _db.Orders.AnyAsync(
+            order => order.BotId == botId
+                && order.Symbol == symbol
+                && order.Type == OrderType.Market
+                && (order.Status == OrderStatus.Uncertain
+                    || order.Status == OrderStatus.PartiallyFilled
+                    || order.Status == OrderStatus.Submitting),
+            cancellationToken);
 
     public Task<int> CountOrdersSinceAsync(Guid botId, DateTimeOffset sinceUtc, CancellationToken cancellationToken = default) =>
         _db.Orders.CountAsync(o => o.BotId == botId && o.CreatedAt >= sinceUtc, cancellationToken);

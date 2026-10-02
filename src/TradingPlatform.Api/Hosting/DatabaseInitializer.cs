@@ -80,7 +80,16 @@ public static class DatabaseInitializer
 
         if (plan.Updates.Count > 0)
         {
-            await db.SaveChangesAsync(cancellationToken);
+            if (db.Database.IsRelational())
+            {
+                await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+                await db.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+            }
+            else
+            {
+                await db.SaveChangesAsync(cancellationToken);
+            }
         }
 
         foreach (var review in plan.Reviews.Distinct(StringComparer.Ordinal))

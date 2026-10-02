@@ -7,9 +7,10 @@ public static class OrderStateMachine
     private static readonly Dictionary<OrderStatus, HashSet<OrderStatus>> Allowed = new()
     {
         [OrderStatus.New] = [OrderStatus.Submitting, OrderStatus.Rejected, OrderStatus.Failed],
-        [OrderStatus.Submitting] = [OrderStatus.Submitted, OrderStatus.Rejected, OrderStatus.Failed, OrderStatus.Filled, OrderStatus.PartiallyFilled, OrderStatus.Cancelled, OrderStatus.Expired],
-        [OrderStatus.Submitted] = [OrderStatus.PartiallyFilled, OrderStatus.Filled, OrderStatus.CancelRequested, OrderStatus.Cancelled, OrderStatus.Expired, OrderStatus.Rejected, OrderStatus.Failed],
-        [OrderStatus.PartiallyFilled] = [OrderStatus.Filled, OrderStatus.CancelRequested, OrderStatus.Cancelled, OrderStatus.Expired],
+        [OrderStatus.Submitting] = [OrderStatus.Submitted, OrderStatus.Rejected, OrderStatus.Failed, OrderStatus.Filled, OrderStatus.PartiallyFilled, OrderStatus.Cancelled, OrderStatus.Expired, OrderStatus.Uncertain],
+        [OrderStatus.Submitted] = [OrderStatus.PartiallyFilled, OrderStatus.Filled, OrderStatus.CancelRequested, OrderStatus.Cancelled, OrderStatus.Expired, OrderStatus.Rejected, OrderStatus.Failed, OrderStatus.Uncertain],
+        [OrderStatus.PartiallyFilled] = [OrderStatus.Filled, OrderStatus.CancelRequested, OrderStatus.Cancelled, OrderStatus.Expired, OrderStatus.Uncertain],
+        [OrderStatus.Uncertain] = [OrderStatus.Submitted, OrderStatus.PartiallyFilled, OrderStatus.Filled, OrderStatus.Cancelled, OrderStatus.Rejected, OrderStatus.Expired, OrderStatus.Failed],
         [OrderStatus.CancelRequested] = [OrderStatus.Cancelled, OrderStatus.Filled, OrderStatus.PartiallyFilled, OrderStatus.Expired],
         [OrderStatus.Filled] = [],
         [OrderStatus.Cancelled] = [],

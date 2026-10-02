@@ -22,6 +22,7 @@ public sealed class LiveIsolatedReconciler
     private readonly IClock _clock;
     private readonly ICorrelationIdAccessor _correlation;
     private readonly ILogger<LiveIsolatedReconciler> _logger;
+    private readonly ReconciliationState _state;
 
     public LiveIsolatedReconciler(
         ITradingStore store,
@@ -29,7 +30,8 @@ public sealed class LiveIsolatedReconciler
         IMarketDataCache cache,
         IClock clock,
         ICorrelationIdAccessor correlation,
-        ILogger<LiveIsolatedReconciler> logger)
+        ILogger<LiveIsolatedReconciler> logger,
+        ReconciliationState? state = null)
     {
         _store = store;
         _live = live;
@@ -37,6 +39,7 @@ public sealed class LiveIsolatedReconciler
         _clock = clock;
         _correlation = correlation;
         _logger = logger;
+        _state = state ?? new ReconciliationState();
     }
 
     public async Task ReconcileAsync(CancellationToken cancellationToken = default)
@@ -44,8 +47,10 @@ public sealed class LiveIsolatedReconciler
         try
         {
             var live = _live.Current;
-            if (!IsolatedOccupancy.HasFreshFuturesBook(live))
+            if (!IsolatedOccupancy.HasFreshFuturesBook(live) || live.UpdatedAt is null)
             {
+                _state.Fail("Exchange account snapshot is missing, stale, or incomplete. New live entries are blocked.", _clock.UtcNow);
+                _logger.LogError("Reconciliation failed closed. {Reason}", _state.BlockReason);
                 return;
             }
 
@@ -91,10 +96,47 @@ public sealed class LiveIsolatedReconciler
             await _store.SaveChangesAsync(cancellationToken);
             _logger.LogInformation("Reconciled {Count} Isolated snapshot(s) that Binance no longer holds.", closed);
         }
+
+        var unknown = new List<string>();
+        foreach (var remote in live.OpenPositions.Where(row => row.Quantity > 0m))
+        {
+            var known = book.Any(position =>
+                position.Quantity > 0m
+                && string.Equals(position.Symbol, remote.Symbol, StringComparison.OrdinalIgnoreCase));
+            if (!known)
+            {
+                unknown.Add("position " + remote.Symbol);
+            }
+        }
+
+        foreach (var remote in live.OpenOrders)
+        {
+            if (string.IsNullOrWhiteSpace(remote.ClientOrderId)
+                || await _store.GetOrderByClientOrderIdAsync(remote.ClientOrderId, cancellationToken) is null)
+            {
+                unknown.Add("order " + remote.Symbol);
+            }
+        }
+
+        if (unknown.Count > 0)
+        {
+            var reason = "Unknown exchange state: " + string.Join(", ", unknown) + ". New live entries are blocked. Nothing was closed automatically.";
+            _state.Fail(reason, _clock.UtcNow);
+            _logger.LogError("Reconciliation exception. {Reason}", reason);
+            return;
+        }
+
+        _state.Succeed(live.ApiKeyHint ?? "live-account", _clock.UtcNow);
+        _logger.LogInformation("Reconciliation succeeded for {Account} at {At}.", _state.AccountId, _state.SucceededAt);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
+        }
+        catch (Exception ex)
+        {
+            _state.Fail("Reconciliation failed: " + ex.Message, _clock.UtcNow);
+            _logger.LogError(ex, "Reconciliation failed closed.");
         }
     }
 
@@ -142,48 +184,22 @@ public sealed class LiveIsolatedReconciler
 
     private async Task CloseGhostAsync(Bot bot, Position position, CancellationToken cancellationToken)
     {
-        var clientOrderId = $"RC{position.Id:N}"[..18];
-        if (await _store.HasClientOrderAsync(clientOrderId, cancellationToken))
-        {
-            position.Quantity = 0m;
-            position.UnrealizedPnL = 0m;
-            position.ClosedAt ??= _clock.UtcNow;
-            return;
-        }
-
         var exit = position.CurrentPrice > 0m ? position.CurrentPrice : position.AverageEntryPrice;
         if (_cache.TryGetTicker(position.Symbol, out var mark) && mark > 0m)
         {
             exit = mark;
         }
 
-        var correlationId = _correlation.GetOrCreate();
-        var closeSide = position.Side == PositionSide.Short ? OrderSide.Buy : OrderSide.Sell;
-        var order = new Order
+        if (exit <= 0m)
         {
-            BotId = bot.Id,
-            ExchangeAccountId = bot.ExchangeAccountId,
-            StrategyId = bot.StrategyVersion.StrategyId,
-            StrategyVersionId = bot.StrategyVersionId,
-            Symbol = position.Symbol,
-            Side = closeSide,
-            Type = OrderType.Market,
-            Status = OrderStatus.Filled,
-            Price = exit,
-            AverageFillPrice = exit,
-            Quantity = position.Quantity,
-            FilledQuantity = position.Quantity,
-            RemainingQuantity = 0m,
-            ClientOrderId = clientOrderId,
-            IdempotencyKey = clientOrderId,
-            Mode = TradingMode.Live,
-            CorrelationId = correlationId,
-            SubmittedAt = _clock.UtcNow,
-            ExchangeTimestamp = _clock.UtcNow,
-            RejectReason = "Closed on Binance. Isolated snapshot reconciled."
-        };
-        await _store.AddOrderAsync(order, cancellationToken);
+            _state.Fail(
+                $"Local position {position.Symbol} is absent on the exchange, but there is no confirmed exit price. It was left open.",
+                _clock.UtcNow);
+            _logger.LogError("Ghost position {Symbol} was not closed because the exit price is missing.", position.Symbol);
+            return;
+        }
 
+        var correlationId = _correlation.GetOrCreate();
         var quantity = position.Quantity;
         var direction = position.Side == PositionSide.Short ? -1m : 1m;
         var pnl = direction * (exit - position.AverageEntryPrice) * quantity;
@@ -192,14 +208,15 @@ public sealed class LiveIsolatedReconciler
         position.UnrealizedPnL = 0m;
         position.RealizedPnL += pnl;
         position.ClosedAt = _clock.UtcNow;
-        position.Events.Add(new PositionEvent
+        await _store.AddPositionEventAsync(new PositionEvent
         {
-            EventType = "CLOSE",
+            PositionId = position.Id,
+            EventType = "RECONCILE_FLAT",
             Quantity = quantity,
             Price = exit,
             RealizedPnLDelta = pnl,
             CorrelationId = correlationId
-        });
+        }, cancellationToken);
 
         var pnlPercent = position.AverageEntryPrice == 0m
             ? 0m
@@ -239,7 +256,6 @@ public sealed class LiveIsolatedReconciler
 
         if (openTrade is not null)
         {
-            openTrade.ExitOrderId = order.Id;
             openTrade.ExitPrice = exit;
             openTrade.PnL = pnl;
             openTrade.PnLPercent = pnlPercent;
@@ -252,9 +268,8 @@ public sealed class LiveIsolatedReconciler
                 BotId = bot.Id,
                 StrategyId = bot.StrategyVersion.StrategyId,
                 StrategyVersionId = bot.StrategyVersionId,
-                ExitOrderId = order.Id,
                 Symbol = position.Symbol,
-                Side = closeSide,
+                Side = position.Side == PositionSide.Short ? OrderSide.Sell : OrderSide.Buy,
                 Quantity = quantity,
                 EntryPrice = position.AverageEntryPrice,
                 ExitPrice = exit,

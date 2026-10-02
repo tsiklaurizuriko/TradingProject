@@ -4,17 +4,17 @@ Live trading stays off unless an operator sets `Trading:LiveTradingEnabled` to `
 
 ## What startup does
 
-1. Apply EF migrations (`Database.MigrateAsync`) in every environment, not only Development.
-2. Run the canonical strategy data migration. It rewrites obsolete template ids, disables a duplicate alias row, and leaves parameter numbers in place.
-3. In Development, seed the catalog, then run the canonical migration again so a seed cannot leave two enabled rows for one id.
-4. Refuse to continue if the plan has a failure, if an enabled row still has an obsolete id, or if two enabled rows share one canonical id.
-5. Log the assembly informational version and the canonical id list.
-6. Log a warning for every review item (timeframe outside the canonical default, unknown parameter, disabled duplicate).
-7. Stop every running bot.
+1. Load configuration. `Trading:DefaultMode` is `PAPER`. `Trading:LiveTradingEnabled` is false. `Trading:ReconciliationMaxAgeSeconds` defaults to 90 when it is omitted.
+2. Apply EF migrations (`Database.MigrateAsync`) in every environment, not only Development.
+3. Run the canonical strategy data migration inside a transaction on a relational database. It rewrites obsolete template ids, disables a duplicate alias row, and leaves parameter numbers in place. Incompatible parameters and timeframe mismatches are warnings, not silent rewrites.
+4. In Development, seed the catalog, then run the canonical migration again so a seed cannot leave two enabled rows for one id.
+5. Refuse to continue if the plan has a failure, if an enabled row still has an obsolete id, or if two enabled rows share one canonical id. The exception is logged and rethrown. Secrets are not written in that log.
+6. Log the assembly informational version and the canonical id list.
+7. Stop every running bot. Startup does not submit an order.
 
-If PostgreSQL is down, or the migration cannot parse a definition, startup throws and the process stops. It does not keep serving with the previous catalog.
+The bot cycle starts only after that. Each cycle refreshes the futures book, reconciles, and recovers unresolved client order ids before it evaluates entries. A kill switch stops bots after that recovery, so a fill that already exists can be booked and a new entry is not sent. New live entries stay refused while the flag is false, reconciliation is stale, or risk checks fail. An exit of a position that is already open can still send an order.
 
-The bot cycle, when an operator later starts a bot, reconciles the isolated futures book before it evaluates entries. New live entries are refused while `Trading:LiveTradingEnabled` is false. An exit of a position that is already open can still send an order.
+`GET /api/system/health` separates a running process from database health, exchange connectivity, reconciliation freshness, risk configuration, and whether the live-entry gate is open. The default response has the gate closed.
 
 ## Deploy
 

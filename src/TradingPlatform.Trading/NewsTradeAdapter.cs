@@ -84,10 +84,35 @@ public static class NewsTradeAdapter
     public static async Task<ExchangeOrder?> SubmitAsync(
         IExchangeConnector connector,
         PlaceOrderRequest request,
+        LiveEntryFacts facts,
+        CancellationToken cancellationToken)
+    {
+        var block = LiveEntryGate.Block(facts);
+        if (block is not null)
+        {
+            return null;
+        }
+
+        return await connector.PlaceOrderAsync(request, cancellationToken);
+    }
+
+    public static async Task<ExchangeOrder?> SubmitAsync(
+        IExchangeConnector connector,
+        PlaceOrderRequest request,
         bool liveTradingEnabled,
         CancellationToken cancellationToken)
     {
-        if (!liveTradingEnabled)
+        var block = LiveEntryGate.Block(new LiveEntryFacts(
+            TradingMode.Live,
+            liveTradingEnabled,
+            false,
+            true,
+            false,
+            true,
+            true,
+            true,
+            false));
+        if (block is not null)
         {
             return null;
         }

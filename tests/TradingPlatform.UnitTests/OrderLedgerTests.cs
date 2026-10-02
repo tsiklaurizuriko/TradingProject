@@ -25,6 +25,13 @@ public sealed class OrderLedgerTests
         OrderLedger.ParseStatus("FILLED").Should().Be(OrderStatus.Filled);
         OrderLedger.ParseStatus("TRIGGERED").Should().Be(OrderStatus.Filled);
         OrderLedger.ParseStatus("FINISHED").Should().Be(OrderStatus.Filled);
+        OrderLedger.ParseStatus("NEW").Should().Be(OrderStatus.New);
+        OrderLedger.ParseStatus("PARTIALLY_FILLED").Should().Be(OrderStatus.PartiallyFilled);
+        OrderLedger.ParseStatus("CANCELED").Should().Be(OrderStatus.Cancelled);
+        OrderLedger.ParseStatus("REJECTED").Should().Be(OrderStatus.Rejected);
+        OrderLedger.ParseStatus("EXPIRED").Should().Be(OrderStatus.Expired);
+        OrderLedger.ParseStatus("MYSTERY").Should().Be(OrderStatus.Uncertain);
+        OrderLedger.ParseStatus(null).Should().Be(OrderStatus.Uncertain);
         OrderLedger.ClientKey(null, "970621956").Should().Be("BX970621956");
         OrderLedger.Same("slabc", null, "slabc", "99").Should().BeTrue();
         OrderLedger.Same("entry", "11", "other", "11").Should().BeTrue();

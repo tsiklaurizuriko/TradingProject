@@ -21,6 +21,7 @@ public static class AdvancedStrategyEvaluator
         }
 
         return p.TemplateKey switch
+
         {
             StrategyTemplateKeys.TurtleTsm => Turtle(p, candles, i, context, cache),
             StrategyTemplateKeys.VwapPullbackTrend => VwapPullback(p, candles, i, context, cache),
@@ -649,354 +650,44 @@ public static class AdvancedStrategyEvaluator
     private static bool FittedTimeExit(IReadOnlyList<MarketCandle> candles, int i, StrategyContext context) =>
         context.PositionOpenedAt is { } opened && candles[i].CloseTime >= opened.AddHours(48);
 
-    private static StrategySignalDetail FlowZone(
-        IReadOnlyList<MarketCandle> candles,
-        int i,
-        StrategyContext context)
+
+
+
+
+
+
+
+
+
+    private static List<decimal> UtcDailyCloses(IReadOnlyList<MarketCandle> candles, int i)
     {
-        const string status = "LIVE_PROBE";
-        const int window = 24;
-        const decimal edge = 0.25m;
-        const decimal takerMajority = 0.62m;
-        if (i < window - 1)
+        var byDay = new Dictionary<DateOnly, decimal>();
+        var order = new List<DateOnly>();
+        var last = Math.Min(i, candles.Count - 1);
+        for (var k = 0; k <= last; k++)
         {
-            return Detail(SignalType.NoAction, "Need 24 closed bars.", candles, i, status: status);
-        }
-
-        var lo = candles[i - window + 1].Low;
-        var hi = candles[i - window + 1].High;
-        for (var k = i - window + 2; k <= i; k++)
-        {
-            if (candles[k].Low < lo)
+            var bar = candles[k];
+            if (!bar.IsClosed || bar.Close <= 0m)
             {
-                lo = candles[k].Low;
+                continue;
             }
 
-            if (candles[k].High > hi)
+            var day = DateOnly.FromDateTime(bar.OpenTime.UtcDateTime);
+            if (!byDay.ContainsKey(day))
             {
-                hi = candles[k].High;
-            }
-        }
-
-        if (hi <= lo)
-        {
-            return Detail(SignalType.NoAction, "The 24-bar range is flat.", candles, i, status: status);
-        }
-
-        var bar = candles[i];
-        var place = (bar.Close - lo) / (hi - lo);
-        var imbalance = TakerFlow.Imbalance(bar);
-        if (imbalance is null)
-        {
-            return Detail(SignalType.NoAction, "Taker buy volume is missing. No order.", candles, i, status: status);
-        }
-
-        var buyShare = (imbalance.Value + 1m) / 2m;
-        var interest = OpenInterestRose(context.OpenInterest);
-        if (context.HasOpenPosition)
-        {
-            var leftLong = IsLong(context) && (place < 1m - edge || buyShare <= takerMajority);
-            var leftShort = !IsLong(context) && (place > edge || buyShare >= 1m - takerMajority);
-            if ((leftLong || leftShort) && !IsLoss(context, bar.Close) && !MoveCoversRoundTripFee(context, bar.Close))
-            {
-                return Detail(SignalType.Hold, "Flow left the zone, but the gain is still inside the round-trip fee.", candles, i, status: status);
+                order.Add(day);
             }
 
-            if (leftLong)
-            {
-                return Detail(SignalType.Exit, "Buy flow left the upper quarter.", candles, i, status: status);
-            }
-
-            if (leftShort)
-            {
-                return Detail(SignalType.Exit, "Sell flow left the lower quarter.", candles, i, status: status);
-            }
-
-            return Detail(SignalType.Hold, "Flow zone is still on.", candles, i, status: status);
+            byDay[day] = bar.Close;
         }
 
-        if (interest is null)
+        var closes = new List<decimal>(order.Count);
+        foreach (var day in order)
         {
-            return Detail(SignalType.NoAction, "Open interest is missing. No order.", candles, i, status: status);
+            closes.Add(byDay[day]);
         }
 
-        if (interest == false)
-        {
-            return Detail(SignalType.NoAction, "Open interest is not rising.", candles, i, status: status);
-        }
-
-        if (place >= 1m - edge && buyShare > takerMajority && bar.Close > bar.Open)
-        {
-            return Detail(SignalType.Buy, "Upper zone, taker buy is above 62%, open interest rose.", candles, i, status: status);
-        }
-
-        if (place <= edge && buyShare < 1m - takerMajority && bar.Close < bar.Open)
-        {
-            return Detail(SignalType.Sell, "Lower zone, taker sell is above 62%, open interest rose.", candles, i, status: status);
-        }
-
-        return Detail(SignalType.NoAction, "Price, taker flow, and open interest do not agree.", candles, i, status: status);
-    }
-
-    private static bool? OpenInterestRose(IReadOnlyList<decimal?>? openInterest)
-    {
-        if (openInterest is null || openInterest.Count < 2)
-        {
-            return null;
-        }
-
-        var previous = openInterest[^2];
-        var latest = openInterest[^1];
-        if (previous is not { } prior || latest is not { } now || prior <= 0m || now <= 0m)
-        {
-            return null;
-        }
-
-        return now > prior;
-    }
-
-    /// <summary>A loss is already a reason to leave. Holding it so the fee looks smaller lets it walk to the 4% stop.</summary>
-    private static bool IsLoss(StrategyContext context, decimal close)
-    {
-        if (context.AverageEntryPrice is not { } entry || entry <= 0m || close <= 0m)
-        {
-            return false;
-        }
-
-        var move = IsLong(context)
-            ? (close - entry) / entry
-            : (entry - close) / entry;
-        return move < 0m;
-    }
-
-    /// <summary>0.20% is about two taker fees. A smaller gain pays the fee and keeps nothing.</summary>
-    private static bool MoveCoversRoundTripFee(StrategyContext context, decimal close)
-    {
-        const decimal feeBand = 0.002m;
-        if (context.AverageEntryPrice is not { } entry || entry <= 0m || close <= 0m)
-        {
-            return true;
-        }
-
-        var move = IsLong(context)
-            ? (close - entry) / entry
-            : (entry - close) / entry;
-        return Math.Abs(move) >= feeBand;
-    }
-
-    private static StrategySignalDetail SqueezeWatch(
-        IReadOnlyList<MarketCandle> candles,
-        int i,
-        StrategyContext context)
-    {
-        const string status = "LIVE_PROBE";
-        const int window = 24;
-        const decimal openInterestRise = 0.15m;
-        const decimal priceBand = 0.03m;
-        const decimal fundingExtreme = 0.001m;
-        if (context.HasOpenPosition)
-        {
-            if (context.AverageEntryPrice is { } entry && entry > 0m)
-            {
-                var adverse = IsLong(context)
-                    ? (entry - candles[i].Close) / entry
-                    : (candles[i].Close - entry) / entry;
-                if (adverse >= 0.02m)
-                {
-                    return Detail(SignalType.Exit, "Price moved 2% against the squeeze. The 4% stop stays as the rail.", candles, i, status: status);
-                }
-            }
-
-            var openFunding = LatestFunding(context.FundingRate);
-            if (openFunding is null)
-            {
-                return Detail(SignalType.Hold, "Funding is missing. The 4% stop and 8% take own the exit.", candles, i, status: status);
-            }
-
-            if (IsLong(context) && openFunding > -fundingExtreme)
-            {
-                return Detail(SignalType.Exit, "Crowded-short funding faded.", candles, i, status: status);
-            }
-
-            if (!IsLong(context) && openFunding < fundingExtreme)
-            {
-                return Detail(SignalType.Exit, "Crowded-long funding faded.", candles, i, status: status);
-            }
-
-            return Detail(SignalType.Hold, "Funding is still extreme. The 4% stop and 8% take stay as the rail.", candles, i, status: status);
-        }
-
-        if (i < window - 1)
-        {
-            return Detail(SignalType.NoAction, "Need 24 closed bars.", candles, i, status: status);
-        }
-
-        var then = candles[i - window + 1].Close;
-        var now = candles[i].Close;
-        if (then <= 0m)
-        {
-            return Detail(SignalType.NoAction, "Price window is empty.", candles, i, status: status);
-        }
-
-        var priceChange = (now - then) / then;
-        if (Math.Abs(priceChange) > priceBand)
-        {
-            return Detail(SignalType.NoAction, "Price already moved more than 3% in 24 hours.", candles, i, status: status);
-        }
-
-        var interest = OpenInterestChange(context.OpenInterest);
-        if (interest is null)
-        {
-            return Detail(SignalType.NoAction, "Open interest is missing. No order.", candles, i, status: status);
-        }
-
-        if (interest < openInterestRise)
-        {
-            return Detail(SignalType.NoAction, "Open interest did not rise 15% while price was quiet.", candles, i, status: status);
-        }
-
-        var funding = LatestFunding(context.FundingRate);
-        if (funding is null)
-        {
-            return Detail(SignalType.NoAction, "Funding is missing. No order.", candles, i, status: status);
-        }
-
-        if (funding <= -fundingExtreme)
-        {
-            return Detail(SignalType.Buy, "Price is quiet, open interest rose, funding is at or below -0.10%. Crowded shorts.", candles, i, status: status);
-        }
-
-        if (funding >= fundingExtreme)
-        {
-            return Detail(SignalType.Sell, "Price is quiet, open interest rose, funding is at or above +0.10%. Crowded longs.", candles, i, status: status);
-        }
-
-        return Detail(SignalType.NoAction, "Funding is not at a ±0.10% extreme.", candles, i, status: status);
-    }
-
-    private static StrategySignalDetail ImpulseCatch(
-        IReadOnlyList<MarketCandle> candles,
-        int i,
-        StrategyContext context)
-    {
-        const string status = "LIVE_PROBE";
-        const int window = 16;
-        const int volumeLookback = 20;
-        const decimal largeMove = 0.08m;
-        const decimal giveback = 0.03m;
-        const decimal volumeMultiple = 1.5m;
-        if (i < volumeLookback || i < window + 1)
-        {
-            return Detail(SignalType.NoAction, "Need enough closed 15-minute bars.", candles, i, status: status);
-        }
-
-        if (context.HasOpenPosition)
-        {
-            var previous = candles[i - 1].Close;
-            var give = previous <= 0m ? 0m : (candles[i].Close - previous) / previous;
-            if (give <= -giveback)
-            {
-                return Detail(SignalType.Exit, "The last bar gave back 3%.", candles, i, status: status);
-            }
-
-            return Detail(SignalType.Hold, "The rise is still open.", candles, i, status: status);
-        }
-
-        var rise = Rise(candles, i, window);
-        var priorRise = Rise(candles, i - 1, window);
-        if (rise is not { } now || priorRise is not { } before)
-        {
-            return Detail(SignalType.NoAction, "The price window is empty.", candles, i, status: status);
-        }
-
-        if (now < largeMove)
-        {
-            return Detail(SignalType.NoAction, "The rise is still under 8%.", candles, i, status: status);
-        }
-
-        if (before >= largeMove)
-        {
-            return Detail(SignalType.NoAction, "The 8% rise was already in place.", candles, i, status: status);
-        }
-
-        var bar = candles[i];
-        if (bar.Close <= bar.Open)
-        {
-            return Detail(SignalType.NoAction, "The 15-minute bar did not close higher.", candles, i, status: status);
-        }
-
-        if (bar.High > bar.Low && (bar.Close - bar.Low) / (bar.High - bar.Low) < 0.5m)
-        {
-            return Detail(SignalType.NoAction, "The bar closed back in its lower half.", candles, i, status: status);
-        }
-
-        var average = 0m;
-        for (var k = i - volumeLookback; k < i; k++)
-        {
-            average += candles[k].Volume;
-        }
-
-        average /= volumeLookback;
-        if (average <= 0m || bar.Volume < average * volumeMultiple)
-        {
-            return Detail(SignalType.NoAction, "Volume is not above the recent average.", candles, i, status: status);
-        }
-
-        return Detail(
-            SignalType.Buy,
-            "Price just rose " + now.ToString("0.0%", System.Globalization.CultureInfo.InvariantCulture) + " and the 15-minute bar closed higher.",
-            candles,
-            i,
-            status: status);
-    }
-
-    private static decimal? Rise(IReadOnlyList<MarketCandle> candles, int end, int bars)
-    {
-        var start = end - bars;
-        if (start < 0 || candles[start].Close <= 0m)
-        {
-            return null;
-        }
-
-        return (candles[end].Close - candles[start].Close) / candles[start].Close;
-    }
-
-    private static decimal? OpenInterestChange(IReadOnlyList<decimal?>? openInterest)
-    {
-        if (openInterest is null || openInterest.Count < 2)
-        {
-            return null;
-        }
-
-        // The live bot passes two prints: open interest a day ago, and the latest print.
-        // A candle-aligned history is longer, so the same 24-hour window is the print 24 bars back.
-        var priorIndex = openInterest.Count > 24 ? openInterest.Count - 24 : 0;
-        var previous = openInterest[priorIndex];
-        var latest = openInterest[^1];
-        if (previous is not { } prior || latest is not { } now || prior <= 0m || now <= 0m)
-        {
-            return null;
-        }
-
-        return (now - prior) / prior;
-    }
-
-    private static decimal? LatestFunding(IReadOnlyList<decimal?>? funding)
-    {
-        if (funding is null)
-        {
-            return null;
-        }
-
-        for (var k = funding.Count - 1; k >= 0; k--)
-        {
-            if (funding[k] is { } rate)
-            {
-                return rate;
-            }
-        }
-
-        return null;
+        return closes;
     }
 
     private static StrategySignalDetail BtcDailyMax(
@@ -1055,137 +746,9 @@ public static class AdvancedStrategyEvaluator
         return true;
     }
 
-    private static StrategySignalDetail TsMomentum(
-        IReadOnlyList<MarketCandle> candles,
-        int i,
-        StrategyContext context)
-    {
-        const string status = "HISTORICALLY_FITTED_CANDIDATE";
-        const int lookback = 28;
-        const int hold = 5;
-        var closes = UtcDailyCloses(candles, i);
-        if (closes.Count < lookback + 2)
-        {
-            return Detail(SignalType.NoAction, "Need more than 28 closed UTC days.", candles, i, status: status);
-        }
 
-        var last = closes.Count - 1;
-        var sleeves = 0;
-        for (var lag = 0; lag < hold; lag++)
-        {
-            if (InOwnTopThird(closes, last - lag, lookback))
-            {
-                sleeves++;
-            }
-        }
 
-        if (context.HasOpenPosition)
-        {
-            if (!IsLong(context))
-            {
-                return Detail(SignalType.Exit, "Time-series momentum is long only.", candles, i, status: status);
-            }
 
-            if (sleeves == 0)
-            {
-                return Detail(SignalType.Exit, "28-day return left the top third. The five-day sleeve is flat.", candles, i, status: status);
-            }
-
-            return Detail(SignalType.Hold, $"Long. {sleeves}/5 daily sleeves are on.", candles, i, status: status);
-        }
-
-        if (sleeves > 0)
-        {
-            return Detail(SignalType.Buy, $"28-day return is in the top third of its own history. {sleeves}/5 sleeves. Long only.", candles, i, status: status);
-        }
-
-        return Detail(SignalType.NoAction, "28-day return is not in the top third of its own history.", candles, i, status: status);
-    }
-
-    private static List<decimal> UtcDailyCloses(IReadOnlyList<MarketCandle> candles, int i)
-    {
-        var byDay = new Dictionary<DateOnly, decimal>();
-        var order = new List<DateOnly>();
-        var last = Math.Min(i, candles.Count - 1);
-        for (var k = 0; k <= last; k++)
-        {
-            var bar = candles[k];
-            if (!bar.IsClosed || bar.Close <= 0m)
-            {
-                continue;
-            }
-
-            var day = DateOnly.FromDateTime(bar.OpenTime.UtcDateTime);
-            if (!byDay.ContainsKey(day))
-            {
-                order.Add(day);
-            }
-
-            byDay[day] = bar.Close;
-        }
-
-        var closes = new List<decimal>(order.Count);
-        foreach (var day in order)
-        {
-            closes.Add(byDay[day]);
-        }
-
-        return closes;
-    }
-
-    private static bool InOwnTopThird(IReadOnlyList<decimal> closes, int day, int lookback)
-    {
-        if (day < lookback || day >= closes.Count || closes[day - lookback] <= 0m || closes[day] <= 0m)
-        {
-            return false;
-        }
-
-        var current = closes[day] / closes[day - lookback] - 1m;
-        var history = 0;
-        var below = 0;
-        for (var t = lookback; t < day; t++)
-        {
-            if (closes[t - lookback] <= 0m || closes[t] <= 0m)
-            {
-                continue;
-            }
-
-            history++;
-            if (closes[t] / closes[t - lookback] - 1m < current)
-            {
-                below++;
-            }
-        }
-
-        return history > 0 && below * 3 >= history * 2;
-    }
-
-    private static StrategySignalDetail EmaCrossLong(
-        StrategyTemplateParams p,
-        IReadOnlyList<MarketCandle> candles,
-        int i,
-        StrategyContext context,
-        CausalIndicatorCache cache)
-    {
-        var fast = cache.Ema(p.EmaFast);
-        var slow = cache.Ema(p.EmaSlow);
-        if (context.HasOpenPosition)
-        {
-            if (IsLong(context) && CrossesBelow(fast, slow, i))
-            {
-                return Detail(SignalType.Exit, "EMA20 crossed below EMA50.", candles, i, status: "HISTORICALLY_FITTED_CANDIDATE");
-            }
-
-            return Detail(SignalType.Hold, "Position open; EMA20 is still above EMA50.", candles, i, status: "HISTORICALLY_FITTED_CANDIDATE");
-        }
-
-        if (CrossesAbove(fast, slow, i))
-        {
-            return Detail(SignalType.Buy, "EMA20 crossed above EMA50. Long only.", candles, i, status: "HISTORICALLY_FITTED_CANDIDATE");
-        }
-
-        return Detail(SignalType.NoAction, "No EMA20 cross above EMA50.", candles, i, status: "HISTORICALLY_FITTED_CANDIDATE");
-    }
 
     private static StrategySignalDetail Detail(
         SignalType signal,

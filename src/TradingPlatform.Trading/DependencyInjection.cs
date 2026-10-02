@@ -15,6 +15,7 @@ public static class DependencyInjection
         services.Configure<TradingOptions>(configuration.GetSection(TradingOptions.SectionName));
         services.AddSingleton<IMarketDataCache, MarketDataCache>();
         services.AddSingleton<ILiveAccountCache, LiveAccountCache>();
+        services.AddSingleton<ReconciliationState>();
         services.AddSingleton<ITradingRealtimePublisher, NullTradingRealtimePublisher>();
         services.AddSingleton<PaperExchangeConnector>();
         services.AddScoped<IExchangeConnectorFactory, ExchangeConnectorFactory>();

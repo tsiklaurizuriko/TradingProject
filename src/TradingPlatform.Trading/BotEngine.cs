@@ -41,6 +41,7 @@ public sealed class BotEngine : IBotEngine
     private readonly ICorrelationIdAccessor _correlation;
     private readonly TradingOptions _options;
     private readonly LiveIsolatedReconciler _reconcile;
+    private readonly ReconciliationState _reconciliation;
     private readonly ILogger<BotEngine> _logger;
     private readonly IExchangeAccountService? _accounts;
     private readonly Dictionary<Guid, (decimal Stop, decimal Take, DateTimeOffset At)> _ratchetBackoff = new();
@@ -60,7 +61,8 @@ public sealed class BotEngine : IBotEngine
         IOptions<TradingOptions> options,
         LiveIsolatedReconciler reconcile,
         ILogger<BotEngine> logger,
-        IExchangeAccountService? accounts = null)
+        IExchangeAccountService? accounts = null,
+        ReconciliationState? reconciliation = null)
     {
         _store = store;
         _market = market;
@@ -75,6 +77,7 @@ public sealed class BotEngine : IBotEngine
         _correlation = correlation;
         _options = options.Value;
         _reconcile = reconcile;
+        _reconciliation = reconciliation ?? new ReconciliationState();
         _logger = logger;
         _accounts = accounts;
     }
@@ -83,15 +86,15 @@ public sealed class BotEngine : IBotEngine
     {
         try
         {
+            await RefreshLiveIsolatedBookAsync(cancellationToken);
+            await _reconcile.ReconcileAsync(cancellationToken);
+            await RecoverUnresolvedOrdersAsync(cancellationToken);
             if (_options.KillSwitchEnabled)
             {
                 await _store.StopAllRunningBotsAsync("Kill switch is active.", cancellationToken);
                 await _store.SaveChangesAsync(cancellationToken);
                 return;
             }
-
-            await RefreshLiveIsolatedBookAsync(cancellationToken);
-            await _reconcile.ReconcileAsync(cancellationToken);
             var bots = await _store.GetRunningBotsAsync(cancellationToken);
             await HandOffStoppedSnapshotsAsync(cancellationToken);
             await WatchUnattendedLivePositionsAsync(bots, cancellationToken);
@@ -122,6 +125,144 @@ public sealed class BotEngine : IBotEngine
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
+        }
+    }
+
+    private async Task RecoverUnresolvedOrdersAsync(CancellationToken cancellationToken)
+    {
+        var pending = await _store.GetUnresolvedLiveOrdersAsync(cancellationToken);
+        foreach (var order in pending)
+        {
+            var connector = _connectors.Create(TradingMode.Live, order.ExchangeAccountId);
+            ExchangeOrder? found = null;
+            var lookupFailed = false;
+            try
+            {
+                found = await connector.GetOrderAsync(order.ClientOrderId, order.ExchangeOrderId, order.Symbol, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                lookupFailed = true;
+                _logger.LogError(
+                    ex,
+                    "Unresolved order lookup failed. ClientOrderId {ClientOrderId} CorrelationId {CorrelationId}. The order was not sent again.",
+                    order.ClientOrderId,
+                    order.CorrelationId);
+            }
+
+            var decision = OrderRecovery.Decide(lookupFailed, found);
+            _logger.LogWarning(
+                "Startup recovery {Kind} for {ClientOrderId} CorrelationId {CorrelationId}: {Reason}",
+                decision.Kind,
+                order.ClientOrderId,
+                order.CorrelationId,
+                decision.Reason);
+            if (decision.Kind == RecoveryKind.LookupUnavailable)
+            {
+                _reconciliation.Fail(decision.Reason, _clock.UtcNow);
+                continue;
+            }
+
+            if (decision.Order is null)
+            {
+                Record(order, OrderStatus.Failed, "binance-live");
+                order.RejectReason = decision.Reason;
+                continue;
+            }
+
+            var confirmed = decision.Order;
+            var application = FillAccounting.Apply(
+                order.FilledQuantity,
+                order.Quantity,
+                new ExchangeFillReport(
+                    confirmed.Status,
+                    confirmed.FilledQuantity,
+                    confirmed.AverageFillPrice ?? confirmed.Price,
+                    confirmed.Fee,
+                    confirmed.ExchangeOrderId,
+                    null));
+            Record(order, application.Status, "binance-live");
+            order.FilledQuantity = application.FilledQuantity;
+            order.RemainingQuantity = application.RemainingQuantity;
+            order.ExchangeOrderId = confirmed.ExchangeOrderId ?? order.ExchangeOrderId;
+            order.AverageFillPrice = application.AverageFillPrice ?? order.AverageFillPrice;
+            order.RejectReason = application.Uncertain ? application.Reason : order.RejectReason;
+            if (application.NewFill is null)
+            {
+                continue;
+            }
+
+            var price = application.NewFill.Price;
+            var booked = application.NewFill.Quantity;
+            var positions = await _store.GetOpenPositionsForModeAsync(TradingMode.Live, cancellationToken);
+            var position = positions.FirstOrDefault(item => item.BotId == order.BotId && string.Equals(item.Symbol, order.Symbol, StringComparison.OrdinalIgnoreCase));
+            var closes = position is not null && (
+                (position.Side == PositionSide.Long && order.Side == OrderSide.Sell)
+                || (position.Side == PositionSide.Short && order.Side == OrderSide.Buy));
+            if (closes && position is not null)
+            {
+                var left = position.Quantity - booked;
+                position.Quantity = left > 0m ? left : 0m;
+                if (position.Quantity == 0m)
+                {
+                    position.ClosedAt = _clock.UtcNow;
+                }
+
+                position.CurrentPrice = price;
+                await _store.AddPositionEventAsync(new PositionEvent
+                {
+                    PositionId = position.Id,
+                    EventType = left > 0m ? "PARTIAL_CLOSE" : "CLOSE",
+                    Quantity = booked,
+                    Price = price,
+                    CorrelationId = order.CorrelationId
+                }, cancellationToken);
+            }
+            else if (position is not null)
+            {
+                var total = position.Quantity + booked;
+                position.AverageEntryPrice = total <= 0m
+                    ? price
+                    : ((position.AverageEntryPrice * position.Quantity) + (price * booked)) / total;
+                position.Quantity = total;
+                position.CurrentPrice = price;
+                position.Fees += application.NewFill.Fee;
+            }
+            else if (order.Bot is not null)
+            {
+                await _store.AddPositionAsync(new Position
+                {
+                    BotId = order.BotId,
+                    Symbol = order.Symbol,
+                    Side = order.Side == OrderSide.Sell ? PositionSide.Short : PositionSide.Long,
+                    Quantity = booked,
+                    AverageEntryPrice = price,
+                    CurrentPrice = price,
+                    Fees = application.NewFill.Fee,
+                    OpenedAt = _clock.UtcNow
+                }, cancellationToken);
+                if (order.Bot is not null)
+                {
+                    order.Bot.LastError = "A late fill was booked from the exchange. Protective orders still have to be confirmed.";
+                }
+            }
+
+            await _store.AddExecutionAsync(new ExecutionFill
+            {
+                OrderId = order.Id,
+                ExchangeTradeId = (confirmed.ExchangeOrderId ?? order.ClientOrderId) + ":" + application.FilledQuantity.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                Price = price,
+                Quantity = booked,
+                Fee = application.NewFill.Fee,
+                FeeAsset = "USDT",
+                ExchangeTimestamp = confirmed.ExchangeTimestamp ?? _clock.UtcNow,
+                CorrelationId = order.CorrelationId
+            }, cancellationToken);
+        }
+
+        if (pending.Count > 0)
+        {
+            await _store.SaveChangesAsync(cancellationToken);
         }
     }
 
@@ -1002,10 +1143,27 @@ public sealed class BotEngine : IBotEngine
             return;
         }
 
-        if (bot.Mode == TradingMode.Live && !_options.LiveTradingEnabled)
+        if (bot.Mode == TradingMode.Live)
         {
-            bot.LastError = LiveEntryGate.BlockedMessage;
-            return;
+            var maxAge = TimeSpan.FromSeconds(Math.Max(1, _options.ReconciliationMaxAgeSeconds));
+            var filtersReady = symbol is { StepSize: > 0m, MinQuantity: > 0m, MinNotional: > 0m, TickSize: > 0m };
+            var blocked = _reconciliation.BlockReason is not null
+                || await _store.HasUnresolvedEntryAsync(bot.Id, bot.Symbol, cancellationToken);
+            var gate = LiveEntryGate.Block(new LiveEntryFacts(
+                bot.Mode,
+                _options.LiveTradingEnabled,
+                _options.KillSwitchEnabled,
+                _reconciliation.IsFresh(_clock.UtcNow, maxAge) && IsolatedOccupancy.HasFreshFuturesBook(_live.Current),
+                blocked,
+                bot.StrategyVersion.Strategy?.IsEnabled == true,
+                true,
+                filtersReady,
+                false));
+            if (gate is not null)
+            {
+                bot.LastError = gate;
+                return;
+            }
         }
 
         var maxLosses = profile.MaxConsecutiveLosses > 0 ? profile.MaxConsecutiveLosses : 5;
@@ -1085,6 +1243,35 @@ public sealed class BotEngine : IBotEngine
 
         if (bot.Mode == TradingMode.Live)
         {
+            var riskBlock = RiskLiveGuard.Reject(
+                bot.Mode,
+                profile,
+                new LiveRiskFacts(
+                    equityUsdt,
+                    openRisk,
+                    snapshot.OpenPositionCount,
+                    snapshot.SymbolAlreadyOpen ? 1 : 0,
+                    snapshot.AccountDailyPnL,
+                    profile.RiskPerTradePercent,
+                    risk.Plan?.Leverage ?? profile.MaxLeverage,
+                    profile.StopLossPercent,
+                    quantity,
+                    quantity * lastPrice,
+                    symbol?.MinQuantity ?? 0m,
+                    symbol?.MinNotional ?? 0m,
+                    availableUsdt,
+                    risk.Plan?.IsolatedMargin ?? 0m,
+                    _options.KillSwitchEnabled,
+                    streak.ConsecutiveLosses,
+                    streak.LastLossAt,
+                    now,
+                    true));
+            if (riskBlock is not null)
+            {
+                bot.LastError = riskBlock;
+                return;
+            }
+
             var leverage = (int)Math.Max(1m, Math.Floor(risk.Plan?.Leverage ?? profile.MaxLeverage));
             await connector.PrepareSymbolRiskAsync(bot.Symbol, MarginMode.Isolated, leverage, cancellationToken);
         }
@@ -1151,8 +1338,10 @@ public sealed class BotEngine : IBotEngine
         var source = bot.Mode == TradingMode.Live ? "binance-live" : "paper-engine";
         Record(order, OrderStatus.Submitting, source);
         order.SubmittedAt = _clock.UtcNow;
+        await _store.AddOrderAsync(order, cancellationToken);
+        await _store.SaveChangesAsync(cancellationToken);
 
-        ExchangeOrder fill;
+        ExchangeOrder? fill = null;
         try
         {
             fill = await connector.PlaceOrderAsync(
@@ -1169,27 +1358,92 @@ public sealed class BotEngine : IBotEngine
         }
         catch (Exception ex)
         {
-            Record(order, OrderStatus.Failed, source);
-            order.RejectReason = ex.Message;
-            await _store.AddOrderAsync(order, cancellationToken);
-            await _store.SaveChangesAsync(cancellationToken);
-            throw;
+            var lookupFailed = false;
+            ExchangeOrder? found = null;
+            try
+            {
+                found = await connector.GetOrderAsync(clientOrderId, null, orderSymbol, cancellationToken);
+            }
+            catch (Exception lookupEx)
+            {
+                lookupFailed = true;
+                _logger.LogError(
+                    lookupEx,
+                    "Order lookup failed after an ambiguous submit. ClientOrderId {ClientOrderId} CorrelationId {CorrelationId}. The order was not sent again.",
+                    clientOrderId,
+                    correlationId);
+            }
+
+            var decision = OrderRecovery.Decide(lookupFailed, found);
+            _logger.LogWarning(
+                "Order recovery {Kind} for {ClientOrderId} CorrelationId {CorrelationId}: {Reason}",
+                decision.Kind,
+                clientOrderId,
+                correlationId,
+                decision.Reason);
+            if (decision.Kind != RecoveryKind.Confirmed || decision.Order is null)
+            {
+                var uncertain = decision.Kind == RecoveryKind.LookupUnavailable;
+                Record(order, uncertain ? OrderStatus.Uncertain : OrderStatus.Failed, source);
+                order.RejectReason = decision.Reason + " " + ex.Message;
+                await _store.SaveChangesAsync(cancellationToken);
+                if (uncertain)
+                {
+                    bot.LastError = decision.Reason;
+                    return;
+                }
+
+                throw;
+            }
+
+            fill = decision.Order;
         }
 
-        if (fill.Status is not OrderStatus.Filled and not OrderStatus.PartiallyFilled)
+        if (fill is null)
         {
-            Record(order, fill.Status, source);
-            order.RejectReason = $"Binance status {fill.Status}";
-            order.ExchangeOrderId = fill.ExchangeOrderId;
-            await _store.AddOrderAsync(order, cancellationToken);
+            Record(order, OrderStatus.Uncertain, source);
+            order.RejectReason = "The exchange response was empty. The order was not sent again.";
             await _store.SaveChangesAsync(cancellationToken);
-            throw new DomainException(ErrorCodes.OrderRejected, $"Live order was not filled ({fill.Status}).");
+            bot.LastError = order.RejectReason;
+            return;
         }
 
-        Record(order, OrderStatus.Filled, source);
-        order.FilledQuantity = fill.FilledQuantity;
-        order.RemainingQuantity = 0m;
-        var fillPrice = PositivePrice(fill.AverageFillPrice) ?? PositivePrice(fill.Price) ?? lastPrice;
+        var confirmed = fill;
+        var application = FillAccounting.Apply(
+            order.FilledQuantity,
+            quantity,
+            new ExchangeFillReport(
+                confirmed.Status,
+                confirmed.FilledQuantity,
+                confirmed.AverageFillPrice ?? confirmed.Price,
+                confirmed.Fee,
+                confirmed.ExchangeOrderId,
+                null));
+        Record(order, application.Status, source);
+        order.FilledQuantity = application.FilledQuantity;
+        order.RemainingQuantity = application.RemainingQuantity;
+        order.ExchangeOrderId = confirmed.ExchangeOrderId;
+        order.ExchangeTimestamp = confirmed.ExchangeTimestamp;
+        order.RejectReason = application.Uncertain ? application.Reason : order.RejectReason;
+        if (application.NewFill is null)
+        {
+            await _store.SaveChangesAsync(cancellationToken);
+            bot.LastError = application.Reason;
+            if (application.Uncertain || application.Status is OrderStatus.Rejected or OrderStatus.Failed or OrderStatus.Expired or OrderStatus.Cancelled)
+            {
+                if (application.Status is not OrderStatus.Cancelled)
+                {
+                    throw new DomainException(
+                        application.Uncertain ? ErrorCodes.ReconciliationRequired : ErrorCodes.OrderRejected,
+                        application.Reason);
+                }
+            }
+
+            return;
+        }
+
+        quantity = application.NewFill.Quantity;
+        var fillPrice = PositivePrice(application.AverageFillPrice) ?? lastPrice;
         if (bot.Mode != TradingMode.Live)
         {
             if (lastPrice <= 0m)
@@ -1202,9 +1456,6 @@ public sealed class BotEngine : IBotEngine
 
         order.Price = fillPrice;
         order.AverageFillPrice = fillPrice > 0m ? fillPrice : null;
-        order.ExchangeOrderId = fill.ExchangeOrderId;
-        order.ExchangeTimestamp = fill.ExchangeTimestamp;
-        await _store.AddOrderAsync(order, cancellationToken);
 
         if (!flatten && bot.Mode == TradingMode.Live && fillPrice <= 0m)
         {
@@ -1219,7 +1470,7 @@ public sealed class BotEngine : IBotEngine
         }
         var notional = fillPrice * quantity;
         var fee = bot.Mode == TradingMode.Live
-            ? fill.Fee
+            ? application.NewFill.Fee
             : PaperFillModel.Fee(notional, _options.PaperFeeBps);
         await _store.AddExecutionAsync(new ExecutionFill
         {
@@ -1231,7 +1482,7 @@ public sealed class BotEngine : IBotEngine
             Fee = fee,
             FeeAsset = "USDT",
             IsMaker = false,
-            ExchangeTimestamp = fill.ExchangeTimestamp ?? _clock.UtcNow,
+            ExchangeTimestamp = confirmed.ExchangeTimestamp ?? _clock.UtcNow,
             CorrelationId = correlationId
         }, cancellationToken);
 
@@ -1445,6 +1696,24 @@ public sealed class BotEngine : IBotEngine
     {
         var direction = position.Side == PositionSide.Short ? -1m : 1m;
         var pnl = direction * (fillPrice - position.AverageEntryPrice) * quantity - fee;
+        var remainingPosition = position.Quantity - quantity;
+        if (remainingPosition > 0.00000001m)
+        {
+            position.Quantity = remainingPosition;
+            position.CurrentPrice = fillPrice;
+            position.RealizedPnL += pnl;
+            position.Fees += fee;
+            position.Events.Add(new PositionEvent
+            {
+                EventType = "PARTIAL_CLOSE",
+                Quantity = quantity,
+                Price = fillPrice,
+                RealizedPnLDelta = pnl,
+                CorrelationId = correlationId
+            });
+            return;
+        }
+
         if (bot.Mode != TradingMode.Live)
         {
             if (position.MarginUsdt > 0m)

@@ -42,10 +42,13 @@ These strings are recognized only by the migration. Evaluating one returns `Obso
 - `StrategyTemplates.ForLive` and `LiveCounterpart`. Paper and live use the saved definition.
 - The separate v2 seed list. `StrategyTemplateKeys.Refactored` is empty.
 - The template dispatcher no longer calls `FlatRangeStrategy` or the retired arms for these ids.
-- `ImportedRuleEvaluator` and `AdvancedStrategyEvaluator` hand a canonical id to `RefactoredStrategyEvaluator` and do not select the old switch arms.
+- `ImportedRuleEvaluator` and `AdvancedStrategyEvaluator` hand a canonical id or an obsolete alias to `RefactoredStrategyEvaluator`.
+- Unused private methods that only those retired arms called were removed from both files. Methods still used by MACD-adjacent, HLHB, Turtle, and the other non-canonical books were kept. `FlatRangeStrategy` remains for its direct tests. The bot cycle does not call it.
 - The bots screen no longer prefers a template key that contains `_v2`.
 
-The old private methods are still in those two files. They are not selected. `FlatRangeStrategy` is still in the tree for its direct tests. The bot cycle does not call it.
+## Migration
+
+`CanonicalStrategyMigration.Plan` is idempotent. A second plan on an already rewritten row has no updates. Compatible parameter numbers stay. Unknown parameter names and a timeframe that is not the canonical default are listed in `Reviews` and are not overwritten. Two enabled rows that already share a canonical id produce a failure and `EnsureSafe` throws. The failed plan is not applied. Duplicate alias rows are disabled and archived. Their ids and historical trades are not deleted. Related updates are saved in one transaction on PostgreSQL. In-memory tests cannot open that transaction and save without it.
 
 ## Status
 

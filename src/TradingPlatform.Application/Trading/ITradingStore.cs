@@ -61,6 +61,9 @@ public interface ITradingStore
     Task<bool> HasClientOrderAsync(string clientOrderId, CancellationToken cancellationToken = default);
     Task<bool> HasKnownOrderAsync(string? clientOrderId, string? exchangeOrderId, CancellationToken cancellationToken = default);
     Task<Order?> GetOrderByClientOrderIdAsync(string clientOrderId, CancellationToken cancellationToken = default);
+    Task<bool> HasUnresolvedEntryAsync(Guid botId, string symbol, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<Order>> GetUnresolvedLiveOrdersAsync(CancellationToken cancellationToken = default);
+    Task AddPositionEventAsync(PositionEvent positionEvent, CancellationToken cancellationToken = default);
     Task<int> CountOrdersSinceAsync(Guid botId, DateTimeOffset sinceUtc, CancellationToken cancellationToken = default);
     Task AddOrderAsync(Order order, CancellationToken cancellationToken = default);
     Task AddExecutionAsync(Execution execution, CancellationToken cancellationToken = default);

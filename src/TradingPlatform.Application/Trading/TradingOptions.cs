@@ -16,6 +16,7 @@ public sealed class TradingOptions
     public bool AutoStartSamplePaperBot { get; set; }
     public int BotEngineIntervalSeconds { get; set; } = 15;
     public int KlineLimit { get; set; } = 120;
+    public int ReconciliationMaxAgeSeconds { get; set; } = 90;
     public int UniverseRefreshMinutes { get; set; } = 15;
     public string UniverseCachePath { get; set; } = "data/futures-universe.json";
     public ScannerOptions Scanner { get; set; } = new();

@@ -78,7 +78,17 @@ public static class OrderLedger
             return OrderStatus.Expired;
         }
 
-        return OrderStatus.Submitted;
+        if (compact is "NEW")
+        {
+            return OrderStatus.New;
+        }
+
+        if (compact is "WORKING" or "OPEN" or "PENDING" or "SUBMITTED")
+        {
+            return OrderStatus.Submitted;
+        }
+
+        return OrderStatus.Uncertain;
     }
 
     public static OrderSide ParseSide(string? side)
