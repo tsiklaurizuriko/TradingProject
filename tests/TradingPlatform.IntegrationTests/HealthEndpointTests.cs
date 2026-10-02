@@ -47,11 +47,10 @@ public sealed class HealthEndpointTests : IClassFixture<WebApplicationFactory<Pr
     }
 
     [Fact]
-    public async Task System_health_reports_live_trading_disabled()
+    public async Task System_health_reports_live_submission_enabled()
     {
         var client = _factory.CreateClient();
         var json = await client.GetStringAsync("/api/system/health");
-        json.Should().Contain("liveTradingEnabled");
-        json.Should().Contain("false");
+        json.Should().Contain("\"liveTradingEnabled\":true");
     }
 }

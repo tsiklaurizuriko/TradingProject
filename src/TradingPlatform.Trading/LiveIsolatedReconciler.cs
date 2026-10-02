@@ -12,7 +12,7 @@ using TradingPlatform.Domain.Trading;
 namespace TradingPlatform.Trading;
 
 /// <summary>
-/// LIVE Isolated truth is Binance. A DB snapshot left open after SL/TP or an exchange flatten is a ghost.
+/// LIVE Isolated truth is Binance. A local row still open after the exchange is flat is retired without a fill.
 /// </summary>
 public sealed class LiveIsolatedReconciler
 {
@@ -61,7 +61,7 @@ public sealed class LiveIsolatedReconciler
                 _logger.LogInformation("Collapsed {Trips} duplicate closed trip(s).", droppedTrips);
             }
 
-            var book = await _store.GetOpenPositionsForModeAsync(TradingMode.Live, cancellationToken);
+            var book = (await _store.GetOpenPositionsForModeAsync(TradingMode.Live, cancellationToken)).ToList();
         var now = _clock.UtcNow;
         var missing = 0;
         foreach (var position in book)
@@ -76,7 +76,95 @@ public sealed class LiveIsolatedReconciler
             missing++;
         }
 
-        if (missing > 0)
+        var running = await _store.GetRunningLiveBotsAsync(cancellationToken);
+        var adopted = 0;
+        foreach (var remote in live.OpenPositions.Where(row => row.Quantity > 0m))
+        {
+            var known = book.Any(position =>
+                position.Quantity > 0m
+                && string.Equals(position.Symbol, remote.Symbol, StringComparison.OrdinalIgnoreCase));
+            if (known)
+            {
+                continue;
+            }
+
+            var owner = IsolatedOccupancy.PickLiveOwner(remote.Symbol, running, book, TradingMode.Live);
+            if (owner is null)
+            {
+                continue;
+            }
+
+            var side = IsolatedOccupancy.NormalizeSide(remote.Side) == "Short" ? PositionSide.Short : PositionSide.Long;
+            var position = new Position
+            {
+                Bot = owner,
+                BotId = owner.Id,
+                Symbol = remote.Symbol,
+                Side = side,
+                Quantity = remote.Quantity,
+                AverageEntryPrice = remote.EntryPrice,
+                CurrentPrice = remote.MarkPrice,
+                UnrealizedPnL = remote.UnrealizedPnL,
+                RealizedPnL = 0m,
+                OpenedAt = now
+            };
+            await _store.AddPositionAsync(position, cancellationToken);
+            book.Add(position);
+            adopted++;
+            owner.LastError =
+                $"Exchange position {remote.Symbol} had no local row. It was recorded from the snapshot. No fill or mark-price PnL was created.";
+            _logger.LogWarning(
+                "Recorded exchange position {Symbol} for bot {BotId}. No fill was written.",
+                remote.Symbol,
+                owner.Id);
+        }
+
+        var collapsed = 0;
+        foreach (var remote in live.OpenPositions.Where(row => row.Quantity > 0m))
+        {
+            var holders = book
+                .Where(position =>
+                    position.Quantity > 0m
+                    && string.Equals(position.Symbol, remote.Symbol, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(position => position.OpenedAt)
+                .ThenBy(position => position.BotId)
+                .ToList();
+            if (holders.Count < 2 || holders.All(position => position.Quantity != remote.Quantity))
+            {
+                continue;
+            }
+
+            foreach (var extra in holders.Skip(1))
+            {
+                extra.Quantity = 0m;
+                extra.UnrealizedPnL = 0m;
+                extra.ClosedAt = now;
+                collapsed++;
+            }
+        }
+
+        var retiredOrders = 0;
+        foreach (var order in await _store.GetRestingLiveProtectionAsync(cancellationToken))
+        {
+            if (now - order.CreatedAt < IsolatedOccupancy.OverlayGrace)
+            {
+                continue;
+            }
+
+            var onBook = live.OpenOrders.Any(row =>
+                OrderLedger.Same(order.ClientOrderId, order.ExchangeOrderId, row.ClientOrderId, row.ExchangeOrderId));
+            if (onBook)
+            {
+                continue;
+            }
+
+            order.Status = OrderStatus.Cancelled;
+            order.RemainingQuantity = 0m;
+            order.RejectReason = "Not on a fresh Binance book. The local row was closed. No fill was created.";
+            retiredOrders++;
+        }
+
+        if (missing > 0 || adopted > 0 || collapsed > 0 || retiredOrders > 0)
         {
             await _store.SaveChangesAsync(cancellationToken);
         }
@@ -110,11 +198,6 @@ public sealed class LiveIsolatedReconciler
             return;
         }
 
-        if (_state.BlockReason is not null)
-        {
-            return;
-        }
-
         _state.Succeed(live.ApiKeyHint ?? "live-account", _clock.UtcNow);
         _logger.LogInformation("Reconciliation succeeded for {Account} at {At}.", _state.AccountId, _state.SucceededAt);
         }
@@ -129,23 +212,28 @@ public sealed class LiveIsolatedReconciler
         }
     }
 
-    private Task RecordMissingPositionAsync(Bot? bot, Position position, CancellationToken cancellationToken)
+    private async Task RecordMissingPositionAsync(Bot? bot, Position position, CancellationToken cancellationToken)
     {
-        _ = cancellationToken;
-        var who = bot is null
-            ? "no bot record"
-            : bot.StrategyVersion is null
-                ? "bot " + bot.Id + " has no strategy version"
-                : "bot " + bot.Id;
-        var reason = $"Local position {position.Symbol} ({who}) is absent from a fresh exchange snapshot. It was left open. No exchange fill, trade close, or realized PnL was created.";
-        _state.Fail(reason, _clock.UtcNow);
+        var closedAt = _clock.UtcNow;
+        position.Quantity = 0m;
+        position.UnrealizedPnL = 0m;
+        position.ClosedAt = closedAt;
         if (bot is not null)
         {
-            bot.LastError = reason;
+            var trade = await _store.GetOpenTradeAsync(bot.Id, cancellationToken);
+            if (trade is not null
+                && string.Equals(trade.Symbol, position.Symbol, StringComparison.OrdinalIgnoreCase))
+            {
+                trade.ClosedAt = closedAt;
+            }
+
+            bot.LastError =
+                $"Local position {position.Symbol} was absent from a fresh exchange snapshot. The local row was closed. No exchange order, fill, or mark-price PnL was created.";
         }
 
-        _logger.LogError("Reconciliation discrepancy for {Symbol}. {Reason}", position.Symbol, reason);
-        return Task.CompletedTask;
+        _logger.LogWarning(
+            "Retired local position {Symbol} absent from a fresh exchange snapshot. No fill or mark-price PnL was written.",
+            position.Symbol);
     }
 
     private async Task CancelProtectiveRowAsync(string clientOrderId, CancellationToken cancellationToken)

@@ -253,22 +253,15 @@ export class RiskOverviewComponent {
   readonly available = input(0);
   readonly todaysPnL = input(0);
   readonly positions = input<PositionDto[]>([]);
-  readonly books = input<PositionDto[]>([]);
   readonly bots = input<BotDto[]>([]);
   readonly consecutiveLosses = input(0);
   readonly locked = input(false);
   readonly strategyResults = input<StrategyResultDto[] | null>(null);
   readonly money = money;
   readonly signedMoney = signedMoney;
-  readonly occupancy = computed(() => {
-    const books = this.books();
-    return strategyOccupancy(
-      this.bots(),
-      books.length > 0 ? books : this.positions(),
-      this.strategies(),
-      this.available(),
-    );
-  });
+  readonly occupancy = computed(() =>
+    strategyOccupancy(this.bots(), this.positions(), this.strategies(), this.available()),
+  );
   readonly rows = computed(() => {
     const results = this.strategyResults();
     const loaded = results !== null;

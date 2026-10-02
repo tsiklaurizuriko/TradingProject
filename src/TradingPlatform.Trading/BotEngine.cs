@@ -100,10 +100,22 @@ public sealed class BotEngine : IBotEngine
             var cycleKlines = new Dictionary<string, IReadOnlyList<MarketCandle>>(StringComparer.OrdinalIgnoreCase);
             var cyclePrices = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
             var cycleFilters = await LoadCycleFiltersAsync(cancellationToken);
+            await ProtectOpenPositionsAsync(bots, cycleFilters, cancellationToken);
             var claimed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var maxReconcileAge = TimeSpan.FromSeconds(Math.Max(1, _options.ReconciliationMaxAgeSeconds));
+            var lastReconcileAttempt = _clock.UtcNow;
             foreach (var bot in bots)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                if (!_reconciliation.IsFresh(_clock.UtcNow, maxReconcileAge)
+                    && _clock.UtcNow - lastReconcileAttempt >= TimeSpan.FromSeconds(20))
+                {
+                    lastReconcileAttempt = _clock.UtcNow;
+                    await RefreshLiveIsolatedBookAsync(cancellationToken);
+                    await _reconcile.ReconcileAsync(cancellationToken);
+                    await ProtectOpenPositionsAsync(bots, cycleFilters, cancellationToken);
+                }
+
                 try
                 {
                     await EvaluateBotAsync(bot, bots, cycleKlines, cyclePrices, cycleFilters, claimed, cancellationToken);
@@ -305,21 +317,31 @@ public sealed class BotEngine : IBotEngine
                 position.Fees += fee;
             }
         }
-        else if (order.Bot is not null && !protective)
-        {
-            await _store.AddPositionAsync(new Position
+            else if (order.Bot is not null && !protective)
             {
-                BotId = order.BotId,
-                Symbol = order.Symbol,
-                Side = order.Side == OrderSide.Sell ? PositionSide.Short : PositionSide.Long,
-                Quantity = booked,
-                AverageEntryPrice = price,
-                CurrentPrice = price,
-                Fees = application.NewFill.FeeKnown ? fee : 0m,
-                OpenedAt = _clock.UtcNow
-            }, cancellationToken);
-            order.Bot.LastError = "A late fill was booked from the exchange. Protective orders still have to be confirmed.";
-        }
+                var coinAlreadyOpen = (await _store.GetOpenPositionsForModeAsync(TradingMode.Live, cancellationToken))
+                    .Any(row => row.Quantity > 0m
+                        && string.Equals(row.Symbol, order.Symbol, StringComparison.OrdinalIgnoreCase));
+                if (coinAlreadyOpen)
+                {
+                    order.Bot.LastError = $"Isolated {order.Symbol} is already open. The fill was not booked as a second position.";
+                }
+                else
+                {
+                    await _store.AddPositionAsync(new Position
+                    {
+                        BotId = order.BotId,
+                        Symbol = order.Symbol,
+                        Side = order.Side == OrderSide.Sell ? PositionSide.Short : PositionSide.Long,
+                        Quantity = booked,
+                        AverageEntryPrice = price,
+                        CurrentPrice = price,
+                        Fees = application.NewFill.FeeKnown ? fee : 0m,
+                        OpenedAt = _clock.UtcNow
+                    }, cancellationToken);
+                    order.Bot.LastError = "A late fill was booked from the exchange. Protective orders still have to be confirmed.";
+                }
+            }
 
         await _store.AddExecutionAsync(new ExecutionFill
         {
@@ -1933,6 +1955,57 @@ public sealed class BotEngine : IBotEngine
             string.Equals(row.Symbol, symbol, StringComparison.OrdinalIgnoreCase)
             && (stop ? LiveProtectivePrices.IsStopOrder(row.Type) : LiveProtectivePrices.IsTakeOrder(row.Type)));
 
+    private async Task ProtectOpenPositionsAsync(
+        IReadOnlyList<Bot> running,
+        IReadOnlyDictionary<string, RankedUsdtSpotSymbol> cycleFilters,
+        CancellationToken cancellationToken)
+    {
+        var live = _live.Current;
+        if (!IsolatedOccupancy.HasFreshFuturesBook(live))
+        {
+            return;
+        }
+
+        var book = (await _store.GetOpenPositionsForModeAsync(TradingMode.Live, cancellationToken)).ToList();
+        foreach (var remote in live.OpenPositions.Where(row => row.Quantity > 0m))
+        {
+            if (HasWorkingProtection(live.OpenOrders, remote.Symbol, stop: true)
+                && HasWorkingProtection(live.OpenOrders, remote.Symbol, stop: false))
+            {
+                continue;
+            }
+
+            var owner = IsolatedOccupancy.PickLiveOwner(remote.Symbol, running, book, TradingMode.Live);
+            if (owner is null)
+            {
+                continue;
+            }
+
+            var position = book.FirstOrDefault(row =>
+                row.BotId == owner.Id
+                && row.Quantity > 0m
+                && string.Equals(row.Symbol, remote.Symbol, StringComparison.OrdinalIgnoreCase));
+            var market = await ResolveSymbolFiltersAsync(remote.Symbol, cycleFilters, cancellationToken);
+            var price = remote.MarkPrice > 0m ? remote.MarkPrice : position?.CurrentPrice ?? 0m;
+            try
+            {
+                await EnsureLiveOverlayProtectionAsync(
+                    owner,
+                    running,
+                    book,
+                    position,
+                    price,
+                    market,
+                    cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                owner.LastError = ex.Message;
+                _logger.LogError(ex, "Could not place protection for {Symbol}", remote.Symbol);
+            }
+        }
+    }
+
     private async Task<OverlayProtectResult> EnsureLiveOverlayProtectionAsync(
         Bot bot,
         IReadOnlyList<Bot> running,
@@ -1971,7 +2044,24 @@ public sealed class BotEngine : IBotEngine
         var overlaySide = overlay.Side is "Short" or "Sell" ? PositionSide.Short : PositionSide.Long;
         if (position is null)
         {
-            return new OverlayProtectResult(null, false);
+            position = new Position
+            {
+                Bot = bot,
+                BotId = bot.Id,
+                Symbol = bot.Symbol,
+                Side = overlaySide,
+                Quantity = overlay.Quantity,
+                AverageEntryPrice = overlay.EntryPrice,
+                CurrentPrice = overlay.MarkPrice > 0m ? overlay.MarkPrice : lastPrice,
+                UnrealizedPnL = overlay.UnrealizedPnL,
+                RealizedPnL = 0m,
+                OpenedAt = _clock.UtcNow
+            };
+            await _store.AddPositionAsync(position, cancellationToken);
+            _logger.LogWarning(
+                "Recorded exchange position {Symbol} for bot {BotId} before placing protection. No fill was written.",
+                bot.Symbol,
+                bot.Id);
         }
 
         var profile = bot.RiskProfile ?? await _store.GetConservativeRiskAsync(cancellationToken);

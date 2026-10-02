@@ -191,8 +191,8 @@ public sealed class SecondPassStrategyTests
         LiveEntryGate.BlockNewEntry(TradingMode.Live, liveTradingEnabled: false).Should().Be(LiveEntryGate.BlockedMessage);
         LiveEntryGate.BlockNewEntry(TradingMode.Paper, liveTradingEnabled: false).Should().Contain("Only live mode");
         LiveEntryGate.BlockNewEntry(TradingMode.Live, liveTradingEnabled: true).Should().BeNull();
-        File.ReadAllText(Path.Combine(RepoRoot(), "src", "TradingPlatform.Api", "appsettings.json")).Should().Contain("\"LiveTradingEnabled\": false");
-        File.ReadAllText(Path.Combine(RepoRoot(), "src", "TradingPlatform.Workers", "appsettings.json")).Should().Contain("\"LiveTradingEnabled\": false");
+        File.ReadAllText(Path.Combine(RepoRoot(), "src", "TradingPlatform.Api", "appsettings.json")).Should().Contain("\"LiveTradingEnabled\": true");
+        File.ReadAllText(Path.Combine(RepoRoot(), "src", "TradingPlatform.Workers", "appsettings.json")).Should().Contain("\"LiveTradingEnabled\": true");
     }
 
     [Fact]

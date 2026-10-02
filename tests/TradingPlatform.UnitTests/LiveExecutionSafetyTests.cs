@@ -447,6 +447,88 @@ public sealed class ReconciliationSafetyTests
     }
 
     [Fact]
+    public async Task Exchange_position_for_a_running_bot_is_recorded_without_a_fill()
+    {
+        await using var db = await SeedLivePositionAsync(includePosition: false);
+        var bot = await db.Bots.Include(row => row.StrategyVersion).SingleAsync();
+        var profile = new RiskProfile
+        {
+            Name = "LOW",
+            RiskPerTradePercent = 0.5m,
+            StopLossPercent = 2m,
+            TakeProfitPercent = 4m,
+            MaxLeverage = 3m,
+            AllowLive = true,
+            IsActive = true
+        };
+        bot.RiskProfile = profile;
+        await db.SaveChangesAsync();
+        var live = new LiveAccountCache();
+        live.Set(FreshBook(
+            [new LiveOpenPosition("BTCUSDT", "Long", 0.02m, 50_000m, 50_100m, 2m, "Futures")],
+            []));
+        var state = new ReconciliationState();
+        await Reconciler(db, live, state).ReconcileAsync();
+
+        state.BlockReason.Should().BeNull();
+        state.Succeeded.Should().BeTrue();
+        (await db.Executions.CountAsync()).Should().Be(0);
+        (await db.Orders.CountAsync()).Should().Be(0);
+        var position = await db.Positions.SingleAsync();
+        position.Quantity.Should().Be(0.02m);
+        position.AverageEntryPrice.Should().Be(50_000m);
+        position.RealizedPnL.Should().Be(0m);
+        position.ClosedAt.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Stale_protection_absent_from_a_fresh_book_is_cancelled_without_a_fill()
+    {
+        await using var db = await SeedLivePositionAsync(includePosition: false);
+        var bot = await db.Bots.SingleAsync();
+        var stale = new Order
+        {
+            BotId = bot.Id,
+            Symbol = "GRAMUSDT",
+            Side = OrderSide.Sell,
+            Type = OrderType.StopMarket,
+            Status = OrderStatus.New,
+            Quantity = 15.8m,
+            Price = 1.486m,
+            ClientOrderId = "sl-stale",
+            Mode = TradingMode.Live,
+            CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-10)
+        };
+        var fresh = new Order
+        {
+            BotId = bot.Id,
+            Symbol = "SAGAUSDT",
+            Side = OrderSide.Buy,
+            Type = OrderType.TakeProfitMarket,
+            Status = OrderStatus.New,
+            Quantity = 1m,
+            Price = 0.02m,
+            ClientOrderId = "tp-fresh",
+            Mode = TradingMode.Live
+        };
+        db.Orders.AddRange(stale, fresh);
+        await db.SaveChangesAsync();
+        stale.CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-10);
+        await db.SaveChangesAsync();
+        var live = new LiveAccountCache();
+        live.Set(FreshBook(
+            [],
+            [new LiveOpenOrder("SAGAUSDT", "Buy", "TAKE_PROFIT_MARKET", "NEW", 0m, 0m, 0.02m, "1", "tp-fresh", DateTimeOffset.UtcNow, "Futures")]));
+        var state = new ReconciliationState();
+        await Reconciler(db, live, state).ReconcileAsync();
+
+        state.Succeeded.Should().BeTrue();
+        (await db.Executions.CountAsync()).Should().Be(0);
+        (await db.Orders.SingleAsync(order => order.ClientOrderId == "sl-stale")).Status.Should().Be(OrderStatus.Cancelled);
+        (await db.Orders.SingleAsync(order => order.ClientOrderId == "tp-fresh")).Status.Should().Be(OrderStatus.New);
+    }
+
+    [Fact]
     public async Task Unknown_exchange_position_and_order_block_entries_without_closing_them()
     {
         await using var db = await SeedLivePositionAsync(includePosition: false);
@@ -464,26 +546,50 @@ public sealed class ReconciliationSafetyTests
     }
 
     [Fact]
-    public async Task Ghost_local_position_stays_open_and_is_not_given_an_exchange_fill()
+    public async Task A_fresh_flat_book_retires_a_ghost_after_a_stale_failure()
+    {
+        await using var db = await SeedLivePositionAsync();
+        var live = new LiveAccountCache();
+        var state = new ReconciliationState();
+        var reconciler = Reconciler(db, live, state);
+        await reconciler.ReconcileAsync();
+        state.Succeeded.Should().BeFalse();
+
+        live.Set(FreshBook([], []));
+        await reconciler.ReconcileAsync();
+
+        state.Succeeded.Should().BeTrue();
+        state.BlockReason.Should().BeNull();
+        (await db.Positions.SingleAsync()).Quantity.Should().Be(0m);
+        (await db.Executions.CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Ghost_local_position_is_retired_without_an_exchange_fill_or_mark_pnl()
     {
         await using var db = await SeedLivePositionAsync();
         var live = new LiveAccountCache();
         live.Set(FreshBook([], []));
         var state = new ReconciliationState();
         await Reconciler(db, live, state).ReconcileAsync();
+        await Reconciler(db, live, state).ReconcileAsync();
 
-        state.Succeeded.Should().BeFalse();
-        state.BlockReason.Should().Contain("left open");
+        state.Succeeded.Should().BeTrue();
         (await db.Orders.CountAsync()).Should().Be(0);
+        (await db.Executions.CountAsync()).Should().Be(0);
         var position = await db.Positions.SingleAsync();
-        position.Quantity.Should().Be(0.01m);
+        position.Quantity.Should().Be(0m);
         position.RealizedPnL.Should().Be(0m);
-        position.ClosedAt.Should().BeNull();
-        (await db.Trades.SingleAsync()).ClosedAt.Should().BeNull();
+        position.ClosedAt.Should().NotBeNull();
+        position.CurrentPrice.Should().Be(50_100m);
+        var trade = await db.Trades.SingleAsync();
+        trade.ClosedAt.Should().NotBeNull();
+        trade.ExitPrice.Should().BeNull();
+        trade.PnL.Should().Be(0m);
     }
 
     [Fact]
-    public async Task Missing_position_without_a_strategy_is_left_open()
+    public async Task Missing_position_without_a_strategy_is_retired_without_a_fill()
     {
         await using var db = await SeedLivePositionAsync();
         var bot = await db.Bots.SingleAsync();
@@ -494,21 +600,18 @@ public sealed class ReconciliationSafetyTests
         live.Set(FreshBook([], []));
         var state = new ReconciliationState();
         await Reconciler(db, live, state).ReconcileAsync();
-        await Reconciler(db, live, state).ReconcileAsync();
 
-        state.BlockReason.Should().Contain("no strategy version");
         var position = await db.Positions.SingleAsync();
-        position.Quantity.Should().Be(0.01m);
+        position.Quantity.Should().Be(0m);
         position.RealizedPnL.Should().Be(0m);
-        position.ClosedAt.Should().BeNull();
-        (await db.Trades.SingleAsync()).ClosedAt.Should().BeNull();
+        position.ClosedAt.Should().NotBeNull();
+        (await db.Trades.SingleAsync()).ClosedAt.Should().NotBeNull();
         (await db.Executions.CountAsync()).Should().Be(0);
-        LiveEntryGate.Block(new LiveEntryFacts(TradingMode.Live, true, false, false, true, true, true, true, false))
-            .Should().NotBeNull();
+        (await db.Orders.CountAsync()).Should().Be(0);
     }
 
     [Fact]
-    public async Task Missing_position_without_a_bot_is_left_open()
+    public async Task Missing_position_without_a_bot_is_retired_without_a_fill()
     {
         await using var db = await SeedLivePositionAsync(includeBot: false);
         var live = new LiveAccountCache();
@@ -516,12 +619,12 @@ public sealed class ReconciliationSafetyTests
         var state = new ReconciliationState();
         await Reconciler(db, live, state).ReconcileAsync();
 
-        state.BlockReason.Should().Contain("no bot record");
         var position = await db.Positions.SingleAsync();
-        position.Quantity.Should().Be(0.01m);
-        position.ClosedAt.Should().BeNull();
+        position.Quantity.Should().Be(0m);
+        position.ClosedAt.Should().NotBeNull();
         position.RealizedPnL.Should().Be(0m);
         (await db.Orders.CountAsync()).Should().Be(0);
+        (await db.Executions.CountAsync()).Should().Be(0);
     }
 
     [Fact]
@@ -690,13 +793,13 @@ public sealed class CommissionReaderTests
 public sealed class LiveConfigurationTests
 {
     [Fact]
-    public void Api_and_worker_settings_keep_live_submission_disabled()
+    public void Api_and_worker_settings_allow_a_started_bot_to_submit()
     {
         var root = RepoRoot();
         var api = File.ReadAllText(Path.Combine(root, "src", "TradingPlatform.Api", "appsettings.json"));
         var workers = File.ReadAllText(Path.Combine(root, "src", "TradingPlatform.Workers", "appsettings.json"));
-        api.Should().Contain("\"LiveTradingEnabled\": false");
-        workers.Should().Contain("\"LiveTradingEnabled\": false");
+        api.Should().Contain("\"LiveTradingEnabled\": true");
+        workers.Should().Contain("\"LiveTradingEnabled\": true");
         api.Should().NotContain("DefaultMode");
         workers.Should().NotContain("PaperFeeBps");
         workers.Should().NotContain("PaperSlippageBps");

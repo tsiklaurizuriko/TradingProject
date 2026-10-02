@@ -1,6 +1,5 @@
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
-using TradingPlatform.Application.Trading;
 using TradingPlatform.Infrastructure.Persistence;
 using TradingPlatform.Strategies.Engine;
 
@@ -27,10 +26,7 @@ public static class DatabaseInitializer
                 await ApplyCanonicalStrategiesAsync(db, logger, cancellationToken);
             }
 
-            var store = scope.ServiceProvider.GetRequiredService<ITradingStore>();
-            await store.StopAllRunningBotsAsync("Stopped on startup. Start a coin manually from Bots.", cancellationToken);
-            await store.SaveChangesAsync(cancellationToken);
-            logger.LogInformation("No bot is running until a coin is started manually. Live entries stay blocked until Trading:LiveTradingEnabled is true.");
+            logger.LogInformation("Running bots stay running across startup. A started live bot can submit when Trading:LiveTradingEnabled is true.");
         }
         catch (OperationCanceledException)
         {

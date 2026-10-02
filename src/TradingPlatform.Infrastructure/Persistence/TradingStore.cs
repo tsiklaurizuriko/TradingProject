@@ -46,6 +46,11 @@ public sealed class TradingStore : ITradingStore
         }
     }
 
+    public async Task<IReadOnlyList<Bot>> GetRunningLiveBotsAsync(CancellationToken cancellationToken = default) =>
+        await _db.Bots
+            .Where(bot => bot.Status == BotStatus.Running && bot.Mode == TradingMode.Live)
+            .ToListAsync(cancellationToken);
+
     public async Task<IReadOnlyList<Bot>> ListBotsAsync(CancellationToken cancellationToken = default)
     {
         try
@@ -449,6 +454,15 @@ public sealed class TradingStore : ITradingStore
                 && (order.Status == OrderStatus.Uncertain
                     || order.Status == OrderStatus.Submitting
                     || order.Status == OrderStatus.PartiallyFilled))
+            .ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<Order>> GetRestingLiveProtectionAsync(CancellationToken cancellationToken = default) =>
+        await _db.Orders
+            .Where(order => order.Mode == TradingMode.Live
+                && (order.Type == OrderType.StopMarket || order.Type == OrderType.TakeProfitMarket)
+                && (order.Status == OrderStatus.New
+                    || order.Status == OrderStatus.Submitted
+                    || order.Status == OrderStatus.Submitting))
             .ToListAsync(cancellationToken);
 
     public async Task AddPositionEventAsync(PositionEvent positionEvent, CancellationToken cancellationToken = default)

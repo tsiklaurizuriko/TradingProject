@@ -14,14 +14,14 @@ Status: **not ready for real-money trading.** `Trading:LiveTradingEnabled` is fa
 
 - A partial fill is stored as `PartiallyFilled` with the executed quantity and the remainder. `Filled` requires the exchange quantity to equal the request. A repeated report does not book the same delta twice.
 - A lost response is queried by the client order id. The order is not sent again. An unresolved order blocks a new entry on that coin until lookup succeeds.
-- A stale or incomplete futures snapshot blocks new live entries. Unknown exchange positions and orders are logged and are not closed. A missing local position is not represented by a fabricated `Filled` order.
+- A stale or incomplete futures snapshot blocks new live entries. An exchange position on a coin a running bot already trades is recorded locally without a fill, and that bot places the missing stop and take profit. A coin with no running bot, and an unknown exchange order, still block new entries and are not closed. A missing local position is not represented by a fabricated `Filled` order. Local protection that a fresh book does not show is cancelled in the database after 60 seconds.
 - `RiskLiveGuard` rejects a live order when a required limit or input is missing or outside the profile. It does not invent a default.
 - Obsolete alias ids do not run the retired private methods. Those unused methods were removed. Migration stays idempotent and fails startup when it cannot finish safely.
 
 ## Remaining blockers
 
 1. No test placed or observed a real Binance order. Stop and take-profit fills are applied only when the REST order or algo query returns an executed quantity and price. There is no user-data socket. REST polling waits 5 seconds, then 15 seconds, then 60 seconds, then 5 minutes. If that query cannot confirm the exchange, the order stays unresolved and new entries stay blocked. This build is not fully live-ready.
-2. A local position missing from a fresh snapshot is left open, including when the bot or strategy version is missing. It is not closed from a mark price, and the trade is not marked closed.
+2. A local position missing from a fresh snapshot is retired without a mark-price close. Realized PnL is not invented. A stale snapshot does not retire it.
 3. Daily realized loss is enforced. A peak-to-trough equity drawdown series is not stored. If a caller cannot say whether drawdown is known, the risk check fails closed.
 4. Every canonical strategy stays `NOT VALIDATED`. Backtests that do run still assume the stop wins when stop and target are both inside one bar, and they do not model partial exits.
 5. A stored timeframe that is not the canonical default is left as-is and only logged.

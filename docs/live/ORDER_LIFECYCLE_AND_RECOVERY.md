@@ -57,7 +57,7 @@ Stop and take-profit orders are queried on the algo endpoint as well as the orde
 
 - A missing, stale, or incomplete futures snapshot calls `ReconciliationState.Fail` and does not close local positions. Absence in an incomplete snapshot is not treated as flat.
 - A fresh snapshot with an exchange position or open order that has no local row is logged as a reconciliation exception. Those positions are not closed and no fill is invented. New entries stay blocked.
-- A local position that is absent from a fresh book is left open. The health block reason says so. No order is inserted, and no mark price is stored as realized exchange PnL.
+- A local position that is absent from a fresh book is closed in the database. Its quantity becomes zero and the open trade is marked closed. No order is inserted, and no mark price is stored as realized PnL. A stale or incomplete snapshot does not close it.
 - A clean fresh snapshot calls `Succeed` with the account hint and the clock time.
 
 `GET /api/system/health` reports `applicationStarted`, `databaseReady`, `exchangeReady`, `reconciliationReady`, `riskConfigurationValid`, `liveEntryGateOpen`, `unresolvedOrderCount`, and `blockedReason`. The process being up does not set `liveEntryGateOpen`. With the default flag the gate is closed.
