@@ -40,6 +40,9 @@ public interface IPublicMarketDataClient
 
     Task<decimal> GetLastPriceAsync(string symbol, CancellationToken cancellationToken = default);
 
+    /// <summary>One ticker/price call for every symbol. Weight 2, not one request per coin.</summary>
+    Task<IReadOnlyDictionary<string, decimal>> GetLastPricesAsync(CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<RankedUsdtSpotSymbol>> GetPaperUniverseAsync(CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<DiscoveredFuturesContract>> DiscoverUsdtPerpetualsAsync(CancellationToken cancellationToken = default);

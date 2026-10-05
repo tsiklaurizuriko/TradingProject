@@ -354,6 +354,14 @@ public sealed class BinanceSignedRestClient
         string apiSecret,
         CancellationToken cancellationToken)
     {
+        var weight = BinancePublicWeight.ForRequest(path + (fields.ContainsKey("symbol") ? "?symbol=1" : ""));
+        if (!await BinancePublicWeightGate.TryAcquireAsync(weight, TimeSpan.FromSeconds(2), cancellationToken))
+        {
+            throw new DomainException(
+                ErrorCodes.ExchangeRateLimit,
+                "Binance IP weight budget is full. The request was not sent.");
+        }
+
         var query = new SortedDictionary<string, string>(StringComparer.Ordinal);
         foreach (var kv in fields)
         {
@@ -387,17 +395,35 @@ public sealed class BinanceSignedRestClient
         }
 
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (IsFrequencyBan(response.StatusCode, body))
+        {
+            var pause = TimeSpan.FromMinutes(1);
+            if (response.Headers.RetryAfter?.Delta is { } retry && retry > TimeSpan.Zero)
+            {
+                pause = retry;
+            }
+
+            BinancePublicWeightGate.CoolDown(pause);
+            _logger.LogWarning("Binance asked this IP to slow down for {Seconds}s. Further requests wait.", (int)pause.TotalSeconds);
+            throw new DomainException(ErrorCodes.ExchangeRateLimit, TrimBinanceError(body));
+        }
+
         if (!response.IsSuccessStatusCode)
         {
             _logger.LogWarning("Binance signed {Path} failed: {Status} {Body}", path, (int)response.StatusCode, body);
-            var code = (int)response.StatusCode == 429 ? ErrorCodes.ExchangeRateLimit : ErrorCodes.OrderRejected;
-            throw new DomainException(code, TrimBinanceError(body));
+            throw new DomainException(ErrorCodes.OrderRejected, TrimBinanceError(body));
         }
 
         return string.IsNullOrWhiteSpace(body)
             ? default
             : JsonSerializer.Deserialize<JsonElement>(body);
     }
+
+    private static bool IsFrequencyBan(System.Net.HttpStatusCode status, string body) =>
+        (int)status is 418 or 429
+        || body.Contains("-1003", StringComparison.Ordinal)
+        || body.Contains("too frequent", StringComparison.OrdinalIgnoreCase)
+        || body.Contains("Too many requests", StringComparison.OrdinalIgnoreCase);
 
     private static string TrimBinanceError(string body)
     {

@@ -368,6 +368,91 @@ public sealed class IsolatedOccupancyTests
     }
 
     [Fact]
+    public void A_strategy_at_its_written_limit_does_not_receive_another_coin()
+    {
+        var started = DateTimeOffset.UtcNow.AddHours(-2);
+        var flat = LiveBot("AKEUSDT", "Flat Range", started);
+        var impulse = LiveBot("AKEUSDT", "Impulse Catch", started.AddMinutes(1));
+        var caps = Caps(flat, 5, impulse, 8);
+        var used = new Dictionary<Guid, HashSet<string>>();
+        for (var coin = 0; coin < 5; coin++)
+        {
+            IsolatedOccupancy.AddSlot(used, flat.StrategyVersion.StrategyId, "C" + coin);
+        }
+
+        IsolatedOccupancy.UsedSlots(used, flat.StrategyVersion.StrategyId).Should().Be(5);
+        IsolatedOccupancy.TryReserveSlot(used, flat.StrategyVersion.StrategyId, "NEWUSDT", 5).Should().BeFalse();
+        IsolatedOccupancy.PickOwnerForNewRow("AKEUSDT", [flat, impulse], [], caps, used, null)!.Id
+            .Should().Be(impulse.Id);
+    }
+
+    [Fact]
+    public void The_bot_that_placed_the_entry_keeps_the_coin_when_its_strategy_is_already_full()
+    {
+        var started = DateTimeOffset.UtcNow.AddHours(-2);
+        var flat = LiveBot("AKEUSDT", "Flat Range", started);
+        var impulse = LiveBot("AKEUSDT", "Impulse Catch", started.AddMinutes(1));
+        var caps = Caps(flat, 5, impulse, 1);
+        var used = new Dictionary<Guid, HashSet<string>>();
+        IsolatedOccupancy.AddSlot(used, impulse.StrategyVersion.StrategyId, "OTHERUSDT");
+
+        IsolatedOccupancy.PickOwnerForNewRow("AKEUSDT", [flat, impulse], [], caps, used, impulse.Id)!.Id
+            .Should().Be(impulse.Id);
+        for (var coin = 0; coin < 5; coin++)
+        {
+            IsolatedOccupancy.AddSlot(used, flat.StrategyVersion.StrategyId, "F" + coin);
+        }
+
+        IsolatedOccupancy.PickOwnerForNewRow("AKEUSDT", [flat, impulse], [], caps, used, null)
+            .Should().BeNull();
+    }
+
+    [Fact]
+    public void An_adopted_row_returns_to_the_bot_that_placed_the_entry()
+    {
+        var started = DateTimeOffset.UtcNow.AddHours(-2);
+        var flat = LiveBot("AKEUSDT", "Flat Range", started);
+        var impulse = LiveBot("AKEUSDT", "Impulse Catch", started.AddMinutes(1));
+        var row = new Position
+        {
+            BotId = flat.Id,
+            Bot = flat,
+            Symbol = "AKEUSDT",
+            Quantity = 10m,
+            OpenedAt = started
+        };
+
+        IsolatedOccupancy.MoveRowToEntryBot(row, impulse, [row]).Should().BeTrue();
+        row.BotId.Should().Be(impulse.Id);
+    }
+
+    private static Bot LiveBot(string symbol, string strategy, DateTimeOffset started)
+    {
+        var id = Guid.NewGuid();
+        return new Bot
+        {
+            Name = strategy,
+            Symbol = symbol,
+            Status = BotStatus.Running,
+            Mode = TradingMode.Live,
+            StartedAt = started,
+            StrategyVersion = new StrategyVersion
+            {
+                StrategyId = id,
+                Strategy = new Strategy { Id = id, Name = strategy }
+            },
+            RiskProfile = new TradingPlatform.Domain.Risk.RiskProfile()
+        };
+    }
+
+    private static Dictionary<Guid, LiveBotSlot> Caps(Bot first, int firstCap, Bot second, int secondCap) =>
+        new()
+        {
+            [first.Id] = new LiveBotSlot(first.Id, first.Symbol, first.StrategyVersion.StrategyId, firstCap, first.StartedAt),
+            [second.Id] = new LiveBotSlot(second.Id, second.Symbol, second.StrategyVersion.StrategyId, secondCap, second.StartedAt)
+        };
+
+    [Fact]
     public void PriorOwner_returns_the_bot_that_existed_when_the_fill_opened()
     {
         var opened = DateTimeOffset.Parse("2026-09-20T12:00:00Z");

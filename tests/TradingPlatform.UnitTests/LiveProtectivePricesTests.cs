@@ -70,6 +70,19 @@ public sealed class LiveProtectivePricesTests
     }
 
     [Fact]
+    public void A_missing_client_id_is_not_cancelled_before_a_new_protective_order()
+    {
+        var orders = new[]
+        {
+            new TradingPlatform.Application.Abstractions.Exchange.LiveOpenOrder(
+                "BTCUSDT", "Sell", "STOP_MARKET", "NEW", 0m, 0m, 100m, "1", "sl-other", DateTimeOffset.UtcNow, "Futures")
+        };
+
+        LiveProtectivePrices.ListedByClientId(orders, "slaaaaaaaaaaaaaa").Should().BeFalse();
+        LiveProtectivePrices.ListedByClientId(orders, "sl-other").Should().BeTrue();
+    }
+
+    [Fact]
     public void Stop_and_take_types_do_not_count_as_each_other()
     {
         LiveProtectivePrices.IsStopOrder("STOP_MARKET").Should().BeTrue();

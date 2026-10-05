@@ -51,6 +51,79 @@ public sealed class TradingStore : ITradingStore
             .Where(bot => bot.Status == BotStatus.Running && bot.Mode == TradingMode.Live)
             .ToListAsync(cancellationToken);
 
+    public async Task<IReadOnlyList<LiveBotSlot>> GetRunningLiveSlotsAsync(CancellationToken cancellationToken = default)
+    {
+        var bots = await _db.Bots.AsNoTracking()
+            .Where(bot => bot.Status == BotStatus.Running && bot.Mode == TradingMode.Live)
+            .Select(bot => new
+            {
+                bot.Id,
+                bot.Symbol,
+                bot.StrategyVersionId,
+                bot.RiskProfileId,
+                bot.StartedAt
+            })
+            .ToListAsync(cancellationToken);
+        var versionIds = bots.Select(bot => bot.StrategyVersionId).Distinct().ToList();
+        var versions = await _db.StrategyVersions.AsNoTracking()
+            .Where(version => versionIds.Contains(version.Id))
+            .Select(version => new { version.Id, version.StrategyId })
+            .ToListAsync(cancellationToken);
+        var riskIds = bots.Select(bot => bot.RiskProfileId).Where(id => id != Guid.Empty).Distinct().ToList();
+        var risks = await _db.RiskProfiles.IgnoreQueryFilters().AsNoTracking()
+            .Where(risk => riskIds.Contains(risk.Id))
+            .Select(risk => new { risk.Id, risk.MaxSimultaneousPositions })
+            .ToListAsync(cancellationToken);
+        var versionMap = versions.ToDictionary(version => version.Id, version => version.StrategyId);
+        var riskMap = risks.ToDictionary(risk => risk.Id, risk => risk.MaxSimultaneousPositions);
+        return bots
+            .Select(bot => new LiveBotSlot(
+                bot.Id,
+                bot.Symbol,
+                versionMap.GetValueOrDefault(bot.StrategyVersionId),
+                riskMap.GetValueOrDefault(bot.RiskProfileId),
+                bot.StartedAt))
+            .ToList();
+    }
+
+    public async Task<IReadOnlyList<StrategyEntryClaim>> GetStrategyEntryClaimsAsync(
+        IReadOnlyCollection<string> openSymbols,
+        CancellationToken cancellationToken = default)
+    {
+        var symbols = openSymbols
+            .Where(symbol => !string.IsNullOrWhiteSpace(symbol))
+            .Select(symbol => symbol.Trim().ToUpperInvariant())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var working = await _db.Orders.AsNoTracking()
+            .Where(order => order.Mode == TradingMode.Live
+                && order.Type == OrderType.Market
+                && order.ClientOrderId.StartsWith("L")
+                && (order.Status == OrderStatus.New
+                    || order.Status == OrderStatus.Submitting
+                    || order.Status == OrderStatus.Submitted
+                    || order.Status == OrderStatus.PartiallyFilled))
+            .Select(order => new StrategyEntryClaim(order.Symbol, order.BotId, false, order.CreatedAt))
+            .ToListAsync(cancellationToken);
+        if (symbols.Length == 0)
+        {
+            return working;
+        }
+
+        var filled = await _db.Orders.AsNoTracking()
+            .Where(order => order.Mode == TradingMode.Live
+                && order.Type == OrderType.Market
+                && order.Status == OrderStatus.Filled
+                && order.ClientOrderId.StartsWith("L")
+                && symbols.Contains(order.Symbol))
+            .Select(order => new StrategyEntryClaim(order.Symbol, order.BotId, true, order.CreatedAt))
+            .ToListAsync(cancellationToken);
+        var latest = filled
+            .GroupBy(order => order.Symbol, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderByDescending(order => order.CreatedAt).First());
+        return working.Concat(latest).ToList();
+    }
+
     public async Task<IReadOnlyList<Bot>> ListBotsAsync(CancellationToken cancellationToken = default)
     {
         try

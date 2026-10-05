@@ -14,12 +14,25 @@ using TradingPlatform.Domain.Trading;
 
 namespace TradingPlatform.Application.Trading;
 
+public sealed record StrategyEntryClaim(string Symbol, Guid BotId, bool Filled, DateTimeOffset CreatedAt);
+
+public sealed record LiveBotSlot(
+    Guid BotId,
+    string Symbol,
+    Guid StrategyId,
+    int MaxSimultaneousPositions,
+    DateTimeOffset? StartedAt);
+
 public interface ITradingStore
 {
     Task<User> GetFirstAdminAsync(CancellationToken cancellationToken = default);
     Task<User?> GetUserAsync(Guid userId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<Bot>> GetRunningBotsAsync(CancellationToken cancellationToken = default);
     Task<IReadOnlyList<Bot>> GetRunningLiveBotsAsync(CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<LiveBotSlot>> GetRunningLiveSlotsAsync(CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<StrategyEntryClaim>> GetStrategyEntryClaimsAsync(
+        IReadOnlyCollection<string> openSymbols,
+        CancellationToken cancellationToken = default);
     Task<IReadOnlyList<Bot>> ListBotsAsync(CancellationToken cancellationToken = default);
     Task<IReadOnlyList<Bot>> ListWorkspaceBotsAsync(Guid userId, TradingMode mode, CancellationToken cancellationToken = default);
     Task<Bot?> GetBotAsync(Guid botId, CancellationToken cancellationToken = default);

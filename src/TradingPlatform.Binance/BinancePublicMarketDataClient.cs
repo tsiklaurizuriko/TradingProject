@@ -23,6 +23,8 @@ public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
     private static Dictionary<string, decimal>? FundingCache;
     private static DateTimeOffset FundingUntil;
 
+    private static readonly SemaphoreSlim InFlight = new(8, 8);
+
     private readonly HttpClient _futures;
     private readonly ILogger<BinancePublicMarketDataClient> _logger;
 
@@ -258,6 +260,40 @@ public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
         return price;
     }
 
+    public async Task<IReadOnlyDictionary<string, decimal>> GetLastPricesAsync(CancellationToken cancellationToken = default)
+    {
+        var payload = await GetJsonOrNullAsync("fapi/v1/ticker/price", cancellationToken);
+        if (payload is null || payload.Value.ValueKind != JsonValueKind.Array)
+        {
+            return new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        var prices = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+        var until = DateTimeOffset.UtcNow.AddSeconds(8);
+        foreach (var item in payload.Value.EnumerateArray())
+        {
+            var name = item.TryGetProperty("symbol", out var symbolEl) ? symbolEl.GetString() ?? "" : "";
+            if (string.IsNullOrWhiteSpace(name) || !item.TryGetProperty("price", out var priceEl))
+            {
+                continue;
+            }
+
+            var price = Dec(priceEl);
+            if (price <= 0m)
+            {
+                continue;
+            }
+
+            prices[name] = price;
+            lock (PriceGate)
+            {
+                PriceCache[name.ToUpperInvariant()] = (price, until);
+            }
+        }
+
+        return prices;
+    }
+
     public async Task<IReadOnlyList<RankedUsdtSpotSymbol>> GetPaperUniverseAsync(CancellationToken cancellationToken = default)
     {
         var cached = CachedUniverse;
@@ -487,9 +523,29 @@ public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
 
     private async Task<JsonElement?> GetJsonOrNullAsync(string url, CancellationToken cancellationToken)
     {
+        var weight = BinancePublicWeight.ForRequest(url);
+        if (!await BinancePublicWeightGate.TryAcquireAsync(weight, TimeSpan.FromMilliseconds(500), cancellationToken))
+        {
+            _logger.LogWarning("Binance USD-M request skipped. The shared IP weight budget is full: {Url}", url);
+            return null;
+        }
+
+        var entered = false;
         try
         {
+            await InFlight.WaitAsync(cancellationToken);
+            entered = true;
             using var response = await _futures.GetAsync(url, cancellationToken);
+            if ((int)response.StatusCode is 418 or 429)
+            {
+                var pause = response.Headers.RetryAfter?.Delta is { } retry && retry > TimeSpan.Zero
+                    ? retry
+                    : TimeSpan.FromMinutes(1);
+                BinancePublicWeightGate.CoolDown(pause);
+                _logger.LogWarning("Binance asked this IP to slow down for {Seconds}s after {Url}", (int)pause.TotalSeconds, url);
+                return null;
+            }
+
             response.EnsureSuccessStatusCode();
             return await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
         }
@@ -506,6 +562,13 @@ public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
         {
             _logger.LogWarning(ex, "Binance USD-M request failed: {Url}", url);
             return null;
+        }
+        finally
+        {
+            if (entered)
+            {
+                InFlight.Release();
+            }
         }
     }
 

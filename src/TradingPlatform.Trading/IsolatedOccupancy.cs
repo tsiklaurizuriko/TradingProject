@@ -174,6 +174,142 @@ public static class IsolatedOccupancy
     public static bool IsOwner(Bot bot, IReadOnlyList<Bot> peers, IReadOnlyList<Position> book) =>
         PickLiveOwner(bot.Symbol, peers, book, bot.Mode)?.Id == bot.Id;
 
+    public static int CapOf(int configured) => configured > 0 ? configured : 2;
+
+    public static void AddSlot(IDictionary<Guid, HashSet<string>> slots, Guid strategyId, string symbol)
+    {
+        if (strategyId == Guid.Empty || string.IsNullOrWhiteSpace(symbol))
+        {
+            return;
+        }
+
+        if (!slots.TryGetValue(strategyId, out var coins))
+        {
+            coins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            slots[strategyId] = coins;
+        }
+
+        coins.Add(CoinKey(symbol));
+    }
+
+    public static int UsedSlots(IReadOnlyDictionary<Guid, HashSet<string>> slots, Guid strategyId) =>
+        slots.TryGetValue(strategyId, out var coins) ? coins.Count : 0;
+
+    /// <summary>
+    /// One coin takes one slot. A coin already reserved does not take another.
+    /// </summary>
+    public static bool TryReserveSlot(
+        IDictionary<Guid, HashSet<string>> slots,
+        Guid strategyId,
+        string symbol,
+        int configuredCap)
+    {
+        if (strategyId == Guid.Empty || string.IsNullOrWhiteSpace(symbol))
+        {
+            return false;
+        }
+
+        if (!slots.TryGetValue(strategyId, out var coins))
+        {
+            coins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            slots[strategyId] = coins;
+        }
+
+        var key = CoinKey(symbol);
+        if (coins.Contains(key))
+        {
+            return true;
+        }
+
+        if (coins.Count >= CapOf(configuredCap))
+        {
+            return false;
+        }
+
+        coins.Add(key);
+        return true;
+    }
+
+    /// <summary>
+    /// Who may receive a new local row for an exchange position.
+    /// The bot that placed the entry keeps the coin even when its strategy is already at the limit.
+    /// Another strategy can take an unclaimed coin only while it is still under its written limit.
+    /// </summary>
+    public static Bot? PickOwnerForNewRow(
+        string symbol,
+        IReadOnlyList<Bot> bots,
+        IReadOnlyList<Position> book,
+        IReadOnlyDictionary<Guid, LiveBotSlot> caps,
+        IReadOnlyDictionary<Guid, HashSet<string>> used,
+        Guid? entryBotId)
+    {
+        var key = CoinKey(symbol);
+        if (book.Any(row => row.Quantity > 0m && string.Equals(CoinKey(row.Symbol), key, StringComparison.OrdinalIgnoreCase)))
+        {
+            return PickLiveOwner(symbol, bots, book, TradingMode.Live);
+        }
+
+        var candidates = bots
+            .Where(bot =>
+                bot.Mode == TradingMode.Live
+                && bot.Status == BotStatus.Running
+                && string.Equals(CoinKey(bot.Symbol), key, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(bot => bot.StartedAt ?? DateTimeOffset.MaxValue)
+            .ThenBy(bot => bot.Id)
+            .ToList();
+        if (entryBotId is Guid openedBy)
+        {
+            var entry = candidates.FirstOrDefault(bot => bot.Id == openedBy);
+            if (entry is not null)
+            {
+                return entry;
+            }
+        }
+
+        foreach (var bot in candidates)
+        {
+            if (!caps.TryGetValue(bot.Id, out var slot) || slot.StrategyId == Guid.Empty)
+            {
+                continue;
+            }
+
+            if (UsedSlots(used, slot.StrategyId) < CapOf(slot.MaxSimultaneousPositions))
+            {
+                return bot;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Give the local row back to the bot that placed the entry. Does nothing when that bot already has one.
+    /// </summary>
+    public static bool MoveRowToEntryBot(Position position, Bot entry, IReadOnlyList<Position> book)
+    {
+        if (position.Quantity <= 0m
+            || position.BotId == entry.Id
+            || entry.Status != BotStatus.Running
+            || entry.Mode != TradingMode.Live
+            || !string.Equals(CoinKey(entry.Symbol), CoinKey(position.Symbol), StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (book.Any(row =>
+                row.Id != position.Id
+                && row.Quantity > 0m
+                && row.BotId == entry.Id
+                && string.Equals(CoinKey(row.Symbol), CoinKey(position.Symbol), StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        position.BotId = entry.Id;
+        position.Bot = entry;
+        return true;
+    }
+
     /// <summary>
     /// A bot created after the fill cannot be the strategy that opened it.
     /// Flat Range on every coin was adopting older Isolated positions and the open count collapsed onto it.

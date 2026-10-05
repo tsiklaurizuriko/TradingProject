@@ -77,6 +77,70 @@ public sealed class LiveIsolatedReconciler
         }
 
         var running = await _store.GetRunningLiveBotsAsync(cancellationToken);
+        var slotRows = await _store.GetRunningLiveSlotsAsync(cancellationToken);
+        var caps = slotRows.ToDictionary(slot => slot.BotId);
+        var openSymbols = book
+            .Where(position => position.Quantity > 0m)
+            .Select(position => position.Symbol)
+            .Concat(live.OpenPositions.Where(row => row.Quantity > 0m).Select(row => row.Symbol))
+            .ToArray();
+        var claims = await _store.GetStrategyEntryClaimsAsync(openSymbols, cancellationToken);
+        var entryBySymbol = claims
+            .Where(claim => claim.Filled)
+            .GroupBy(claim => IsolatedOccupancy.CoinKey(claim.Symbol), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group => group.OrderByDescending(claim => claim.CreatedAt).First().BotId,
+                StringComparer.OrdinalIgnoreCase);
+        var returned = 0;
+        foreach (var position in book.Where(position => position.Quantity > 0m).ToList())
+        {
+            if (!entryBySymbol.TryGetValue(IsolatedOccupancy.CoinKey(position.Symbol), out var entryId)
+                || entryId == position.BotId)
+            {
+                continue;
+            }
+
+            var entry = running.FirstOrDefault(bot => bot.Id == entryId);
+            if (entry is null)
+            {
+                continue;
+            }
+
+            if (IsolatedOccupancy.MoveRowToEntryBot(position, entry, book))
+            {
+                returned++;
+                _logger.LogWarning(
+                    "Returned {Symbol} to the bot that placed the entry. The other strategy stays within its position limit.",
+                    position.Symbol);
+                continue;
+            }
+
+            var entryHolds = book.Any(row =>
+                row.Id != position.Id
+                && row.Quantity > 0m
+                && row.BotId == entry.Id
+                && string.Equals(row.Symbol, position.Symbol, StringComparison.OrdinalIgnoreCase));
+            if (!entryHolds)
+            {
+                continue;
+            }
+
+            position.Quantity = 0m;
+            position.UnrealizedPnL = 0m;
+            position.ClosedAt = now;
+            returned++;
+        }
+
+        var used = new Dictionary<Guid, HashSet<string>>();
+        foreach (var position in book.Where(position => position.Quantity > 0m))
+        {
+            if (caps.TryGetValue(position.BotId, out var slot))
+            {
+                IsolatedOccupancy.AddSlot(used, slot.StrategyId, position.Symbol);
+            }
+        }
+
         var adopted = 0;
         foreach (var remote in live.OpenPositions.Where(row => row.Quantity > 0m))
         {
@@ -88,7 +152,14 @@ public sealed class LiveIsolatedReconciler
                 continue;
             }
 
-            var owner = IsolatedOccupancy.PickLiveOwner(remote.Symbol, running, book, TradingMode.Live);
+            entryBySymbol.TryGetValue(IsolatedOccupancy.CoinKey(remote.Symbol), out var entryId);
+            var owner = IsolatedOccupancy.PickOwnerForNewRow(
+                remote.Symbol,
+                running,
+                book,
+                caps,
+                used,
+                entryId == Guid.Empty ? null : entryId);
             if (owner is null)
             {
                 continue;
@@ -110,6 +181,11 @@ public sealed class LiveIsolatedReconciler
             };
             await _store.AddPositionAsync(position, cancellationToken);
             book.Add(position);
+            if (caps.TryGetValue(owner.Id, out var ownerSlot))
+            {
+                IsolatedOccupancy.AddSlot(used, ownerSlot.StrategyId, remote.Symbol);
+            }
+
             adopted++;
             owner.LastError =
                 $"Exchange position {remote.Symbol} had no local row. It was recorded from the snapshot. No fill or mark-price PnL was created.";
@@ -164,7 +240,7 @@ public sealed class LiveIsolatedReconciler
             retiredOrders++;
         }
 
-        if (missing > 0 || adopted > 0 || collapsed > 0 || retiredOrders > 0)
+        if (missing > 0 || adopted > 0 || returned > 0 || collapsed > 0 || retiredOrders > 0)
         {
             await _store.SaveChangesAsync(cancellationToken);
         }

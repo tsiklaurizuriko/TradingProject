@@ -77,6 +77,10 @@ public static class LiveProtectivePrices
         return stop < entryPrice && take > entryPrice;
     }
 
+    public static bool ListedByClientId(IReadOnlyList<LiveOpenOrder> orders, string? clientOrderId) =>
+        !string.IsNullOrWhiteSpace(clientOrderId)
+        && orders.Any(row => string.Equals(row.ClientOrderId, clientOrderId, StringComparison.OrdinalIgnoreCase));
+
     public static string StopClientOrderId(Guid botId) => $"sl{botId:N}"[..18];
 
     public static string TakeClientOrderId(Guid botId) => $"tp{botId:N}"[..18];

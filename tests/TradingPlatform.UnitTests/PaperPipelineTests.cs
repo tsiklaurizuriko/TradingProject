@@ -451,6 +451,12 @@ public sealed class PaperPipelineTests
         public Task<decimal> GetLastPriceAsync(string symbol, CancellationToken cancellationToken = default) =>
             Task.FromResult(_last);
 
+        public Task<IReadOnlyDictionary<string, decimal>> GetLastPricesAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyDictionary<string, decimal>>(new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["BTCUSDT"] = _last
+            });
+
         public Task<IReadOnlyList<RankedUsdtSpotSymbol>> GetPaperUniverseAsync(
             CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<RankedUsdtSpotSymbol>>([]);

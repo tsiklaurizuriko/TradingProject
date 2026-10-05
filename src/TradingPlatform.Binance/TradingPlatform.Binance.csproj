@@ -4,6 +4,9 @@
     <AssemblyName>TradingPlatform.Binance</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="TradingPlatform.UnitTests" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\TradingPlatform.Application\TradingPlatform.Application.csproj" />
     <ProjectReference Include="..\TradingPlatform.Domain\TradingPlatform.Domain.csproj" />
   </ItemGroup>
