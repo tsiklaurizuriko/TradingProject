@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using TradingPlatform.Application.Abstractions.Exchange;
 using TradingPlatform.Application.Trading;
 using TradingPlatform.Domain.Bots;
@@ -26,6 +27,7 @@ public sealed class ExchangeAccountService : IExchangeAccountService
     private readonly ILiveAccountCache _cache;
     private readonly IServiceScopeFactory _scopes;
     private readonly ILogger<ExchangeAccountService> _logger;
+    private readonly TradingVenueKind _venue;
 
     public ExchangeAccountService(
         IExchangeCredentialStore store,
@@ -33,8 +35,10 @@ public sealed class ExchangeAccountService : IExchangeAccountService
         BinanceSignedRestClient signed,
         ILiveAccountCache cache,
         IServiceScopeFactory scopes,
-        ILogger<ExchangeAccountService> logger)
+        ILogger<ExchangeAccountService> logger,
+        IOptions<TradingOptions>? options = null)
     {
+        _venue = options?.Value.VenueKind ?? TradingVenueKind.Live;
         _store = store;
         _trading = trading;
         _signed = signed;
@@ -161,7 +165,9 @@ public sealed class ExchangeAccountService : IExchangeAccountService
             throw new DomainException(ErrorCodes.ValidationFailed, "API key and secret are required.");
         }
 
-        var accountJson = await _signed.GetAccountAsync(apiKey.Trim(), apiSecret.Trim(), cancellationToken);
+        var accountJson = _venue == TradingVenueKind.Testnet
+            ? await _signed.GetFuturesAccountAsync(apiKey.Trim(), apiSecret.Trim(), cancellationToken)
+            : await _signed.GetAccountAsync(apiKey.Trim(), apiSecret.Trim(), cancellationToken);
         var canTrade = accountJson.ValueKind == JsonValueKind.Object
             && accountJson.TryGetProperty("canTrade", out var trade)
             && trade.GetBoolean();
@@ -593,6 +599,17 @@ public sealed class ExchangeAccountService : IExchangeAccountService
             _logger.LogInformation("Futures realized PnL income skipped: {Message}", ex.Message);
         }
 
+        FundingLedger? funding = null;
+        try
+        {
+            var fundingRows = ParseIncome(await _signed.GetFuturesIncomeAsync(apiKey, apiSecret, "FUNDING_FEE", cancellationToken));
+            funding = FundingLedger.From(fundingRows.Select(row => (row.Symbol, row.Pnl, row.Time)).ToList(), DateTimeOffset.UtcNow, 1000);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogInformation("Futures funding income skipped. Trade funding stays unrecorded: {Message}", ex.Message);
+        }
+
         foreach (var symbol in symbols)
         {
             var bot = BotFor(symbol);
@@ -638,6 +655,13 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                         trade.FeeAsset);
                 }
             }
+            catch (DomainException ex) when (ex.Code == ErrorCodes.ExchangeRateLimit)
+            {
+                _logger.LogInformation(
+                    "Fill history paused at {Symbol}: the Binance weight budget is full. The remaining coins are read on the next history pass.",
+                    symbol);
+                break;
+            }
             catch (Exception ex)
             {
                 _logger.LogInformation("userTrades skipped for {Symbol}: {Message}", symbol, ex.Message);
@@ -664,7 +688,7 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                              item.RealizedPnl,
                              item.FeeAsset)).ToList()))
             {
-                await UpsertClosedTradeAsync(bot, trip, cancellationToken);
+                await UpsertClosedTradeAsync(bot, trip, funding, cancellationToken);
             }
         }
 
@@ -697,6 +721,7 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                     fill?.Time ?? row.Time,
                     fill?.Time ?? row.Time,
                     string.IsNullOrWhiteSpace(row.TradeId) ? row.TranId.ToString() : row.TradeId),
+                null,
                 cancellationToken);
         }
 
@@ -901,8 +926,10 @@ public sealed class ExchangeAccountService : IExchangeAccountService
     private async Task UpsertClosedTradeAsync(
         Bot bot,
         BinanceClosedFill.ClosedIsolated trip,
+        FundingLedger? funding,
         CancellationToken cancellationToken)
     {
+        var tripFunding = funding?.For(trip.Symbol, trip.OpenedAt, trip.ClosedAt);
         if (trip.RealizedPnl == 0m && trip.Quantity <= 0m)
         {
             return;
@@ -983,6 +1010,7 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                 trade.EntryPrice,
                 trade.Quantity,
                 trip.RealizedPnl);
+            trade.FundingPnL = tripFunding ?? trade.FundingPnL;
             TradeFee.Apply(trade, trip.Fee, replace: true);
             trade.OpenedAt = trip.OpenedAt;
             trade.ClosedAt = trip.ClosedAt;
@@ -1015,7 +1043,7 @@ public sealed class ExchangeAccountService : IExchangeAccountService
             return;
         }
 
-        await _trading.AddTradeAsync(new Trade
+        var added = new Trade
         {
             BotId = bot.Id,
             StrategyId = bot.StrategyVersion.StrategyId,
@@ -1031,10 +1059,13 @@ public sealed class ExchangeAccountService : IExchangeAccountService
             Fees = trip.Fee.Status == FeeKnowledge.Known ? trip.Fee.Amount ?? 0m : trip.Fee.Status == FeeKnowledge.AssetMissing ? trip.Fee.Amount ?? 0m : 0m,
             FeeStatus = trip.Fee.Status,
             FeeAsset = trip.Fee.Status == FeeKnowledge.Known ? trip.Fee.Asset : null,
+            FundingPnL = tripFunding,
             OpenedAt = trip.OpenedAt,
             ClosedAt = trip.ClosedAt,
             CorrelationId = correlationId
-        }, cancellationToken);
+        };
+        TradePnl.Refresh(added);
+        await _trading.AddTradeAsync(added, cancellationToken);
     }
 
     private static UserTradeFill? MatchFill(

@@ -10,11 +10,15 @@ export interface AuthSession {
   roles: string[];
 }
 
+const OPERATOR_ROLES = ['Admin'];
+
 @Injectable({ providedIn: 'root' })
 export class AuthService {
   private readonly session = signal<AuthSession | null>(readStoredSession());
+  private refreshing: Promise<boolean> | null = null;
   readonly current = this.session.asReadonly();
   readonly isAuthenticated = computed(() => !!this.session());
+  readonly isOperator = computed(() => (this.session()?.roles ?? []).some((r) => OPERATOR_ROLES.includes(r)));
 
   constructor(private readonly http: HttpClient) {}
 
@@ -28,6 +32,29 @@ export class AuthService {
   logout(): void {
     this.session.set(null);
     localStorage.removeItem('tp.session');
+  }
+
+  /** One refresh at a time; concurrent 401s share the same attempt. */
+  refresh(): Promise<boolean> {
+    const refreshToken = this.session()?.refreshToken;
+    if (!refreshToken) {
+      return Promise.resolve(false);
+    }
+    this.refreshing ??= firstValueFrom(
+      this.http.post<AuthSession>(`${environment.apiBaseUrl}/auth/refresh`, { refreshToken }),
+    )
+      .then((session) => {
+        this.persist(session);
+        return true;
+      })
+      .catch(() => {
+        this.logout();
+        return false;
+      })
+      .finally(() => {
+        this.refreshing = null;
+      });
+    return this.refreshing;
   }
 
   changePassword(currentPassword: string, newPassword: string): Promise<void> {

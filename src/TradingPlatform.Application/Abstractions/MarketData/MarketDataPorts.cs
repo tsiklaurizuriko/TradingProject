@@ -59,7 +59,41 @@ public interface IPublicMarketDataClient
 
     /// <summary>Current 8-hour funding rate from the premium index. Null when the symbol is missing.</summary>
     Task<decimal?> GetLastFundingRateAsync(string symbol, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// <c>futures/data/openInterestHist</c> rows (<c>sumOpenInterest</c> at <c>timestamp</c>) between start and end.
+    /// Binance keeps about 30 days. Empty means unavailable, never zero.
+    /// </summary>
+    Task<IReadOnlyList<TimedValue>> GetOpenInterestHistoryAsync(
+        string symbol,
+        Timeframe period,
+        DateTimeOffset start,
+        DateTimeOffset end,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<TimedValue>>([]);
+
+    /// <summary>Settled funding rates (<c>fapi/v1/fundingRate</c>) at <c>fundingTime</c> between start and end.</summary>
+    Task<IReadOnlyList<TimedValue>> GetFundingHistoryAsync(
+        string symbol,
+        DateTimeOffset start,
+        DateTimeOffset end,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<TimedValue>>([]);
+
+    /// <summary>
+    /// <c>futures/data/topLongShortPositionRatio</c> rows (<c>longShortRatio</c> at <c>timestamp</c>) between start and end.
+    /// Binance keeps about 30 days. Empty means unavailable.
+    /// </summary>
+    Task<IReadOnlyList<TimedValue>> GetTopTraderPositionRatioHistoryAsync(
+        string symbol,
+        Timeframe period,
+        DateTimeOffset start,
+        DateTimeOffset end,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<TimedValue>>([]);
 }
+
+public sealed record TimedValue(DateTimeOffset Time, decimal Value);
 
 public interface IMarketDataCache
 {

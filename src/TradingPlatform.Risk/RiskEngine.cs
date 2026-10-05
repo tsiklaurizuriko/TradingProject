@@ -38,6 +38,12 @@ public sealed record RiskSizingHints
     public decimal MaxMarginUsdt { get; init; }
     public decimal TakerFeePercent { get; init; }
     public decimal SlippagePercent { get; init; }
+
+    /// <summary>Bracket maintenance margin rate as a fraction (0.004 = 0.4%). Zero uses <see cref="RiskEngine.DefaultMaintenanceMarginRate"/>.</summary>
+    public decimal MaintenanceMarginRate { get; init; }
+
+    /// <summary>Bracket maintenance amount ("cum") in USDT.</summary>
+    public decimal MaintenanceAmount { get; init; }
 }
 
 public sealed record RiskPlan
@@ -75,7 +81,14 @@ public sealed record RiskSnapshot
     public string Symbol { get; init; } = string.Empty;
     public decimal Price { get; init; }
     public PositionSide Side { get; init; }
+    /// <summary>Realized PnL since the UTC day start plus open losses (open gains do not offset realized losses).</summary>
     public decimal AccountDailyPnL { get; init; }
+
+    /// <summary>Same as <see cref="AccountDailyPnL"/> since the UTC week start.</summary>
+    public decimal AccountWeeklyPnL { get; init; }
+
+    /// <summary>Percent below the recorded equity peak. Null when there is no equity series (backtests, paper).</summary>
+    public decimal? DrawdownPercent { get; init; }
     public bool SymbolAlreadyOpen { get; init; }
     /// <summary>Open Isolated coins already held by the evaluating strategy. Other running strategies do not consume this quota.</summary>
     public int OpenPositionCount { get; init; }
@@ -97,6 +110,9 @@ public sealed class RiskEngine : IRiskEngine
     public const decimal DefaultSlippagePercent = 0.05m;
     public const int MaxMarketDataAgeMs = 60_000;
     public const decimal EstimatedTotalRiskTolerance = 1.5m;
+
+    /// <summary>Used when the bracket is unknown. Binance's lowest USD-M tiers run 0.4%–1.5%; 1% is a middle, not a best case.</summary>
+    public const decimal DefaultMaintenanceMarginRate = 0.01m;
 
     public static RiskPlan Plan(
         RiskProfile profile,
@@ -237,9 +253,18 @@ public sealed class RiskEngine : IRiskEngine
         var takePrice = side == PositionSide.Short
             ? price * (1m - profile.TakeProfitPercent / 100m)
             : price * (1m + profile.TakeProfitPercent / 100m);
-        var liquidation = side == PositionSide.Short
-            ? price * (1m + 1m / leverage)
-            : price * (1m - 1m / leverage);
+        var mmr = sizing is { MaintenanceMarginRate: > 0m } ? sizing.MaintenanceMarginRate : DefaultMaintenanceMarginRate;
+        var liquidation = PortfolioRisk.IsolatedLiquidationPrice(
+            price,
+            quantity,
+            leverage,
+            side == PositionSide.Short,
+            mmr,
+            sizing?.MaintenanceAmount ?? 0m);
+        if (profile.StopLossPercent + buffer >= PortfolioRisk.LiquidationDistancePercent(price, liquidation))
+        {
+            return Denied($"Stop loss is too close to Isolated liquidation after {mmr * 100m:0.##}% maintenance margin.");
+        }
 
         return new RiskPlan
         {
@@ -284,6 +309,12 @@ public sealed class RiskEngine : IRiskEngine
         if (snapshot.MarketDataAgeMs > MaxMarketDataAgeMs)
         {
             return Lock("Market data is stale. New Isolated entries are locked.");
+        }
+
+        var lossHalt = LossHalt(profile, snapshot);
+        if (lossHalt is not null)
+        {
+            return Lock(lossHalt);
         }
 
         var available = snapshot.AvailableBalance;
@@ -333,6 +364,33 @@ public sealed class RiskEngine : IRiskEngine
             ActualRPercent = plan.RiskPerTradePercent,
             Plan = plan
         };
+    }
+
+    /// <summary>Daily, weekly and drawdown halts. Limits are percent of current equity; zero turns a limit off.</summary>
+    public static string? LossHalt(RiskProfile profile, RiskSnapshot snapshot)
+    {
+        var equity = snapshot.Equity > 0m ? snapshot.Equity : snapshot.AvailableBalance;
+        if (equity <= 0m)
+        {
+            return null;
+        }
+
+        if (profile.MaxDailyLossPercent > 0m && snapshot.AccountDailyPnL <= -(equity * profile.MaxDailyLossPercent / 100m))
+        {
+            return $"Daily loss {snapshot.AccountDailyPnL:0.##} USDT reached the {profile.MaxDailyLossPercent:0.##}% limit. New entries resume at the next UTC day.";
+        }
+
+        if (profile.MaxWeeklyLossPercent > 0m && snapshot.AccountWeeklyPnL <= -(equity * profile.MaxWeeklyLossPercent / 100m))
+        {
+            return $"Weekly loss {snapshot.AccountWeeklyPnL:0.##} USDT reached the {profile.MaxWeeklyLossPercent:0.##}% limit. New entries resume next UTC week.";
+        }
+
+        if (profile.MaxDrawdownPercent > 0m && snapshot.DrawdownPercent is { } drawdown && drawdown >= profile.MaxDrawdownPercent)
+        {
+            return $"Equity is {drawdown:0.##}% below its recorded peak (limit {profile.MaxDrawdownPercent:0.##}%). New entries stay halted while it is. A withdrawal also lowers equity and counts here.";
+        }
+
+        return null;
     }
 
     private static RiskPlan Denied(string reason) =>

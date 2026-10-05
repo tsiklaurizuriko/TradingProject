@@ -68,6 +68,37 @@ public static class PortfolioRisk
         return notional / Math.Max(1m, leverage);
     }
 
+    /// <summary>
+    /// Binance one-way Isolated liquidation price for a single position, with wallet balance equal to the initial margin:
+    /// long  LP = (Q·EP·(1 − 1/L) − cum) / (Q·(1 − MMR)),
+    /// short LP = (Q·EP·(1 + 1/L) + cum) / (Q·(1 + MMR)).
+    /// MMR and cum come from the leverage bracket that holds the notional. With MMR = 0 this is the bankruptcy price.
+    /// </summary>
+    public static decimal IsolatedLiquidationPrice(
+        decimal entryPrice,
+        decimal quantity,
+        decimal leverage,
+        bool isShort,
+        decimal maintenanceMarginRate,
+        decimal maintenanceAmount)
+    {
+        if (entryPrice <= 0m || quantity <= 0m)
+        {
+            return 0m;
+        }
+
+        var lev = Math.Max(1m, leverage);
+        var mmr = Math.Clamp(maintenanceMarginRate, 0m, 0.5m);
+        var price = isShort
+            ? (quantity * entryPrice * (1m + 1m / lev) + maintenanceAmount) / (quantity * (1m + mmr))
+            : (quantity * entryPrice * (1m - 1m / lev) - maintenanceAmount) / (quantity * (1m - mmr));
+        return Math.Max(0m, price);
+    }
+
+    /// <summary>Distance from entry to liquidation, in percent of entry.</summary>
+    public static decimal LiquidationDistancePercent(decimal entryPrice, decimal liquidationPrice) =>
+        entryPrice <= 0m ? 0m : Math.Abs(entryPrice - liquidationPrice) / entryPrice * 100m;
+
     public static decimal FloorToStep(decimal quantity, decimal stepSize, int? quantityPrecision = null)
     {
         if (quantity <= 0m)

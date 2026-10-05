@@ -186,6 +186,11 @@ public sealed class BotLifecycleService : IBotLifecycleService
         _cache.SetTicker(ranked.Symbol, ranked.LastPrice, _clock.UtcNow);
 
         var bot = await _store.FindBotBySymbolAsync(user.Id, name, mode, strategyVersion.StrategyId, null, cancellationToken);
+        if (bot is not null)
+        {
+            EnsureActive(bot);
+        }
+
         if (bot is null)
         {
             var display = UsdtSpotUniverse.DisplayNameOf(name);
@@ -286,6 +291,8 @@ public sealed class BotLifecycleService : IBotLifecycleService
             .ToList();
         var created = 0;
         var skipped = 0;
+        var groupNotActive = existing.Any(bot =>
+            bot.StrategyVersion.StrategyId == strategyVersion.StrategyId && bot.IsNotActive);
 
         foreach (var name in requested)
         {
@@ -336,7 +343,10 @@ public sealed class BotLifecycleService : IBotLifecycleService
                 Mode = mode,
                 Symbol = name,
                 Timeframe = strategyVersion.Timeframe,
-                LastError = "Created. Start it when you want it to trade."
+                IsNotActive = groupNotActive,
+                LastError = groupNotActive
+                    ? "Created as not active because its group is not active."
+                    : "Created. Start it when you want it to trade."
             };
             await _store.AddBotAsync(bot, cancellationToken);
             existing.Add(bot);
@@ -426,10 +436,11 @@ public sealed class BotLifecycleService : IBotLifecycleService
             .OrderBy(bot => bot.Symbol)
             .ThenBy(bot => bot.Name)
             .ToList();
+        var locked = bots.RemoveAll(bot => bot.IsNotActive);
 
         var started = 0;
-        var failed = 0;
-        string? detail = null;
+        var failed = locked;
+        string? detail = locked > 0 ? $"{locked} bot(s) are marked not active and were not started." : null;
         var dirty = 0;
         foreach (var bot in bots)
         {
@@ -533,6 +544,87 @@ public sealed class BotLifecycleService : IBotLifecycleService
         return new StopBotsResult(stopped, failed, detail);
     }
 
+    public async Task<SetBotsActiveResult> SetStrategyBotsNotActiveAsync(
+        Guid userId,
+        TradingMode mode,
+        Guid strategyId,
+        bool isNotActive,
+        CancellationToken cancellationToken = default)
+    {
+        if (mode != TradingMode.Live)
+        {
+            throw new DomainException(ErrorCodes.ValidationFailed, $"Trading mode {mode} is not supported. Only live mode is accepted.");
+        }
+
+        if (strategyId == Guid.Empty)
+        {
+            throw new DomainException(ErrorCodes.ValidationFailed, "Pick a strategy group.");
+        }
+
+        var user = userId == Guid.Empty
+            ? await _store.GetFirstAdminAsync(cancellationToken)
+            : await _store.GetUserAsync(userId, cancellationToken) ?? await _store.GetFirstAdminAsync(cancellationToken);
+
+        var bots = (await _store.ListWorkspaceBotsAsync(user.Id, mode, cancellationToken))
+            .Where(bot => MatchesStrategy(bot, strategyId))
+            .ToList();
+
+        var updated = 0;
+        var stopped = 0;
+        var now = _clock.UtcNow;
+        foreach (var bot in bots)
+        {
+            if (bot.IsNotActive != isNotActive)
+            {
+                bot.IsNotActive = isNotActive;
+                updated++;
+            }
+
+            if (!isNotActive)
+            {
+                if (bot.Status != BotStatus.Running)
+                {
+                    bot.LastError = "Active again. Press Start when you want it to trade.";
+                }
+
+                continue;
+            }
+
+            if (bot.Status is BotStatus.Running or BotStatus.Starting)
+            {
+                bot.Status = BotStatus.Stopped;
+                bot.StoppedAt = now;
+                stopped++;
+            }
+
+            bot.LastError = "Not active. Open positions were left in place.";
+        }
+
+        if (bots.Count > 0)
+        {
+            await FlushWorkspaceProgressAsync(cancellationToken);
+        }
+
+        _logger.LogInformation(
+            "Strategy {StrategyId} {Mode} bots set IsNotActive={IsNotActive}: {Updated} updated, {Stopped} stopped. Positions were not closed.",
+            strategyId,
+            mode,
+            isNotActive,
+            updated,
+            stopped);
+        return new SetBotsActiveResult(updated, stopped);
+    }
+
+    private static void EnsureActive(Bot bot)
+    {
+        if (bot.IsNotActive)
+        {
+            throw new DomainException(
+                ErrorCodes.ValidationFailed,
+                $"{bot.Symbol} is marked not active. Untick Not active on its group before starting it.");
+        }
+    }
+
     private static bool MatchesStrategy(Bot bot, Guid? strategyId) =>
         strategyId is not { } id || id == Guid.Empty || bot.StrategyVersion?.StrategyId == id;
 
@@ -558,6 +650,7 @@ public sealed class BotLifecycleService : IBotLifecycleService
 
     private async Task MarkRunningAsync(Bot bot, CancellationToken cancellationToken)
     {
+        EnsureActive(bot);
         bot.Status = BotStatus.Running;
         bot.StartedAt = _clock.UtcNow;
         bot.StoppedAt = null;
@@ -613,11 +706,22 @@ public sealed class BotLifecycleService : IBotLifecycleService
         var deleted = 0;
         var skipped = 0;
         var now = _clock.UtcNow;
+        var holding = (await _store.GetOpenPositionsForModeAsync(TradingMode.Live, cancellationToken))
+            .Where(row => row.Quantity > 0m)
+            .Select(row => row.BotId)
+            .ToHashSet();
         foreach (var id in requested)
         {
             var bot = await _store.GetBotAsync(id, cancellationToken);
             if (bot is null || (requiredMode is { } mode && bot.Mode != mode))
             {
+                skipped++;
+                continue;
+            }
+
+            if (holding.Contains(bot.Id))
+            {
+                bot.LastError = "Not deleted: this bot still has an open position. Close it first.";
                 skipped++;
                 continue;
             }
@@ -629,18 +733,18 @@ public sealed class BotLifecycleService : IBotLifecycleService
             }
 
             bot.DeletedAt = now;
-            bot.LastError = "Deleted. Open positions were left in place.";
+            bot.LastError = "Deleted.";
             deleted++;
             await _publisher.PublishBotAsync(bot.Id, BotStatus.Stopped.ToString(), cancellationToken);
         }
 
+        await _store.SaveChangesAsync(cancellationToken);
         if (deleted > 0)
         {
-            await _store.SaveChangesAsync(cancellationToken);
             await _publisher.PublishOverviewAsync(cancellationToken);
         }
 
-        _logger.LogInformation("Deleted {Deleted} bots, skipped {Skipped}. Positions were not closed.", deleted, skipped);
+        _logger.LogInformation("Deleted {Deleted} bots, skipped {Skipped} (missing, other mode, or holding a position).", deleted, skipped);
         return new DeleteBotsResult(deleted, skipped);
     }
 
@@ -695,7 +799,8 @@ public sealed class BotLifecycleService : IBotLifecycleService
             bot.StartedAt,
             bot.StrategyVersion.StrategyId,
             bot.RiskProfileId,
-            bot.CreatedAt);
+            bot.CreatedAt,
+            bot.IsNotActive);
 
     private async Task<RiskProfile> ResolveRiskAsync(Guid? riskProfileId, CancellationToken cancellationToken)
     {
@@ -722,7 +827,7 @@ public sealed class BotLifecycleService : IBotLifecycleService
         CancellationToken cancellationToken = default)
     {
         await ReloadPriceActionArmAsync(cancellationToken);
-        var block = PriceActionArm.RejectLive(_options.LiveTradingEnabled, request.LiveEnabled);
+        var block = PriceActionArm.RejectLive(_options.EntriesEnabled, request.LiveEnabled);
         if (block is not null)
         {
             throw new DomainException(ErrorCodes.LiveTradingDisabled, block);
@@ -817,7 +922,7 @@ public sealed class BotLifecycleService : IBotLifecycleService
             price.Enabled,
             price.PaperEnabled,
             price.LiveEnabled,
-            _options.LiveTradingEnabled,
+            _options.EntriesEnabled,
             candidates);
     }
 
@@ -1263,7 +1368,7 @@ public sealed class TradingQueryService : ITradingQueryService
 
         var modeLabel = tradingMode == TradingMode.Live ? "Live" : "Paper";
         var rawTrades = await _store.GetPerformanceTradesAsync(tradingMode, cancellationToken);
-        var rows = IsolatedOccupancy.UniqueClosedTrips(
+        var unique = IsolatedOccupancy.UniqueClosedTrips(
             rawTrades,
             t => t.Symbol,
             t => t.Quantity,
@@ -1271,6 +1376,10 @@ public sealed class TradingQueryService : ITradingQueryService
             t => t.ClosedAt,
             t => t.CorrelationId,
             t => FeeBook.FromStored(t.FeeStatus, t.Fees, t.FeeAsset).DisplayAmount ?? 0m);
+        var totals = TradePnl.Totals(unique
+            .Where(t => t.ClosedAt is not null)
+            .Select(t => (t.PnL, t.NetPnL, t.FundingPnL)));
+        var rows = unique.Select(t => t with { PnL = t.NetPnL ?? t.PnL }).ToList();
         var bots = (await GetBotsAsync(cancellationToken))
             .Where(b => string.Equals(b.Mode, modeLabel, StringComparison.OrdinalIgnoreCase))
             .ToList();
@@ -1296,7 +1405,15 @@ public sealed class TradingQueryService : ITradingQueryService
             unrealized,
             openPositions,
             0m,
-            strategyResults);
+            strategyResults) with
+        {
+            GrossPnL = RoundPerf(totals.Gross),
+            NetPnL = totals.Net is { } net ? RoundPerf(net) : null,
+            KnownNetPnL = RoundPerf(totals.KnownNet),
+            PendingNetTrades = totals.Pending,
+            FundingPnL = RoundPerf(totals.Funding),
+            FundingMissingTrades = totals.FundingMissing
+        };
     }
 
     private static (decimal? PnL, FeeBook Fee) FillLedger(Order order)
@@ -1336,7 +1453,10 @@ public sealed class TradingQueryService : ITradingQueryService
             t.Bot?.Mode.ToString() ?? "Paper",
             t.Side == OrderSide.Sell ? "Short" : "Long",
             fee.Status.ToString(),
-            fee.Status == FeeKnowledge.Known ? fee.Asset : null);
+            fee.Status == FeeKnowledge.Known ? fee.Asset : null,
+            t.ClosedAt is null ? null : t.NetPnL,
+            t.FundingPnL,
+            t.ClosedAt is null || t.NetPnL is not null ? null : TradePnl.PendingReason(fee));
     }
 
     private static TradeDto MapTrade(PerformanceTradeRow t)
@@ -1357,7 +1477,10 @@ public sealed class TradingQueryService : ITradingQueryService
             t.Mode,
             string.IsNullOrWhiteSpace(t.Side) ? "Long" : t.Side,
             fee.Status.ToString(),
-            fee.Status == FeeKnowledge.Known ? fee.Asset : null);
+            fee.Status == FeeKnowledge.Known ? fee.Asset : null,
+            t.ClosedAt is null ? null : t.NetPnL,
+            t.FundingPnL,
+            t.ClosedAt is null || t.NetPnL is not null ? null : TradePnl.PendingReason(fee));
     }
 
     private static List<StrategyResultDto> BuildStrategyResults(
@@ -2038,6 +2161,13 @@ public sealed class TradingQueryService : ITradingQueryService
             throw new DomainException(ErrorCodes.ValidationFailed, "Liquidation safety buffer must be between 0.1% and 20%.");
         }
 
+        if (request.MaxWeeklyLossPercent is < 0m or > 50m || request.MaxDrawdownPercent is < 0m or > 80m)
+        {
+            throw new DomainException(ErrorCodes.ValidationFailed, "Weekly loss must be 0–50% and drawdown 0–80%. Zero turns a limit off.");
+        }
+
+        risk.MaxWeeklyLossPercent = request.MaxWeeklyLossPercent ?? risk.MaxWeeklyLossPercent;
+        risk.MaxDrawdownPercent = request.MaxDrawdownPercent ?? risk.MaxDrawdownPercent;
         risk.RiskPerTradePercent = request.RiskPerTradePercent;
         risk.StopLossPercent = request.StopLossPercent;
         risk.TakeProfitPercent = request.TakeProfitPercent;
@@ -2204,5 +2334,7 @@ public sealed class TradingQueryService : ITradingQueryService
             risk.MinimumLiquidationSafetyBufferPercent,
             risk.IsActive,
             risk.AllowLive,
-            risk.IsSystem);
+            risk.IsSystem,
+            risk.MaxWeeklyLossPercent,
+            risk.MaxDrawdownPercent);
 }

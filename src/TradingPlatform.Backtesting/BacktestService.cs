@@ -3,8 +3,10 @@ using TradingPlatform.Application.Abstractions.MarketData;
 using TradingPlatform.Application.Trading;
 using TradingPlatform.Domain.Backtesting;
 using TradingPlatform.Domain.Errors;
+using TradingPlatform.Domain.Market;
 using TradingPlatform.Domain.Trading;
 using TradingPlatform.Strategies.Engine;
+using TradingPlatform.Strategies.Indicators;
 
 namespace TradingPlatform.Backtesting;
 
@@ -12,6 +14,7 @@ public sealed class BacktestService : IBacktestService
 {
     public const int MaxBars = 6000;
     public const int WarmupBars = 120;
+    public const decimal MaxMissingBarsPercent = 2m;
 
     private readonly ITradingStore _store;
     private readonly IPublicMarketDataClient _market;
@@ -96,9 +99,24 @@ public sealed class BacktestService : IBacktestService
         var book = await _store.GetConservativeRiskAsync(cancellationToken);
         var listed = await _store.GetSymbolAsync(symbol, cancellationToken);
         var tick = listed is { TickSize: > 0m } ? listed.TickSize : 0m;
+        var ordered = KlineSeries.Normalize(candles.Where(c => c.IsClosed), out var duplicates).ToList();
+        var quality = KlineSeries.Inspect(ordered, timeframe, duplicates);
+        if (quality.MissingPercent > MaxMissingBarsPercent)
+        {
+            throw new DomainException(
+                ErrorCodes.ExchangeUnavailable,
+                $"Binance history for {symbol} is missing {quality.MissingBars} bars ({quality.MissingPercent:0.##}%) in {quality.Gaps.Count} gaps. Pick another window or timeframe.");
+        }
+
+        var inputs = await StrategyMarketContext.LoadAsync(_market, definition.Template, symbol, timeframe, ordered, cancellationToken);
+        var fundingRows = inputs.Funding ?? await _market.GetFundingHistoryAsync(symbol, from, to, cancellationToken);
+        var settlements = fundingRows
+            .Where(row => row.Time >= from && row.Time <= to)
+            .Select(row => new ReplayFundingSettlement(row.Time, row.Value))
+            .ToList();
         var result = _replay.Run(
             definition,
-            candles,
+            ordered,
             new ReplaySettings(
                 from,
                 to,
@@ -115,13 +133,19 @@ public sealed class BacktestService : IBacktestService
                 book.MaxConsecutiveLosses,
                 book.CooldownMinutes,
                 book.MinimumLiquidationSafetyBufferPercent,
-                HonorSuggestedStops: StrategyTemplateKeys.IsFlatRange(definition.Template) || StrategyTemplateKeys.IsImported(definition.Template) || StrategyTemplateKeys.IsRefactored(definition.Template),
+                HonorSuggestedStops: StrategyTemplateKeys.IsFlatRange(definition.Template) || StrategyTemplateKeys.IsImported(definition.Template) || StrategyTemplateKeys.IsRefactored(definition.Template) || StrategyTemplateKeys.IsObservation(definition.Template),
                 MaxHoldBars: StrategyTemplateKeys.IsFlatRange(definition.Template)
                     ? FlatRangeStrategy.MaxHoldHours
+                    : StrategyTemplateKeys.IsObservation(definition.Template)
+                    ? ObservationStrategies.MaxHoldHours(definition.Template)
                     : RefactoredStrategyEvaluator.MaxHoldBars(definition.Template),
                 BookStopsOff: StrategyTemplateKeys.IsImported(definition.Template),
                 TickSize: tick,
-                PreserveNullTake: StrategyTemplateKeys.IsRefactored(definition.Template)));
+                PreserveNullTake: StrategyTemplateKeys.IsRefactored(definition.Template)),
+            new CausalIndicatorCache(ordered),
+            higherTimeframeCache: StrategyMarketContext.HigherTimeframeCache(inputs),
+            futures: StrategyMarketContext.Futures(ordered, inputs),
+            fundingSettlements: settlements.Count > 0 ? settlements : null);
 
         var user = await _store.GetUserAsync(userId, cancellationToken)
             ?? await _store.GetFirstAdminAsync(cancellationToken);
@@ -137,6 +161,16 @@ public sealed class BacktestService : IBacktestService
             stopLossPercent = book.StopLossPercent,
             takeProfitPercent = book.TakeProfitPercent,
             capped = candles.Count >= MaxBars + WarmupBars,
+            higherTimeframeBars = inputs.HigherTimeframe?.Count,
+            openInterestRows = inputs.OpenInterest?.Count,
+            fundingSettlements = settlements.Count,
+            fundingPaid = result.FundingPaid,
+            duplicateBarsDropped = quality.Duplicates,
+            missingBars = quality.MissingBars,
+            gaps = quality.Gaps.Count,
+            costNotes = result.CostNotes,
+            sharpeBasis = "daily mark-to-market equity returns, annualized sqrt(365)",
+            sortino = result.SortinoRatio,
         });
 
         var backtest = new Backtest

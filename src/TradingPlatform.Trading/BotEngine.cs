@@ -43,14 +43,15 @@ public sealed class BotEngine : IBotEngine
     private readonly ReconciliationState _reconciliation;
     private readonly ILogger<BotEngine> _logger;
     private readonly IExchangeAccountService? _accounts;
-    private readonly Dictionary<Guid, (decimal Stop, decimal Take, DateTimeOffset At)> _ratchetBackoff = new();
-    private readonly Dictionary<Guid, DateTimeOffset> _flatCandleClose = new();
-    private readonly Dictionary<Guid, StrategyDefinition> _definitions = new();
+    private readonly BotCycleState _state;
+    private readonly TopTraderRankBook _topTraderRanks;
     private readonly Dictionary<string, Symbol?> _cycleSymbols = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _publishedSymbols = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _storedCandles = new(StringComparer.OrdinalIgnoreCase);
-    private readonly HashSet<string> _signaledCandles = new(StringComparer.Ordinal);
     private readonly Dictionary<Guid, HashSet<string>> _strategySlots = new();
+    private readonly Dictionary<string, StrategyMarketInputs> _cycleMarketInputs = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, DateTimeOffset> _cyclePriceAt = new(StringComparer.OrdinalIgnoreCase);
+    private IReadOnlyDictionary<string, FuturesBookTicker>? _cycleBook;
 
     public BotEngine(
         ITradingStore store,
@@ -68,8 +69,12 @@ public sealed class BotEngine : IBotEngine
         LiveIsolatedReconciler reconcile,
         ILogger<BotEngine> logger,
         IExchangeAccountService? accounts = null,
-        ReconciliationState? reconciliation = null)
+        ReconciliationState? reconciliation = null,
+        BotCycleState? cycleState = null,
+        TopTraderRankBook? topTraderRanks = null)
     {
+        _state = cycleState ?? new BotCycleState();
+        _topTraderRanks = topTraderRanks ?? new TopTraderRankBook();
         _store = store;
         _market = market;
         _cache = cache;
@@ -90,6 +95,7 @@ public sealed class BotEngine : IBotEngine
 
     public async Task EvaluateRunningBotsAsync(CancellationToken cancellationToken = default)
     {
+        _state.BeginCycle();
         try
         {
             await RefreshLiveIsolatedBookAsync(cancellationToken);
@@ -102,6 +108,8 @@ public sealed class BotEngine : IBotEngine
                 return;
             }
             var bots = await _store.GetRunningBotsAsync(cancellationToken);
+            _cycleBook = null;
+            await RecordLiveEquityAsync(bots, cancellationToken);
             await HandOffStoppedSnapshotsAsync(cancellationToken);
             await WatchUnattendedLivePositionsAsync(bots, cancellationToken);
             var cycleKlines = new Dictionary<string, IReadOnlyList<MarketCandle>>(StringComparer.OrdinalIgnoreCase);
@@ -113,6 +121,8 @@ public sealed class BotEngine : IBotEngine
             _cycleSymbols.Clear();
             _publishedSymbols.Clear();
             _storedCandles.Clear();
+            _cycleMarketInputs.Clear();
+            _cyclePriceAt.Clear();
             var due = SelectDueBots(bots, book);
             var cycleStarted = System.Diagnostics.Stopwatch.StartNew();
             await PrefetchDueMarketAsync(due, cycleKlines, cyclePrices, cancellationToken);
@@ -217,6 +227,22 @@ public sealed class BotEngine : IBotEngine
                     continue;
                 }
 
+                var submittedAt = order.SubmittedAt ?? order.CreatedAt;
+                if (!OrderRecovery.AbsentIsFinal(submittedAt, now, null))
+                {
+                    Record(order, OrderStatus.Uncertain, "binance-live");
+                    order.RejectReason = $"Binance does not show this order yet. Re-checking until {(submittedAt + OrderRecovery.AbsentVerifyWindow):HH:mm:ss} UTC before calling it failed.";
+                    continue;
+                }
+
+                if (await ExchangeHoldsUnbookedPositionAsync(connector, order, cancellationToken))
+                {
+                    Record(order, OrderStatus.Uncertain, "binance-live");
+                    order.RejectReason = $"Binance does not return this order, but holds a {order.Symbol} position this project has not booked. Not marked failed.";
+                    _reconciliation.Fail(order.RejectReason, now);
+                    continue;
+                }
+
                 Record(order, OrderStatus.Failed, "binance-live");
                 order.RejectReason = decision.Reason;
                 continue;
@@ -229,6 +255,94 @@ public sealed class BotEngine : IBotEngine
         {
             await _store.SaveChangesAsync(cancellationToken);
         }
+    }
+
+    public static readonly TimeSpan EquityPointEvery = TimeSpan.FromMinutes(5);
+
+    /// <summary>The drawdown halt needs a recent point; an older series means recording stopped and the peak is not trusted.</summary>
+    public static readonly TimeSpan EquitySeriesMaxAge = TimeSpan.FromMinutes(15);
+
+    private async Task RecordLiveEquityAsync(IReadOnlyList<Bot> bots, CancellationToken cancellationToken)
+    {
+        var live = _live.Current;
+        var account = bots.FirstOrDefault(bot => bot.Mode == TradingMode.Live)?.ExchangeAccountId;
+        if (account is not { } accountId || !IsolatedOccupancy.HasFreshFuturesBook(live) || live.FuturesEquity <= 0m)
+        {
+            return;
+        }
+
+        try
+        {
+            await _store.RecordEquityPointAsync(accountId, TradingMode.Live, live.FuturesEquity, _clock.UtcNow, EquityPointEvery, cancellationToken);
+            await _store.SaveChangesAsync(cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Equity point was not recorded. The drawdown halt fails closed once the series is stale.");
+        }
+    }
+
+    /// <summary>Percent below the recorded peak, or null when the series is missing or stale.</summary>
+    public static decimal? DrawdownPercent(decimal? peak, DateTimeOffset? lastAt, decimal equity, DateTimeOffset now)
+    {
+        if (peak is not > 0m || lastAt is not { } at || now - at > EquitySeriesMaxAge || equity <= 0m)
+        {
+            return null;
+        }
+
+        return Math.Max(0m, (peak.Value - equity) / peak.Value * 100m);
+    }
+
+    /// <summary>UTC Monday 00:00 of the week containing <paramref name="now"/>.</summary>
+    public static DateTimeOffset WeekStart(DateTimeOffset now)
+    {
+        var day = new DateTimeOffset(now.UtcDateTime.Date, TimeSpan.Zero);
+        return day.AddDays(-(((int)day.DayOfWeek + 6) % 7));
+    }
+
+    private async Task<FuturesBookTicker?> BookTickerAsync(string symbol, CancellationToken cancellationToken)
+    {
+        if (_cycleBook is null)
+        {
+            try
+            {
+                _cycleBook = (await _market.GetBookTickersAsync(cancellationToken))
+                    .GroupBy(row => row.Symbol, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Book tickers unavailable this cycle");
+                _cycleBook = new Dictionary<string, FuturesBookTicker>(StringComparer.OrdinalIgnoreCase);
+            }
+        }
+
+        return _cycleBook.TryGetValue(symbol, out var row) ? row : null;
+    }
+
+    /// <summary>
+    /// True when Binance holds an open position on the order's coin that no local open position accounts for.
+    /// An unreadable position list counts as true, so an order is never written off on missing evidence.
+    /// </summary>
+    private async Task<bool> ExchangeHoldsUnbookedPositionAsync(IExchangeConnector connector, Order order, CancellationToken cancellationToken)
+    {
+        IReadOnlyList<ExchangePosition> exchange;
+        try
+        {
+            exchange = await connector.GetOpenPositionsAsync(cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return true;
+        }
+
+        if (!exchange.Any(row => string.Equals(row.Symbol, order.Symbol, StringComparison.OrdinalIgnoreCase) && row.Quantity > 0m))
+        {
+            return false;
+        }
+
+        var local = await _store.GetOpenPositionsForModeAsync(TradingMode.Live, cancellationToken);
+        return !local.Any(row => row.Quantity > 0m && string.Equals(row.Symbol, order.Symbol, StringComparison.OrdinalIgnoreCase));
     }
 
     private async Task ApplyRecoveredFillAsync(Order order, ExchangeOrder confirmed, CancellationToken cancellationToken)
@@ -244,16 +358,26 @@ public sealed class BotEngine : IBotEngine
         }
 
         var bookedFee = feeRows.Sum(item => item.Fee);
+        var previouslyBooked = order.FilledQuantity;
         var application = FillAccounting.Apply(
             new BookedFill(order.FilledQuantity, order.AverageFillPrice, bookedFee, feeAssets.SingleOrDefault()),
             order.Quantity,
             ReportOf(confirmed));
-        Record(order, application.Status, "binance-live");
+        var remainderExpired = OrderRecovery.MarketRemainderExpired(
+            order.Type,
+            application.Status,
+            order.SubmittedAt ?? order.CreatedAt,
+            _clock.UtcNow);
+        Record(order, remainderExpired ? OrderStatus.Expired : application.Status, "binance-live");
         order.FilledQuantity = application.FilledQuantity;
         order.RemainingQuantity = application.RemainingQuantity;
         order.ExchangeOrderId = confirmed.ExchangeOrderId ?? order.ExchangeOrderId;
         order.AverageFillPrice = application.AverageFillPrice ?? order.AverageFillPrice;
-        order.RejectReason = application.Uncertain ? application.Reason : order.RejectReason;
+        order.RejectReason = application.Uncertain
+            ? application.Reason
+            : remainderExpired
+                ? "Market order is no longer working on Binance. Only the executed quantity was booked; the remainder expired."
+                : order.RejectReason;
         if (application.Uncertain)
         {
             _reconciliation.Fail(application.Reason, _clock.UtcNow);
@@ -327,6 +451,24 @@ public sealed class BotEngine : IBotEngine
                 application.NewFill.FeeKnown && !string.IsNullOrWhiteSpace(confirmed.FeeAsset),
                 confirmed.FeeAsset,
                 cancellationToken);
+        }
+        else if (position is not null
+            && !closes
+            && previouslyBooked <= 0m
+            && position.OpenedAt >= (order.SubmittedAt ?? order.CreatedAt))
+        {
+            position.Quantity = application.FilledQuantity;
+            position.AverageEntryPrice = price;
+            position.CurrentPrice = price;
+            if (application.NewFill.FeeKnown)
+            {
+                position.Fees += fee;
+            }
+
+            if (order.Bot is not null)
+            {
+                order.Bot.LastError = $"The {order.Symbol} row recorded from the exchange snapshot is this order's fill. Its size was set from the fill, not added to it.";
+            }
         }
         else if (position is not null)
         {
@@ -425,12 +567,267 @@ public sealed class BotEngine : IBotEngine
     public async Task ClosePositionAsync(Guid positionId, CancellationToken cancellationToken = default)
     {
         var (bot, position, liveOverlay) = await ResolveCloseTargetAsync(positionId, cancellationToken);
+        await FlattenPositionAsync(bot, position, liveOverlay, "Manual close", cancellationToken);
+        bot.LastError = "Manual close submitted to Binance.";
+        await _store.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<FlattenAllReport> FlattenAllAsync(string reason, CancellationToken cancellationToken = default)
+    {
+        var why = string.IsNullOrWhiteSpace(reason) ? "Flatten all" : reason.Trim();
+        var running = await _store.GetRunningBotsAsync(cancellationToken);
+        await _store.StopAllRunningBotsAsync(why, cancellationToken);
+        await _store.SaveChangesAsync(cancellationToken);
+        _logger.LogCritical("Flatten all requested: {Reason}. Stopped {Count} running bots.", why, running.Count);
+
+        var failures = new List<string>();
+        var localClosed = 0;
+        var accounts = new HashSet<Guid>();
+        foreach (var position in await _store.GetOpenPositionsForModeAsync(TradingMode.Live, cancellationToken))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var bot = position.Bot ?? await _store.GetBotAsync(position.BotId, cancellationToken);
+            if (bot is null)
+            {
+                failures.Add($"{position.Symbol}: bot {position.BotId} was not found.");
+                continue;
+            }
+
+            if (bot.ExchangeAccountId is { } accountId && accountId != Guid.Empty)
+            {
+                accounts.Add(accountId);
+            }
+
+            try
+            {
+                await FlattenPositionAsync(bot, position, null, why, cancellationToken);
+                localClosed++;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                failures.Add($"{position.Symbol}: {ex.Message}");
+                _logger.LogError(ex, "Flatten all could not close {Symbol} for bot {BotId}", position.Symbol, bot.Id);
+            }
+        }
+
+        foreach (var bot in await _store.ListBotsAsync(cancellationToken))
+        {
+            if (bot.Mode == TradingMode.Live && bot.ExchangeAccountId is { } accountId && accountId != Guid.Empty)
+            {
+                accounts.Add(accountId);
+            }
+        }
+
+        var sent = 0;
+        var remaining = new List<string>();
+        foreach (var accountId in accounts)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var outcome = await SweepAccountAsync(accountId, why, cancellationToken);
+            sent += outcome.Sent;
+            failures.AddRange(outcome.Failures);
+            remaining.AddRange(outcome.Remaining);
+        }
+
+        await _store.SaveChangesAsync(cancellationToken);
+        await _publisher.PublishOverviewAsync(cancellationToken);
+        var report = new FlattenAllReport(running.Count, localClosed, sent, remaining, failures);
+        if (report.Flat)
+        {
+            _logger.LogCritical("Flatten all finished. Binance reports no open position. {Report}", report);
+        }
+        else
+        {
+            _logger.LogCritical("Flatten all finished with open exposure or errors. {Report}", report);
+        }
+
+        return report;
+    }
+
+    private async Task<(int Sent, List<string> Failures, List<string> Remaining)> SweepAccountAsync(
+        Guid accountId,
+        string why,
+        CancellationToken cancellationToken)
+    {
+        var failures = new List<string>();
+        var remaining = new List<string>();
+        var sent = 0;
+        IExchangeConnector connector;
+        IReadOnlyList<ExchangePosition> open;
+        try
+        {
+            connector = _connectors.Create(TradingMode.Live, accountId);
+            open = await connector.GetOpenPositionsAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            failures.Add($"Account {accountId}: positions could not be read: {ex.Message}");
+            return (sent, failures, remaining);
+        }
+
+        var minute = _clock.UtcNow.ToUnixTimeSeconds() / 60;
+        foreach (var row in open.Where(row => row.Quantity > 0m))
+        {
+            try
+            {
+                await connector.CancelAllOrdersAsync(row.Symbol, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                failures.Add($"{row.Symbol}: open orders not cancelled: {ex.Message}");
+            }
+
+            var clientOrderId = FlattenClientOrderId(accountId, row.Symbol, row.Side, minute);
+            try
+            {
+                await connector.PlaceOrderAsync(
+                    new PlaceOrderRequest(
+                        clientOrderId,
+                        row.Symbol,
+                        row.Side == PositionSide.Short ? OrderSide.Buy : OrderSide.Sell,
+                        OrderType.Market,
+                        row.Quantity,
+                        null,
+                        null,
+                        ReduceOnly: true),
+                    cancellationToken);
+                sent++;
+                _logger.LogCritical(
+                    "Flatten all sent reduce-only close {ClientOrderId} for {Symbol} {Side} {Quantity}: {Reason}",
+                    clientOrderId,
+                    row.Symbol,
+                    row.Side,
+                    row.Quantity,
+                    why);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                failures.Add($"{row.Symbol}: reduce-only close failed: {ex.Message}");
+            }
+        }
+
+        try
+        {
+            foreach (var row in await connector.GetOpenPositionsAsync(cancellationToken))
+            {
+                if (row.Quantity > 0m)
+                {
+                    remaining.Add($"{row.Symbol} {row.Side} {row.Quantity}");
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            failures.Add($"Account {accountId}: positions could not be re-checked: {ex.Message}");
+        }
+
+        return (sent, failures, remaining);
+    }
+
+    /// <summary>Same id for the same coin and side within one minute, so a retried sweep can be looked up instead of guessed.</summary>
+    public static string FlattenClientOrderId(Guid accountId, string symbol, PositionSide side, long unixMinute)
+    {
+        var hash = System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes($"{accountId:N}|{symbol.ToUpperInvariant()}|{side}"));
+        return "FA" + Convert.ToHexString(hash)[..16] + unixMinute.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
+    /// Same position, same size, same minute: same id. A double click or a retried request cannot send two closes;
+    /// Binance rejects the duplicate id and the first order is recovered by lookup.
+    /// </summary>
+    public static string ManualCloseClientOrderId(Guid positionId, decimal quantity, long unixMinute)
+    {
+        var hash = System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes($"{positionId:N}|{quantity.ToString("0.############################", System.Globalization.CultureInfo.InvariantCulture)}"));
+        return "MC" + Convert.ToHexString(hash)[..16] + unixMinute.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
+    /// Last line of defence when a live position has no working stop and none could be placed or restored.
+    /// Returns true when the reduce-only close went out.
+    /// </summary>
+    private async Task<bool> FlattenUnprotectedAsync(Bot bot, Position position, string why, CancellationToken cancellationToken)
+    {
+        if (bot.Mode != TradingMode.Live || !_options.FlattenOnProtectionFailure)
+        {
+            return false;
+        }
+
+        if (await CloseInFlightAsync(bot, position, cancellationToken))
+        {
+            bot.LastError = $"Live {bot.Symbol} has no working stop. A close is already in flight; waiting for Binance to confirm it.";
+            return false;
+        }
+
+        try
+        {
+            await FlattenPositionAsync(bot, position, null, "No working stop: " + why, cancellationToken);
+            _state.ClearProtectionFailure(position.Id);
+            bot.LastError = $"Live {bot.Symbol} had no working stop ({why}). The position was closed with a reduce-only market order.";
+            _logger.LogCritical(
+                "Live {Symbol} bot {BotId} had no working stop ({Why}). Reduce-only close submitted.",
+                bot.Symbol,
+                bot.Id,
+                why);
+            return true;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            bot.LastError = $"Live {bot.Symbol} has no working stop and the reduce-only close failed: {ex.Message}. Close it on Binance now.";
+            _logger.LogCritical(ex, "Live {Symbol} bot {BotId} has no stop and could not be closed.", bot.Symbol, bot.Id);
+            return false;
+        }
+    }
+
+    /// <summary>For positions that already existed: flatten only after several cycles without a stop.</summary>
+    private async Task<bool> FlattenAfterRepeatedProtectionFailureAsync(Bot bot, Position position, string why, CancellationToken cancellationToken)
+    {
+        var failures = _state.RecordProtectionFailure(position.Id);
+        if (failures < Math.Max(1, _options.UnprotectedCyclesBeforeFlatten))
+        {
+            return false;
+        }
+
+        return await FlattenUnprotectedAsync(bot, position, $"{why} ({failures} cycles)", cancellationToken);
+    }
+
+    /// <summary>Reduce-only market close of one position, after cancelling its protective orders.</summary>
+    private async Task FlattenPositionAsync(
+        Bot bot,
+        Position position,
+        LiveOpenPosition? liveOverlay,
+        string reason,
+        CancellationToken cancellationToken)
+    {
         var now = _clock.UtcNow;
         var correlationId = _correlation.GetOrCreate();
-        var stamp = now.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture);
-        var clientOrderId = bot.Mode == TradingMode.Live
-            ? $"MC{bot.Id:N}"[..12] + (stamp.Length <= 10 ? stamp : stamp[^10..])
-            : $"p-c-{bot.Id:N}-{stamp}";
+        var clientOrderId = ManualCloseClientOrderId(position.Id, position.Quantity, now.ToUnixTimeSeconds() / 60);
+        var prior = await _store.GetOrderByClientOrderIdAsync(clientOrderId, cancellationToken);
+        if (prior is { Status: OrderStatus.Failed or OrderStatus.Rejected })
+        {
+            clientOrderId += "R";
+            prior = await _store.GetOrderByClientOrderIdAsync(clientOrderId, cancellationToken);
+        }
+
+        if (prior is not null || await CloseInFlightAsync(bot, position, cancellationToken))
+        {
+            throw new DomainException(
+                ErrorCodes.ValidationFailed,
+                $"A close for {position.Symbol} is already in flight. Waiting for Binance to confirm it before sending another.");
+        }
 
         var lastPrice = position.CurrentPrice > 0m ? position.CurrentPrice : position.AverageEntryPrice;
         try
@@ -513,11 +910,9 @@ public sealed class BotEngine : IBotEngine
             SignalType = SignalType.Exit,
             Price = lastPrice,
             Timestamp = now,
-            Reason = "Manual close",
+            Reason = reason,
             CorrelationId = correlationId
         }, cancellationToken);
-
-        bot.LastError = "Manual close submitted to Binance.";
 
         DropLiveOverlay(liveOverlay ?? new LiveOpenPosition(
             position.Symbol,
@@ -530,6 +925,22 @@ public sealed class BotEngine : IBotEngine
 
         await _store.SaveChangesAsync(cancellationToken);
         await _publisher.PublishOverviewAsync(cancellationToken);
+    }
+
+    /// <summary>An unresolved live market order on the closing side means Binance has not yet confirmed the previous close.</summary>
+    private async Task<bool> CloseInFlightAsync(Bot bot, Position position, CancellationToken cancellationToken)
+    {
+        if (bot.Mode != TradingMode.Live)
+        {
+            return false;
+        }
+
+        var closingSide = position.Side == PositionSide.Short ? OrderSide.Buy : OrderSide.Sell;
+        return (await _store.GetUnresolvedLiveOrdersAsync(cancellationToken)).Any(order =>
+            order.BotId == bot.Id
+            && order.Side == closingSide
+            && order.Type == OrderType.Market
+            && string.Equals(order.Symbol, position.Symbol, StringComparison.OrdinalIgnoreCase));
     }
 
     private async Task<(Bot Bot, Position Position, LiveOpenPosition? Overlay)> ResolveCloseTargetAsync(
@@ -662,12 +1073,21 @@ public sealed class BotEngine : IBotEngine
         try
         {
             lastPrice = await _market.GetLastPriceAsync(symbol, cancellationToken);
+            if (lastPrice > 0m)
+            {
+                _cyclePriceAt[symbol] = _clock.UtcNow;
+            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
         }
         catch (Exception) when (candles.Count > 0)
+        {
+            lastPrice = candles[^1].Close;
+        }
+
+        if (lastPrice <= 0m && candles.Count > 0)
         {
             lastPrice = candles[^1].Close;
         }
@@ -818,9 +1238,7 @@ public sealed class BotEngine : IBotEngine
 
     private bool FlatCandleIsDue(Bot bot, DateTimeOffset now)
     {
-        _flatCandleClose.TryGetValue(bot.Id, out var seen);
-        DateTimeOffset? decided = _flatCandleClose.ContainsKey(bot.Id) ? seen : null;
-        return BotCycleSchedule.FlatCandleDue(now, bot.Timeframe, decided);
+        return BotCycleSchedule.FlatCandleDue(now, bot.Timeframe, _state.FlatCandleDecided(bot.Id));
     }
 
     private void RememberFlatCandle(Bot bot, IReadOnlyList<MarketCandle> candles)
@@ -830,7 +1248,7 @@ public sealed class BotEngine : IBotEngine
             return;
         }
 
-        _flatCandleClose[bot.Id] = candles[^1].CloseTime;
+        _state.SetFlatCandleDecided(bot.Id, candles[^1].CloseTime);
     }
 
     private static Position? FindOpenPosition(IReadOnlyList<Position> book, Bot bot) =>
@@ -840,8 +1258,33 @@ public sealed class BotEngine : IBotEngine
             && row.ClosedAt == null
             && string.Equals(row.Symbol, bot.Symbol, StringComparison.OrdinalIgnoreCase));
 
+    private async Task<StrategyMarketInputs> CycleMarketInputsAsync(
+        string templateKey,
+        string symbol,
+        Timeframe timeframe,
+        IReadOnlyList<MarketCandle> candles,
+        CancellationToken cancellationToken)
+    {
+        if (!StrategyMarketContext.NeedsAny(templateKey) || candles.Count == 0)
+        {
+            return StrategyMarketInputs.None;
+        }
+
+        var key = $"{symbol}|{timeframe}|{StrategyTemplateKeys.CanonicalId(templateKey)}|{candles[^1].CloseTime.UtcTicks}";
+        if (_cycleMarketInputs.TryGetValue(key, out var hit))
+        {
+            return hit;
+        }
+
+        var inputs = await StrategyMarketContext.LoadAsync(_market, templateKey, symbol, timeframe, candles, cancellationToken);
+        _cycleMarketInputs[key] = inputs;
+        return inputs;
+    }
+
     private int? SpecialKlineLimit(Bot bot) =>
-        TemplateKey(bot) is StrategyTemplateKeys.TsMomentum285 or StrategyTemplateKeys.BtcDailyMax10 ? 500 : null;
+        TemplateKey(bot) is StrategyTemplateKeys.TsMomentum285 or StrategyTemplateKeys.BtcDailyMax10 ? 500
+        : StrategyTemplateKeys.IsObservation(TemplateKey(bot)) ? ObservationStrategies.HistoryBars
+        : null;
 
     private async Task PrefetchDueMarketAsync(
         IReadOnlyList<Bot> due,
@@ -907,6 +1350,7 @@ public sealed class BotEngine : IBotEngine
                 if (prices.TryGetValue(plan.Symbol, out var price) && price > 0m)
                 {
                     cyclePrices[plan.Symbol] = price;
+                    _cyclePriceAt[plan.Symbol] = _clock.UtcNow;
                 }
             }
         }
@@ -954,14 +1398,7 @@ public sealed class BotEngine : IBotEngine
 
     private StrategyDefinition ParsedDefinition(Bot bot)
     {
-        if (_definitions.TryGetValue(bot.StrategyVersionId, out var cached))
-        {
-            return cached;
-        }
-
-        var parsed = _validator.Parse(bot.StrategyVersion.DefinitionJson);
-        _definitions[bot.StrategyVersionId] = parsed;
-        return parsed;
+        return _state.Definition(bot.StrategyVersionId, () => _validator.Parse(bot.StrategyVersion.DefinitionJson));
     }
 
     private async Task EvaluateBotAsync(
@@ -1118,6 +1555,16 @@ public sealed class BotEngine : IBotEngine
                     position.StopLossPrice = stopBefore;
                     position.StopLossPercent = stopPercentBefore;
                 }
+
+                if (!placed.HasWorkingStop
+                    && await FlattenUnprotectedAsync(bot, position, $"stop clamp to {placed.StopError}", cancellationToken))
+                {
+                    return;
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -1216,34 +1663,41 @@ public sealed class BotEngine : IBotEngine
             signalType = decision.Signal;
             reason = decision.Reason;
         }
+        else if (StrategyTemplateKeys.IsTopTraderContrarian(definition.Template))
+        {
+            if (bot.Timeframe != Timeframe.OneHour)
+            {
+                bot.LastError = "Top-trader contrarian ranks the 1h clock.";
+                return;
+            }
+
+            _topTraderRanks.Want(_clock.UtcNow);
+            var ranking = _topTraderRanks.Latest;
+            var quote = ObservationStrategies.TopTraderDecision(bot.Symbol, candles, position is not null, position?.OpenedAt, ranking);
+            if (quote.Signal is SignalType.NoAction)
+            {
+                var waiting = position is null
+                    && ObservationStrategies.IsDecisionHour(candles[^1], ObservationStrategies.TopTraderStepHours)
+                    && ranking?.At != candles[^1].CloseTime.AddMilliseconds(1);
+                if (!waiting)
+                {
+                    RememberFlatCandle(bot, candles);
+                }
+
+                bot.LastError = quote.Reason;
+                return;
+            }
+
+            signalType = quote.Signal;
+            reason = quote.Reason;
+            describedStop = quote.SuggestedStop;
+            describedTake = quote.SuggestedTakeProfit;
+        }
         else
         {
-            IReadOnlyList<decimal?>? openInterest = null;
-            IReadOnlyList<decimal?>? funding = null;
             var templateKey = TemplateKey(bot);
-            if (string.Equals(templateKey, StrategyTemplateKeys.FlowZone, StringComparison.OrdinalIgnoreCase))
-            {
-                var pair = await _market.GetOpenInterestPairAsync(bot.Symbol, cancellationToken);
-                if (pair.Previous is { } previous && pair.Latest is { } latest)
-                {
-                    openInterest = new decimal?[] { previous, latest };
-                }
-            }
-            else if (string.Equals(templateKey, StrategyTemplateKeys.SqueezeWatch, StringComparison.OrdinalIgnoreCase))
-            {
-                var day = await _market.GetOpenInterestDayAsync(bot.Symbol, cancellationToken);
-                if (day.DayAgo is { } dayAgo && day.Latest is { } latest)
-                {
-                    openInterest = new decimal?[] { dayAgo, latest };
-                }
-
-                var rate = await _market.GetLastFundingRateAsync(bot.Symbol, cancellationToken);
-                if (rate is { } fundingRate)
-                {
-                    funding = new decimal?[] { fundingRate };
-                }
-            }
-
+            var inputs = await CycleMarketInputsAsync(templateKey, bot.Symbol, bot.Timeframe, candles, cancellationToken);
+            var futures = StrategyMarketContext.Futures(candles, inputs);
             var context = new StrategyContext
             {
                 ClosedCandles = candles,
@@ -1254,8 +1708,9 @@ public sealed class BotEngine : IBotEngine
                 PositionOpenedAt = position?.OpenedAt,
                 ProtectiveStopPrice = position?.StopLossPrice is > 0m ? position.StopLossPrice : null,
                 Symbol = bot.Symbol,
-                OpenInterest = openInterest,
-                FundingRate = funding
+                HigherTimeframeCache = StrategyMarketContext.HigherTimeframeCache(inputs),
+                OpenInterest = futures.OpenInterest,
+                FundingRate = futures.FundingRate
             };
             var quote = _strategy.EvaluateDetailAt(definition, context, new CausalIndicatorCache(candles), candles.Count - 1);
             signalType = quote.Signal;
@@ -1283,7 +1738,7 @@ public sealed class BotEngine : IBotEngine
             return;
         }
 
-        if (_signaledCandles.Add(bot.Id.ToString("N") + "|" + lastCandle.OpenTime.UtcTicks))
+        if (_state.TryMarkSignaled(bot.Id, lastCandle.OpenTime))
         {
             await _store.AddSignalAsync(new Signal
             {
@@ -1356,7 +1811,19 @@ public sealed class BotEngine : IBotEngine
         {
             profile = CrossSectionalRiskBook.Overlay(profile, _options.CrossSectionalReversal);
         }
-        var accountDaily = await _store.SumClosedPnLSinceForModeAsync(bot.Mode, dayStart, cancellationToken) + unrealized;
+        var openLoss = Math.Min(0m, bot.Mode == TradingMode.Live ? _live.Current.OpenPositions.Sum(p => p.UnrealizedPnL) : unrealized);
+        var accountDaily = await _store.SumClosedPnLSinceForModeAsync(bot.Mode, dayStart, cancellationToken) + openLoss;
+        var accountWeekly = await _store.SumClosedPnLSinceForModeAsync(bot.Mode, WeekStart(now), cancellationToken) + openLoss;
+        decimal? drawdown = null;
+        if (bot.Mode == TradingMode.Live)
+        {
+            var (peak, lastPointAt) = await _store.GetEquityPeakAsync(
+                bot.ExchangeAccountId,
+                TradingMode.Live,
+                now.AddDays(-Math.Max(1, _options.EquityPeakLookbackDays)),
+                cancellationToken);
+            drawdown = DrawdownPercent(peak, lastPointAt, equityUsdt, now);
+        }
         var strategyId = bot.StrategyVersion.StrategyId;
         var strategyBotIds = running
             .Where(peer => peer.StrategyVersion.StrategyId == strategyId)
@@ -1398,6 +1865,8 @@ public sealed class BotEngine : IBotEngine
             Symbol = bot.Symbol,
             Price = lastPrice,
             AccountDailyPnL = accountDaily,
+            AccountWeeklyPnL = accountWeekly,
+            DrawdownPercent = drawdown,
             SymbolAlreadyOpen = IsolatedOccupancy.IsCoinOpen(
                 bot.Symbol,
                 book,
@@ -1417,7 +1886,11 @@ public sealed class BotEngine : IBotEngine
             OpenRiskPercent = openRisk,
             ConsecutiveLosses = streak.ConsecutiveLosses,
             LastLossAt = streak.LastLossAt,
-            MarketDataAgeMs = 0,
+            MarketDataAgeMs = MarketDataAge.Milliseconds(
+                _clock.UtcNow,
+                _cyclePriceAt.TryGetValue(bot.Symbol, out var priceAt) ? priceAt : null,
+                lastCandle.CloseTime,
+                bot.Timeframe.ToDuration()),
             Sizing = new RiskSizingHints
             {
                 StepSize = symbol?.StepSize ?? 0m,
@@ -1437,6 +1910,28 @@ public sealed class BotEngine : IBotEngine
             var opposite = (position.Side == PositionSide.Long && signalType == SignalType.Sell)
                 || (position.Side == PositionSide.Short && signalType == SignalType.Buy);
             var flatten = signalType is SignalType.Exit || opposite;
+            if (flatten
+                && bot.Mode == TradingMode.Live
+                && await LiveEntryBotAsync(position, cancellationToken) is { } opener
+                && opener != bot.Id)
+            {
+                bot.LastError =
+                    $"Exit signal ignored. Another bot opened {position.Symbol}. That bot manages its exit; SL/TP stay on Binance.";
+                _logger.LogWarning(
+                    "Bot {BotId} did not close {Symbol}: the entry was placed by bot {OpenerId}. Signal: {Reason}",
+                    bot.Id,
+                    position.Symbol,
+                    opener,
+                    reason);
+                return;
+            }
+
+            if (flatten && await CloseInFlightAsync(bot, position, cancellationToken))
+            {
+                bot.LastError = $"A close for {position.Symbol} is already in flight. Waiting for Binance to confirm it before sending another.";
+                return;
+            }
+
             if (flatten)
             {
                 await ClosePositionAsync(position.Id, cancellationToken);
@@ -1469,14 +1964,15 @@ public sealed class BotEngine : IBotEngine
                 || await _store.HasUnresolvedEntryAsync(bot.Id, bot.Symbol, cancellationToken);
             var gate = LiveEntryGate.Block(new LiveEntryFacts(
                 bot.Mode,
-                _options.LiveTradingEnabled,
+                _options.EntriesEnabled,
                 _options.KillSwitchEnabled,
                 _reconciliation.IsFresh(_clock.UtcNow, maxAge) && IsolatedOccupancy.HasFreshFuturesBook(_live.Current),
                 blocked,
                 bot.StrategyVersion.Strategy?.IsEnabled == true,
                 true,
                 filtersReady,
-                false));
+                false,
+                _options.VenueKind));
             if (gate is not null)
             {
                 bot.LastError = gate;
@@ -1502,7 +1998,8 @@ public sealed class BotEngine : IBotEngine
         }
 
         snapshot = snapshot with { Side = signalType == SignalType.Sell ? PositionSide.Short : PositionSide.Long };
-        if (StrategyTemplateKeys.IsFlatRange(definition.Template) && describedStop is decimal stop && lastPrice > 0m)
+        var observation = StrategyTemplateKeys.IsObservation(definition.Template);
+        if ((StrategyTemplateKeys.IsFlatRange(definition.Template) || observation) && describedStop is decimal stop && lastPrice > 0m)
         {
             var stopPct = Math.Abs(lastPrice - stop) / lastPrice * 100m;
             var takePct = describedTake is decimal take
@@ -1525,6 +2022,12 @@ public sealed class BotEngine : IBotEngine
                 return;
             }
 
+            if (observation && (stopPct < ObservationStrategies.MinStopPercent * 0.5m || takePct <= stopPct))
+            {
+                bot.LastError = "Observation stop and take profit no longer sit on the right sides of price.";
+                return;
+            }
+
             var bookStop = profile.StopLossPercent;
             profile = FlatRangeRisk(profile, stopPct, takePct);
             var hints = snapshot.Sizing ?? new RiskSizingHints();
@@ -1535,7 +2038,10 @@ public sealed class BotEngine : IBotEngine
 
             snapshot = snapshot with
             {
-                Sizing = hints with { MaxMarginUsdt = FlatRangeStrategy.MaxEntryMarginUsdt }
+                Sizing = hints with
+                {
+                    MaxMarginUsdt = observation ? ObservationStrategies.MaxEntryMarginUsdt : FlatRangeStrategy.MaxEntryMarginUsdt
+                }
             };
         }
         else if (StrategyTemplateKeys.IsFlatRange(definition.Template))
@@ -1543,7 +2049,42 @@ public sealed class BotEngine : IBotEngine
             bot.LastError = "Flat range did not lock a stop and a take profit.";
             return;
         }
+        else if (observation)
+        {
+            bot.LastError = "Observation strategy did not lock a stop and a take profit.";
+            return;
+        }
 
+        var ticker = await BookTickerAsync(bot.Symbol, cancellationToken);
+        var spreadBps = EntryMarketGuard.SpreadBps(ticker?.Bid, ticker?.Ask);
+        var marketBlock = EntryMarketGuard.Reject(
+            spreadBps,
+            EntryMarketGuard.RangeShock(candles.Select(bar => new EntryBar(bar.High, bar.Low, bar.Close)).ToList()),
+            _options.MaxEntrySpreadBps,
+            _options.MaxEntryRangeShock,
+            requireBook: bot.Mode == TradingMode.Live);
+        if (marketBlock is not null)
+        {
+            bot.LastError = nearMiss ? $"{NearMissGate.RejectLabel(marketBlock)} {marketBlock}" : marketBlock;
+            return;
+        }
+
+        var sizingHints = snapshot.Sizing ?? new RiskSizingHints();
+        sizingHints = sizingHints with { SlippagePercent = EntryMarketGuard.SlippagePercent(spreadBps, RiskEngine.DefaultSlippagePercent) };
+        if (bot.Mode == TradingMode.Live)
+        {
+            var takerFee = await connector.GetTakerFeePercentAsync(bot.Symbol, cancellationToken);
+            var leverageCeiling = Math.Max(1m, exchangeCap > 0m ? Math.Min(exchangeCap, profile.MaxLeverage) : profile.MaxLeverage);
+            var bracket = await connector.GetMaintenanceBracketAsync(bot.Symbol, availableUsdt * leverageCeiling, cancellationToken);
+            sizingHints = sizingHints with
+            {
+                TakerFeePercent = takerFee ?? RiskEngine.DefaultTakerFeePercent,
+                MaintenanceMarginRate = bracket?.Rate ?? 0m,
+                MaintenanceAmount = bracket?.Amount ?? 0m
+            };
+        }
+
+        snapshot = snapshot with { Sizing = sizingHints };
         var risk = _risk.Evaluate(signalType, profile, snapshot, now);
         if (risk.Decision != RiskDecision.Approved)
         {
@@ -1583,7 +2124,9 @@ public sealed class BotEngine : IBotEngine
                     streak.ConsecutiveLosses,
                     streak.LastLossAt,
                     now,
-                    true));
+                    profile.MaxDrawdownPercent <= 0m || drawdown is not null,
+                    accountWeekly,
+                    drawdown));
             if (riskBlock is not null)
             {
                 bot.LastError = riskBlock;
@@ -1718,7 +2261,8 @@ public sealed class BotEngine : IBotEngine
                 decision.Reason);
             if (decision.Kind != RecoveryKind.Confirmed || decision.Order is null)
             {
-                var absent = decision.Kind == RecoveryKind.ConfirmedAbsent;
+                var absent = decision.Kind == RecoveryKind.ConfirmedAbsent
+                    && OrderRecovery.AbsentIsFinal(order.SubmittedAt ?? _clock.UtcNow, _clock.UtcNow, ex);
                 Record(order, absent ? OrderStatus.Failed : OrderStatus.Uncertain, source);
                 order.RejectReason = decision.Reason + " " + ex.Message;
                 order.UpdatedAt = _clock.UtcNow;
@@ -1951,16 +2495,21 @@ public sealed class BotEngine : IBotEngine
                     stops,
                     cancellationToken);
                 await _store.SaveChangesAsync(cancellationToken);
-                if (!stops.StopPlaced)
+                if (!stops.HasWorkingStop)
                 {
-                    bot.LastError =
-                        $"Live {(openedSide == PositionSide.Short ? "sell" : "buy")} filled at {fillPrice}. STOP trigger {slPrice} failed. Automatic close is disabled; protection will be retried. {stops.StopError}";
                     _logger.LogCritical(
-                        "Binance STOP_MARKET failed after live fill for bot {BotId} {Symbol} trigger {Stop}: {Error}. The project will not auto-close the position.",
+                        "Binance STOP_MARKET failed after live fill for bot {BotId} {Symbol} trigger {Stop}: {Error}.",
                         bot.Id,
                         bot.Symbol,
                         slPrice,
                         stops.StopError);
+                    if (!await FlattenUnprotectedAsync(bot, opened, $"stop {slPrice} after entry fill failed: {stops.StopError}", cancellationToken)
+                        && !_options.FlattenOnProtectionFailure)
+                    {
+                        bot.LastError =
+                            $"Live {(openedSide == PositionSide.Short ? "sell" : "buy")} filled at {fillPrice}. STOP trigger {slPrice} failed. Automatic close is off; protection will be retried. {stops.StopError}";
+                    }
+
                     return;
                 }
 
@@ -2015,13 +2564,14 @@ public sealed class BotEngine : IBotEngine
             fee = 0m;
         }
 
+        var usdtFee = TradePnl.UsdtFee(commission) ?? 0m;
         var booking = PositionFillBook.Exit(
             position.Side,
             position.Quantity,
             position.AverageEntryPrice,
             quantity,
             fillPrice,
-            fee);
+            0m);
         var direction = position.Side == PositionSide.Short ? -1m : 1m;
         var pnl = booking.RealizedPnl;
         if (!booking.Closed)
@@ -2058,16 +2608,16 @@ public sealed class BotEngine : IBotEngine
             {
                 var margin = Math.Min(position.MarginUsdt, usdt.Locked);
                 usdt.Locked -= margin;
-                usdt.Free += margin + pnl;
+                usdt.Free += margin + pnl - usdtFee;
             }
             else if (position.Side == PositionSide.Long)
             {
-                usdt.Free += notional - fee;
+                usdt.Free += notional - usdtFee;
                 baseAsset.Free = Math.Max(0m, baseAsset.Free - quantity);
             }
             else
             {
-                usdt.Free += pnl;
+                usdt.Free += pnl - usdtFee;
             }
         }
 
@@ -2138,7 +2688,7 @@ public sealed class BotEngine : IBotEngine
             return;
         }
 
-        await _store.AddTradeAsync(new Trade
+        var closedTrade = new Trade
         {
             BotId = bot.Id,
             StrategyId = bot.StrategyVersion.StrategyId,
@@ -2162,7 +2712,9 @@ public sealed class BotEngine : IBotEngine
             SignalAt = position.OpenedAt,
             MaxFavorableExcursion = position.MaxFavorableExcursion,
             MaxAdverseExcursion = position.MaxAdverseExcursion
-        }, cancellationToken);
+        };
+        TradePnl.Refresh(closedTrade);
+        await _store.AddTradeAsync(closedTrade, cancellationToken);
     }
 
     private async Task<Dictionary<string, CausalIndicatorCache>> LoadNearMissBooksAsync(
@@ -2305,6 +2857,11 @@ public sealed class BotEngine : IBotEngine
 
         var hasStop = HasWorkingProtection(live.OpenOrders, bot.Symbol, stop: true);
         var hasTake = HasWorkingProtection(live.OpenOrders, bot.Symbol, stop: false);
+        if (position is not null && hasStop)
+        {
+            _state.ClearProtectionFailure(position.Id);
+        }
+
         if (position is not null && hasStop && hasTake)
         {
             return new OverlayProtectResult(position, false);
@@ -2412,12 +2969,23 @@ public sealed class BotEngine : IBotEngine
             stops,
             cancellationToken);
         await _store.SaveChangesAsync(cancellationToken);
+        if (stops.StopPlaced)
+        {
+            _state.ClearProtectionFailure(position.Id);
+        }
+
         if (stops.StopPlaced && stops.TakePlaced)
         {
             bot.LastError = hasStop || hasTake
                 ? $"Live Isolated {bot.Symbol} missing protection placed. SL {slPrice} / TP {tpPrice}."
                 : $"Live Isolated {bot.Symbol} had no working SL/TP. Placed SL {slPrice} / TP {tpPrice}.";
             return new OverlayProtectResult(position, false);
+        }
+
+        if (!stops.HasWorkingStop
+            && await FlattenAfterRepeatedProtectionFailureAsync(bot, position, $"stop {slPrice} failed: {stops.StopError}", cancellationToken))
+        {
+            return new OverlayProtectResult(position, true);
         }
 
         bot.LastError =
@@ -2448,6 +3016,7 @@ public sealed class BotEngine : IBotEngine
 
         var stopId = LiveProtectivePrices.StopClientOrderId(bot.Id);
         var takeId = LiveProtectivePrices.TakeClientOrderId(bot.Id);
+        var previousStop = replaceStop ? ListedTrigger(bot.Symbol, stopId, stop: true) : 0m;
         if (replaceStop && LiveProtectivePrices.ListedByClientId(_live.Current.OpenOrders, stopId))
         {
             await connector.CancelOrderAsync(bot.Symbol, stopId, null, cancellationToken);
@@ -2462,19 +3031,60 @@ public sealed class BotEngine : IBotEngine
             ForgetWorkingProtection(takeId);
         }
 
+        var closeSide = side == PositionSide.Short ? OrderSide.Buy : OrderSide.Sell;
+        var wantStop = replaceStop && stop > 0m;
+        var wantTake = replaceTake && take > 0m;
         var placed = await connector.PlaceClosePositionStopsAsync(
             bot.Symbol,
-            side == PositionSide.Short ? OrderSide.Buy : OrderSide.Sell,
+            closeSide,
             stop,
             take,
             stopId,
             takeId,
             cancellationToken,
-            placeStop: replaceStop && stop > 0m,
-            placeTake: replaceTake && take > 0m,
+            placeStop: wantStop,
+            placeTake: wantTake,
             acceptExisting: acceptExisting);
         var stopPlaced = !replaceStop || (stop > 0m && placed.StopPlaced);
         var takePlaced = !replaceTake || (take > 0m && placed.TakePlaced);
+        var stopError = placed.StopError;
+        var takeError = placed.TakeError;
+        for (var attempt = 1; attempt < Math.Max(1, _options.ProtectionRetryAttempts) && ((wantStop && !stopPlaced) || (wantTake && !takePlaced)); attempt++)
+        {
+            if (ProtectiveOrderMath.IsNoOpenPosition(stopError) || ProtectiveOrderMath.IsNoOpenPosition(takeError))
+            {
+                break;
+            }
+
+            if (_options.ProtectionRetryDelayMs > 0)
+            {
+                await Task.Delay(_options.ProtectionRetryDelayMs * attempt, cancellationToken);
+            }
+
+            var retry = await connector.PlaceClosePositionStopsAsync(
+                bot.Symbol,
+                closeSide,
+                stop,
+                take,
+                stopId,
+                takeId,
+                cancellationToken,
+                placeStop: wantStop && !stopPlaced,
+                placeTake: wantTake && !takePlaced,
+                acceptExisting: acceptExisting);
+            if (wantStop && !stopPlaced)
+            {
+                stopPlaced = retry.StopPlaced;
+                stopError = retry.StopError;
+            }
+
+            if (wantTake && !takePlaced)
+            {
+                takePlaced = retry.TakePlaced;
+                takeError = retry.TakeError;
+            }
+        }
+
         if (stopPlaced && stop > 0m)
         {
             NoteWorkingProtection(bot.Symbol, stopId, "STOP_MARKET", stop);
@@ -2485,11 +3095,56 @@ public sealed class BotEngine : IBotEngine
             NoteWorkingProtection(bot.Symbol, takeId, "TAKE_PROFIT_MARKET", take);
         }
 
+        var restored = false;
+        if (!stopPlaced && previousStop > 0m && previousStop != stop)
+        {
+            var back = await connector.PlaceClosePositionStopsAsync(
+                bot.Symbol,
+                closeSide,
+                previousStop,
+                0m,
+                stopId,
+                takeId,
+                cancellationToken,
+                placeStop: true,
+                placeTake: false,
+                acceptExisting: true);
+            restored = back.StopPlaced;
+            if (restored)
+            {
+                NoteWorkingProtection(bot.Symbol, stopId, "STOP_MARKET", previousStop);
+                _logger.LogWarning(
+                    "New stop {Stop} for {Symbol} bot {BotId} failed; previous stop {Previous} is back on Binance. {Error}",
+                    stop,
+                    bot.Symbol,
+                    bot.Id,
+                    previousStop,
+                    stopError);
+            }
+        }
+
         return new ProtectiveStopsResult(
             stopPlaced,
             takePlaced,
-            stopPlaced ? null : placed.StopError ?? "Stop trigger is invalid.",
-            takePlaced ? null : placed.TakeError ?? "Take-profit trigger is invalid.");
+            stopPlaced ? null : stopError ?? "Stop trigger is invalid.",
+            takePlaced ? null : takeError ?? "Take-profit trigger is invalid.",
+            restored);
+    }
+
+    private decimal ListedTrigger(string symbol, string clientOrderId, bool stop)
+    {
+        foreach (var row in _live.Current.OpenOrders)
+        {
+            if (string.Equals(row.Symbol, symbol, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(row.ClientOrderId, clientOrderId, StringComparison.OrdinalIgnoreCase)
+                && (stop ? LiveProtectivePrices.IsStopOrder(row.Type) : LiveProtectivePrices.IsTakeOrder(row.Type))
+                && row.Price is > 0m)
+            {
+                return row.Price.Value;
+            }
+        }
+
+        return 0m;
     }
 
     private void NoteWorkingProtection(string symbol, string clientOrderId, string type, decimal trigger)
@@ -2717,6 +3372,25 @@ public sealed class BotEngine : IBotEngine
         }
     }
 
+    /// <summary>
+    /// Bot that placed the live entry behind this row, or null when no entry order is known.
+    /// A row recorded from the exchange snapshot is stamped after the fill, so the entry is looked for before it.
+    /// </summary>
+    private async Task<Guid?> LiveEntryBotAsync(Position position, CancellationToken cancellationToken)
+    {
+        var claims = await _store.GetStrategyEntryClaimsAsync([position.Symbol], cancellationToken);
+        var from = position.OpenedAt - TimeSpan.FromMinutes(15);
+        var until = position.OpenedAt + TimeSpan.FromMinutes(1);
+        return claims
+            .Where(claim =>
+                string.Equals(claim.Symbol, position.Symbol, StringComparison.OrdinalIgnoreCase)
+                && claim.CreatedAt >= from
+                && claim.CreatedAt <= until)
+            .OrderByDescending(claim => claim.CreatedAt)
+            .Select(claim => (Guid?)claim.BotId)
+            .FirstOrDefault();
+    }
+
     private static RiskProfile FlatRangeRisk(RiskProfile source, decimal stopPercent, decimal takePercent) =>
         new()
         {
@@ -2726,6 +3400,8 @@ public sealed class BotEngine : IBotEngine
             TakeProfitPercent = takePercent,
             MaxLeverage = source.MaxLeverage,
             MaxDailyLossPercent = source.MaxDailyLossPercent,
+            MaxWeeklyLossPercent = source.MaxWeeklyLossPercent,
+            MaxDrawdownPercent = source.MaxDrawdownPercent,
             MaxPortfolioRiskPercent = source.MaxPortfolioRiskPercent,
             MaxSimultaneousPositions = source.MaxSimultaneousPositions,
             MaxConsecutiveLosses = source.MaxConsecutiveLosses,
@@ -2851,7 +3527,7 @@ public sealed class BotEngine : IBotEngine
             return;
         }
 
-        if (_ratchetBackoff.TryGetValue(bot.Id, out var held) && _clock.UtcNow - held.At < TimeSpan.FromMinutes(10))
+        if (_state.TryGetRatchetBackoff(bot.Id, out var held) && _clock.UtcNow - held.At < TimeSpan.FromMinutes(10))
         {
             if (decision.Value.StopMoved && decision.Value.StopLoss == held.Stop)
             {
@@ -2929,29 +3605,36 @@ public sealed class BotEngine : IBotEngine
             stopOk = placed.StopPlaced;
             if (!stopOk)
             {
-                var restored = await AttachLiveProtectiveStopsAsync(
-                    bot,
-                    connector,
-                    stop,
-                    advanced.TakeMoved && takeOk ? advanced.TakeProfit : take,
-                    position.Side,
-                    cancellationToken,
-                    replaceStop: true,
-                    replaceTake: false);
+                var restoredOk = placed.StopRestored
+                    || (await AttachLiveProtectiveStopsAsync(
+                        bot,
+                        connector,
+                        stop,
+                        advanced.TakeMoved && takeOk ? advanced.TakeProfit : take,
+                        position.Side,
+                        cancellationToken,
+                        replaceStop: true,
+                        replaceTake: false)).StopPlaced;
                 _logger.LogCritical(
-                    restored.StopPlaced
+                    restoredOk
                         ? "Stop ratchet failed for {Symbol} bot {BotId}. Previous stop {Stop} was restored. {Error}"
                         : "Stop ratchet failed for {Symbol} bot {BotId} and the previous stop {Stop} could not be restored. {Error}",
                     bot.Symbol,
                     bot.Id,
                     stop,
                     placed.StopError);
+                if (!restoredOk
+                    && await FlattenUnprotectedAsync(bot, position, $"stop ratchet to {advanced.StopLoss} failed and {stop} could not be restored", cancellationToken))
+                {
+                    return;
+                }
             }
         }
 
         if (!stopOk || !takeOk)
         {
-            _ratchetBackoff[bot.Id] = (
+            _state.SetRatchetBackoff(
+                bot.Id,
                 advanced.StopMoved && !stopOk ? advanced.StopLoss : 0m,
                 advanced.TakeMoved && !takeOk ? advanced.TakeProfit : 0m,
                 _clock.UtcNow);
@@ -3160,15 +3843,23 @@ public sealed class BotEngine : IBotEngine
                 continue;
             }
 
-            if (HasWorkingProtection(_live.Current.OpenOrders, position.Symbol, stop: true))
+            if (!_live.Current.OpenPositions.Any(row =>
+                    row.Quantity > 0m && string.Equals(row.Symbol, position.Symbol, StringComparison.OrdinalIgnoreCase)))
             {
                 continue;
             }
 
+            if (HasWorkingProtection(_live.Current.OpenOrders, position.Symbol, stop: true))
+            {
+                _state.ClearProtectionFailure(position.Id);
+                continue;
+            }
+
+            string? failure;
             try
             {
                 var connector = _connectors.Create(TradingMode.Live, bot.ExchangeAccountId);
-                await AttachLiveProtectiveStopsAsync(
+                var stops = await AttachLiveProtectiveStopsAsync(
                     bot,
                     connector,
                     position.StopLossPrice,
@@ -3177,10 +3868,25 @@ public sealed class BotEngine : IBotEngine
                     cancellationToken,
                     replaceStop: true,
                     replaceTake: position.TakeProfitPrice > 0m);
+                failure = stops.HasWorkingStop ? null : stops.StopError;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Could not restore protection for unattended {Symbol}", position.Symbol);
+                failure = ex.Message;
+            }
+
+            if (failure is null)
+            {
+                _state.ClearProtectionFailure(position.Id);
+            }
+            else
+            {
+                await FlattenAfterRepeatedProtectionFailureAsync(bot, position, $"unattended stop restore failed: {failure}", cancellationToken);
             }
         }
     }

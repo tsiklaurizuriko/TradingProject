@@ -43,6 +43,7 @@ internal static class StrategyTemplateEvaluator
         var raw = EvaluateTemplate(parsed, candles, i, context, cache);
         if (raw.Signal is SignalType.Buy or SignalType.Sell
             && !StrategyTemplateKeys.IsFlatRange(parsed.TemplateKey)
+            && !StrategyTemplateKeys.IsObservation(parsed.TemplateKey)
             && !StrategyTemplateKeys.IsImported(parsed.TemplateKey)
             && !StrategyTemplateKeys.IsRefactored(parsed.TemplateKey)
             && !PassesQuality(parsed.Quality, candles, i, cache))
@@ -166,6 +167,7 @@ internal static class StrategyTemplateEvaluator
         var raw = EvaluateTemplate(parsed, candles, index, context, cache);
         if (raw.Signal is SignalType.Buy or SignalType.Sell
             && !StrategyTemplateKeys.IsFlatRange(parsed.TemplateKey)
+            && !StrategyTemplateKeys.IsObservation(parsed.TemplateKey)
             && !StrategyTemplateKeys.IsImported(parsed.TemplateKey)
             && !StrategyTemplateKeys.IsRefactored(parsed.TemplateKey)
             && !PassesQuality(parsed.Quality, candles, index, cache))
@@ -205,7 +207,9 @@ internal static class StrategyTemplateEvaluator
                 candles[i].CloseTime);
         }
 
-        return StrategyTemplateKeys.IsRefactored(p.TemplateKey)
+        return StrategyTemplateKeys.IsObservation(p.TemplateKey)
+            ? ObservationStrategies.Evaluate(p.TemplateKey, candles, i, context)
+            : StrategyTemplateKeys.IsRefactored(p.TemplateKey)
             ? RefactoredStrategyEvaluator.Evaluate(p, candles, i, context, cache)
             : StrategyTemplateKeys.IsImported(p.TemplateKey)
             ? ImportedRuleEvaluator.Evaluate(p, candles, i, context, cache)

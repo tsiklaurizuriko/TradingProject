@@ -22,7 +22,16 @@ public sealed class Trade : Entity
     public decimal Quantity { get; set; }
     public decimal EntryPrice { get; set; }
     public decimal? ExitPrice { get; set; }
+
+    /// <summary>Gross price PnL in USDT, before fees and funding. See <see cref="TradePnl"/>.</summary>
     public decimal PnL { get; set; }
+
+    /// <summary>Gross minus certified USDT fees plus recorded funding. Null while fees are pending.</summary>
+    public decimal? NetPnL { get; set; }
+
+    /// <summary>Funding received (+) or paid (−) while open. Null when not recorded.</summary>
+    public decimal? FundingPnL { get; set; }
+
     public decimal PnLPercent { get; set; }
     public decimal Fees { get; set; }
 

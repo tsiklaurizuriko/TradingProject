@@ -124,6 +124,19 @@
   justify-content: flex-end;
 }
 
+.group-not-active {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.group-not-active.is-on {
+  color: var(--danger, #ff4d6a);
+  font-weight: 700;
+}
+
 .section-head-meta .is-live {
   color: var(--success);
   font-weight: 700;

@@ -53,6 +53,8 @@ export interface RiskProfileDto {
   isActive: boolean;
   allowLive: boolean;
   isSystem: boolean;
+  maxWeeklyLossPercent: number;
+  maxDrawdownPercent: number;
 }
 
 export interface SaveRiskProfileRequest {
@@ -67,6 +69,9 @@ export interface SaveRiskProfileRequest {
   cooldownMinutes: number;
   minimumLiquidationSafetyBufferPercent: number;
   allowLive: boolean;
+  /** Omitted keeps the stored value. Zero turns the halt off. */
+  maxWeeklyLossPercent?: number;
+  maxDrawdownPercent?: number;
 }
 
 export interface RiskPreviewDto {
@@ -272,6 +277,10 @@ export interface SystemHealthDto {
   liveEntryGateOpen?: boolean;
   unresolvedOrderCount?: number;
   reconciliationReady?: boolean;
+  exchangeReady?: boolean;
+  /** One venue per API process: Live, Shadow or Testnet. */
+  venue?: 'Live' | 'Shadow' | 'Testnet' | string;
+  entriesEnabled?: boolean;
   blockedReason?: string | null;
   entries: Record<string, { status: string; description?: string }>;
 }
@@ -293,6 +302,12 @@ export interface BotDto {
   strategyId?: string;
   riskProfileId?: string;
   createdAt?: string;
+  isNotActive?: boolean;
+}
+
+export interface SetBotsActiveResult {
+  updated: number;
+  stopped: number;
 }
 
 export interface CreateBotsResult {
@@ -310,6 +325,15 @@ export interface StopBotsResult {
   stopped: number;
   failed: number;
   detail?: string | null;
+}
+
+export interface FlattenAllReport {
+  botsStopped: number;
+  localPositionsClosed: number;
+  exchangeClosesSent: number;
+  remaining: string[];
+  failures: string[];
+  flat: boolean;
 }
 
 export interface DeleteBotsResult {
@@ -723,6 +747,10 @@ export interface TradeDto {
   side?: string;
   feeStatus?: string;
   feeAsset?: string | null;
+  /** Gross minus certified USDT fees plus funding. Null while fees are pending. */
+  netPnL?: number | null;
+  fundingPnL?: number | null;
+  netPendingReason?: string | null;
 }
 
 export interface PerformanceDayDto {
@@ -783,6 +811,13 @@ export interface PerformanceDto {
   strategyResults?: StrategyResultDto[] | null;
   feesStatus?: string;
   feeAsset?: string | null;
+  grossPnL?: number;
+  /** Null unless every closed trade's net is known. */
+  netPnL?: number | null;
+  knownNetPnL?: number;
+  pendingNetTrades?: number;
+  fundingPnL?: number;
+  fundingMissingTrades?: number;
 }
 
 export interface SignalDto {
@@ -1050,6 +1085,9 @@ export function modeBadge(mode: string): string {
   }
   if (key.includes('test')) {
     return 'badge-testnet';
+  }
+  if (key.includes('shadow')) {
+    return 'badge-shadow';
   }
   return 'badge-paper';
 }

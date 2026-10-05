@@ -336,7 +336,8 @@ public sealed class AdvancedStrategyTests
             + StrategyTemplateKeys.Flow.Length
             + StrategyTemplateKeys.Positioning.Length
             + StrategyTemplateKeys.Imported.Length
-            + StrategyTemplateKeys.Refactored.Length);
+            + StrategyTemplateKeys.Refactored.Length
+            + StrategyTemplateKeys.Observation.Length);
         StrategyTemplateKeys.AdvancedSix.Should().HaveCount(6);
         StrategyTemplateKeys.Scalping.Should().HaveCount(22);
         StrategyTemplateKeys.PriceAction.Should().HaveCount(18);
@@ -354,7 +355,8 @@ public sealed class AdvancedStrategyTests
                 .Concat(StrategyTemplateKeys.Flow)
                 .Concat(StrategyTemplateKeys.Positioning)
                 .Concat(StrategyTemplateKeys.Imported)
-                .Concat(StrategyTemplateKeys.Refactored));
+                .Concat(StrategyTemplateKeys.Refactored)
+                .Concat(StrategyTemplateKeys.Observation));
     }
 
     [Fact]

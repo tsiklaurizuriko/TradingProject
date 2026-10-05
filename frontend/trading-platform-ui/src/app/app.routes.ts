@@ -1,6 +1,7 @@
 import { Routes } from '@angular/router';
 import { Shell } from './layout/shell/shell';
 import { liveOnlyGuard } from './live-only.guard';
+import { authGuard } from './core/auth/auth.guard';
 import { LoginPage } from './features/auth/login.page';
 import { DashboardPage } from './features/dashboard/dashboard.page';
 import { BotsPage } from './features/bots/bots.page';
@@ -20,6 +21,7 @@ export const routes: Routes = [
   {
     path: '',
     component: Shell,
+    canActivate: [authGuard],
     children: [
       { path: '', pathMatch: 'full', redirectTo: 'dashboard' },
       { path: 'dashboard', component: DashboardPage, data: page('Dashboard', '') },

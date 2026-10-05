@@ -20,6 +20,8 @@ try
 {
     var builder = Host.CreateApplicationBuilder(args);
     TradingPlatform.Application.Trading.TradingHostConfiguration.RejectUnsupportedMode(builder.Configuration);
+    builder.Configuration.AddInMemoryCollection(TradingPlatform.Application.Trading.LocalSecrets.Resolve(builder.Configuration));
+    TradingPlatform.Application.Trading.TradingHostConfiguration.RejectPlaceholderSecretsWhenLive(builder.Configuration);
 
     builder.Services.AddSerilog((services, configuration) =>
         configuration

@@ -290,6 +290,25 @@ public sealed class OrderRecoveryTests
     }
 
     [Fact]
+    public void Market_partial_is_final_only_after_the_verify_window()
+    {
+        var submitted = DateTimeOffset.UnixEpoch;
+        var late = submitted + OrderRecovery.AbsentVerifyWindow;
+        OrderRecovery.MarketRemainderExpired(OrderType.Market, OrderStatus.PartiallyFilled, submitted, late).Should().BeTrue();
+        OrderRecovery.MarketRemainderExpired(OrderType.Market, OrderStatus.PartiallyFilled, submitted, late.AddSeconds(-1)).Should().BeFalse();
+        OrderRecovery.MarketRemainderExpired(OrderType.Limit, OrderStatus.PartiallyFilled, submitted, late).Should().BeFalse();
+        OrderRecovery.MarketRemainderExpired(OrderType.Market, OrderStatus.Filled, submitted, late).Should().BeFalse();
+    }
+
+    [Fact]
+    public void Close_position_stop_without_a_position_is_not_retried()
+    {
+        ProtectiveOrderMath.IsNoOpenPosition("""Binance 400 {"code":-4509,"msg":"Time in Force (TIF) GTE can only be used with open positions."}""").Should().BeTrue();
+        ProtectiveOrderMath.IsNoOpenPosition("Binance -2021: Order would immediately trigger.").Should().BeFalse();
+        ProtectiveOrderMath.IsNoOpenPosition(null).Should().BeFalse();
+    }
+
+    [Fact]
     public void Exit_booking_matches_for_a_partial_and_a_full_close()
     {
         var partial = PositionFillBook.Exit(PositionSide.Long, 1m, 100m, 0.4m, 110m, 0.1m);
@@ -586,6 +605,8 @@ public sealed class ReconciliationSafetyTests
         trade.ClosedAt.Should().NotBeNull();
         trade.ExitPrice.Should().BeNull();
         trade.PnL.Should().Be(0m);
+        trade.FeeStatus.Should().Be(FeeKnowledge.Uncertain, "a ghost exit has no fill, so its PnL is not a certified zero");
+        trade.NetPnL.Should().BeNull();
     }
 
     [Fact]
@@ -647,6 +668,30 @@ public sealed class ReconciliationSafetyTests
         var store = new TradingStore(db);
         (await store.HasUnresolvedEntryAsync(bot.Id, "BTCUSDT")).Should().BeTrue();
         (await store.HasUnresolvedEntryAsync(bot.Id, "ETHUSDT")).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task An_uncertain_entry_still_claims_its_coin_for_the_bot_that_sent_it()
+    {
+        await using var db = await SeedLivePositionAsync(includePosition: false);
+        var bot = await db.Bots.SingleAsync();
+        db.Orders.Add(new Order
+        {
+            BotId = bot.Id,
+            Symbol = "BTCUSDT",
+            Side = OrderSide.Buy,
+            Type = OrderType.Market,
+            Status = OrderStatus.Uncertain,
+            Quantity = 0.01m,
+            ClientOrderId = "Lclaim-uncertain",
+            Mode = TradingMode.Live,
+            RejectReason = "A new fill has no average price. No position change."
+        });
+        await db.SaveChangesAsync();
+
+        var claims = await new TradingStore(db).GetStrategyEntryClaimsAsync(["BTCUSDT"]);
+
+        claims.Should().ContainSingle(claim => claim.BotId == bot.Id && claim.Symbol == "BTCUSDT" && !claim.Filled);
     }
 
     private static LiveIsolatedReconciler Reconciler(
@@ -793,13 +838,15 @@ public sealed class CommissionReaderTests
 public sealed class LiveConfigurationTests
 {
     [Fact]
-    public void Api_and_worker_settings_allow_a_started_bot_to_submit()
+    public void Committed_api_and_worker_settings_keep_live_entries_off()
     {
         var root = RepoRoot();
         var api = File.ReadAllText(Path.Combine(root, "src", "TradingPlatform.Api", "appsettings.json"));
         var workers = File.ReadAllText(Path.Combine(root, "src", "TradingPlatform.Workers", "appsettings.json"));
-        api.Should().Contain("\"LiveTradingEnabled\": true");
-        workers.Should().Contain("\"LiveTradingEnabled\": true");
+        api.Should().Contain("\"LiveTradingEnabled\": false");
+        workers.Should().Contain("\"LiveTradingEnabled\": false");
+        api.Should().NotContain("\"LiveTradingEnabled\": true");
+        workers.Should().NotContain("\"LiveTradingEnabled\": true");
         api.Should().NotContain("DefaultMode");
         workers.Should().NotContain("PaperFeeBps");
         workers.Should().NotContain("PaperSlippageBps");

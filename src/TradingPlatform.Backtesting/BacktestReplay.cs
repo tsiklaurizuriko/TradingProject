@@ -28,7 +28,9 @@ public sealed record ReplaySettings(
     int MaxHoldBars = 0,
     bool BookStopsOff = false,
     decimal TickSize = 0m,
-    bool PreserveNullTake = false);
+    bool PreserveNullTake = false,
+    int ExecutionDelayBars = 0,
+    decimal BreakEvenAtR = 0m);
 
 public sealed record ReplayTrade(
     DateTimeOffset OpenedAt,
@@ -91,7 +93,8 @@ public sealed record ReplayResult(
     IReadOnlyList<decimal>? BookReturns = null,
     IReadOnlyList<decimal>? BookDrawdowns = null,
     decimal SlippagePaid = 0m,
-    decimal GrossPnl = 0m);
+    decimal GrossPnl = 0m,
+    decimal? SortinoRatio = null);
 
 public sealed record ReplayFundingSettlement(DateTimeOffset FundingTime, decimal FundingRate);
 
@@ -143,6 +146,7 @@ public sealed class BacktestReplay
         var pendingExit = false;
         PositionSide? pendingReverse = null;
         var pendingExitReason = "Exit";
+        var pendingDue = -1;
         var sampleEvery = Math.Max(1, ordered.Count / 300);
         var lastBar = start;
         var lastProcessed = -1;
@@ -157,9 +161,9 @@ public sealed class BacktestReplay
         var includeFunding = fundingSettlements is { Count: > 0 };
         var fundingIndex = 0;
         var riskEngine = new RiskEngine();
+        var closeByDay = new Dictionary<DateOnly, decimal>();
         var profile = ProfileFromSettings(settings);
-        var template = !string.IsNullOrWhiteSpace(definition.Template) || definition.Params is not null;
-        var cache = indicatorCache ?? (template ? new CausalIndicatorCache(ordered) : null);
+        var cache = indicatorCache ?? new CausalIndicatorCache(ordered);
         var loopFrom = indexWindow ? evalFrom : 0;
 
         for (var i = loopFrom; i < ordered.Count; i++)
@@ -195,7 +199,7 @@ public sealed class BacktestReplay
                 inWindow++;
             }
 
-            if (pendingReverse is { } reverseSide && pendingExit && open is not null)
+            if (pendingReverse is { } reverseSide && pendingExit && open is not null && i >= pendingDue)
             {
                 Close(open, ApplySlippage(bar.Open, settings.SlippagePercent, worseForBuy: open.Side == PositionSide.Short), bar.Open, bar.OpenTime, pendingExitReason, settings, trades, ref equity, ref feesPaid, ref slippagePaid, ref grossPnl, ref consecutiveLosses, ref lastLossAt, ref dayPnl);
                 open = null;
@@ -204,7 +208,7 @@ public sealed class BacktestReplay
                 pendingReverse = null;
             }
 
-            if (pendingEntry is { } entrySide && open is null)
+            if (pendingEntry is { } entrySide && open is null && i >= pendingDue)
             {
                 var utcDay = new DateTimeOffset(bar.OpenTime.UtcDateTime.Date, TimeSpan.Zero);
                 if (utcDay != dayStart)
@@ -266,7 +270,7 @@ public sealed class BacktestReplay
                 pendingStop = null;
                 pendingTake = null;
             }
-            else if (pendingExit && open is not null)
+            else if (pendingExit && open is not null && i >= pendingDue)
             {
                 Close(open, ApplySlippage(bar.Open, settings.SlippagePercent, worseForBuy: open.Side == PositionSide.Short), bar.Open, bar.OpenTime, pendingExitReason, settings, trades, ref equity, ref feesPaid, ref slippagePaid, ref grossPnl, ref consecutiveLosses, ref lastLossAt, ref dayPnl);
                 open = null;
@@ -318,7 +322,7 @@ public sealed class BacktestReplay
 
                 if (stop is { } stopPrice && open.Side == PositionSide.Long && bar.Low <= stopPrice)
                 {
-                    var mid = Math.Min(stopPrice, bar.Low);
+                    var mid = StopTouchPrice(stopPrice, bar.Open, isShort: false);
                     var fill = ApplySlippage(mid, settings.SlippagePercent, worseForBuy: false);
                     Close(open, fill, mid, bar.CloseTime, "Stop loss", settings, trades, ref equity, ref feesPaid, ref slippagePaid, ref grossPnl, ref consecutiveLosses, ref lastLossAt, ref dayPnl);
                     open = null;
@@ -326,7 +330,7 @@ public sealed class BacktestReplay
                 }
                 else if (stop is { } shortStop && open.Side == PositionSide.Short && bar.High >= shortStop)
                 {
-                    var mid = Math.Max(shortStop, bar.High);
+                    var mid = StopTouchPrice(shortStop, bar.Open, isShort: true);
                     var fill = ApplySlippage(mid, settings.SlippagePercent, worseForBuy: true);
                     Close(open, fill, mid, bar.CloseTime, "Stop loss", settings, trades, ref equity, ref feesPaid, ref slippagePaid, ref grossPnl, ref consecutiveLosses, ref lastLossAt, ref dayPnl);
                     open = null;
@@ -356,9 +360,21 @@ public sealed class BacktestReplay
                     open = null;
                     pendingExit = false;
                 }
+                else if (settings.BreakEvenAtR > 0m && !open.BreakEvenArmed && stop is { } initialStop)
+                {
+                    var risk = Math.Abs(open.EntryPrice - initialStop);
+                    var reached = open.Side == PositionSide.Long
+                        ? bar.High >= open.EntryPrice + risk * settings.BreakEvenAtR
+                        : bar.Low <= open.EntryPrice - risk * settings.BreakEvenAtR;
+                    if (risk > 0m && reached)
+                    {
+                        open = open with { StopPrice = open.EntryPrice, BreakEvenArmed = true };
+                    }
+                }
             }
 
             var mark = equity + (open is null ? 0m : Direction(open.Side) * (bar.Close - open.EntryPrice) * open.Quantity);
+            closeByDay[DateOnly.FromDateTime(bar.CloseTime.UtcDateTime)] = mark;
             if (mark > peak)
             {
                 peak = mark;
@@ -399,38 +415,14 @@ public sealed class BacktestReplay
                     IndexPrice = futures?.IndexPrice,
                     NormalizedBasis = futures?.NormalizedBasis
                 };
-                if (cache is not null)
-                {
-                    detail = _engine.EvaluateDetailAt(definition, evalContext, cache, i);
-                    signal = detail.Signal;
-                    reason = detail.Reason;
-                }
-                else
-                {
-                    signal = _engine.Evaluate(
-                        definition,
-                        new StrategyContext
-                        {
-                            ClosedCandles = new PrefixList<MarketCandle>(ordered, i + 1),
-                            AverageEntryPrice = open?.EntryPrice,
-                            CurrentPrice = bar.Close,
-                            HasOpenPosition = open is not null,
-                            PositionSide = open?.Side ?? PositionSide.Long,
-                            PositionOpenedAt = open?.OpenedAt,
-                            ProtectiveStopPrice = open?.StopPrice,
-                            HigherTimeframeCache = higherTimeframeCache,
-                            OpenInterest = PrefixFutures(futures?.OpenInterest, i + 1),
-                            FundingRate = PrefixFutures(futures?.FundingRate, i + 1),
-                            MarkPrice = PrefixFutures(futures?.MarkPrice, i + 1),
-                            IndexPrice = PrefixFutures(futures?.IndexPrice, i + 1),
-                            NormalizedBasis = PrefixFutures(futures?.NormalizedBasis, i + 1)
-                        },
-                        out reason);
-                }
+                detail = _engine.EvaluateDetailAt(definition, evalContext, cache, i);
+                signal = detail.Signal;
+                reason = detail.Reason;
 
                 if (open is null && pendingEntry is null && signal is SignalType.Buy or SignalType.Sell)
                 {
                     pendingEntry = signal == SignalType.Sell ? PositionSide.Short : PositionSide.Long;
+                    pendingDue = i + 1 + Math.Max(0, settings.ExecutionDelayBars);
                     pendingStop = detail?.SuggestedStop;
                     pendingTake = detail?.SuggestedTakeProfit;
                 }
@@ -440,6 +432,7 @@ public sealed class BacktestReplay
                         || (open.Side == PositionSide.Short && signal == SignalType.Buy)))
                 {
                     pendingExit = true;
+                    pendingDue = i + 1 + Math.Max(0, settings.ExecutionDelayBars);
                     pendingExitReason = string.IsNullOrWhiteSpace(reason) ? "Exit" : reason;
                     var opposite = (open.Side == PositionSide.Long && signal == SignalType.Sell)
                         || (open.Side == PositionSide.Short && signal == SignalType.Buy);
@@ -471,21 +464,12 @@ public sealed class BacktestReplay
                 ? ordered[lastProcessed]
                 : ordered.Last(c => c.OpenTime <= end);
             Close(open, ApplySlippage(last.Close, settings.SlippagePercent, worseForBuy: open.Side == PositionSide.Short), last.Close, last.CloseTime, "End of window", settings, trades, ref equity, ref feesPaid, ref slippagePaid, ref grossPnl, ref consecutiveLosses, ref lastLossAt, ref dayPnl);
+            closeByDay[DateOnly.FromDateTime(last.CloseTime.UtcDateTime)] = equity;
         }
 
         var net = equity - settings.InitialBalance;
-        var returns = trades.Select(t => t.PnL / Math.Max(settings.InitialBalance, 1m)).ToList();
-        decimal? sharpe = null;
-        if (returns.Count >= 2)
-        {
-            var mean = returns.Average();
-            var variance = returns.Sum(r => (r - mean) * (r - mean)) / (returns.Count - 1);
-            var stdev = (decimal)Math.Sqrt((double)Math.Max(variance, 0m));
-            if (stdev > 0m)
-            {
-                sharpe = Round(mean / stdev * (decimal)Math.Sqrt(returns.Count));
-            }
-        }
+        var ratios = DailyReturnMetrics.From(DailyReturnMetrics.Returns(closeByDay, Math.Max(settings.InitialBalance, 1m)));
+        var sharpe = ratios.Sharpe;
 
         var windowStart = indexWindow && evalFrom < ordered.Count
             ? ordered[evalFrom].OpenTime
@@ -548,8 +532,16 @@ public sealed class BacktestReplay
             BookReturns: [bookReturn],
             BookDrawdowns: [maxDrawdown],
             SlippagePaid: Round(slippagePaid),
-            GrossPnl: Round(grossPnl));
+            GrossPnl: Round(grossPnl),
+            SortinoRatio: ratios.Sortino);
     }
+
+    /// <summary>
+    /// Where a stop-market order triggers before slippage: the stop price, or the bar open when the bar gapped through it.
+    /// Using the bar's extreme here and then adding slippage would charge the gap twice.
+    /// </summary>
+    public static decimal StopTouchPrice(decimal stopPrice, decimal barOpen, bool isShort) =>
+        isShort ? Math.Max(stopPrice, barOpen) : Math.Min(stopPrice, barOpen);
 
     public static bool AccountingIdentityHolds(ReplayResult result, decimal tolerance = 0.05m)
     {
@@ -772,34 +764,6 @@ public sealed class BacktestReplay
         decimal MidEntryPrice = 0m,
         decimal? StopPrice = null,
         decimal? TakePrice = null,
-        int FillIndex = 0);
-
-    private static IReadOnlyList<decimal?>? PrefixFutures(IReadOnlyList<decimal?>? series, int take) =>
-        series is null ? null : new PrefixList<decimal?>(series, take);
-
-    private sealed class PrefixList<T> : IReadOnlyList<T>
-    {
-        private readonly IReadOnlyList<T> _items;
-        private readonly int _count;
-
-        public PrefixList(IReadOnlyList<T> items, int count)
-        {
-            _items = items;
-            _count = Math.Clamp(count, 0, items.Count);
-        }
-
-        public T this[int index] => index >= 0 && index < _count ? _items[index] : throw new ArgumentOutOfRangeException(nameof(index));
-
-        public int Count => _count;
-
-        public IEnumerator<T> GetEnumerator()
-        {
-            for (var i = 0; i < _count; i++)
-            {
-                yield return _items[i];
-            }
-        }
-
-        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
-    }
+        int FillIndex = 0,
+        bool BreakEvenArmed = false);
 }

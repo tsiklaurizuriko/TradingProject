@@ -18,7 +18,8 @@ public sealed record BotDto(
     DateTimeOffset? StartedAt,
     Guid StrategyId,
     Guid RiskProfileId,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    bool IsNotActive = false);
 
 public sealed record PositionDto(
     Guid Id,
@@ -80,7 +81,10 @@ public sealed record TradeDto(
     string Mode = "Paper",
     string Side = "Long",
     string FeeStatus = "Unknown",
-    string? FeeAsset = null);
+    string? FeeAsset = null,
+    decimal? NetPnL = null,
+    decimal? FundingPnL = null,
+    string? NetPendingReason = null);
 
 public sealed record SignalDto(
     Guid Id,
@@ -131,7 +135,9 @@ public sealed record RiskProfileDto(
     decimal MinimumLiquidationSafetyBufferPercent,
     bool IsActive,
     bool AllowLive,
-    bool IsSystem);
+    bool IsSystem,
+    decimal MaxWeeklyLossPercent = 0m,
+    decimal MaxDrawdownPercent = 0m);
 
 public sealed record SaveRiskProfileRequest(
     decimal RiskPerTradePercent,
@@ -144,7 +150,9 @@ public sealed record SaveRiskProfileRequest(
     int MaxConsecutiveLosses,
     int CooldownMinutes,
     decimal MinimumLiquidationSafetyBufferPercent,
-    bool AllowLive);
+    bool AllowLive,
+    decimal? MaxWeeklyLossPercent = null,
+    decimal? MaxDrawdownPercent = null);
 
 public sealed record RiskPreviewDto(
     string ProfileName,
@@ -345,7 +353,9 @@ public sealed record PerformanceTradeRow(
     string Side = "Long",
     string CorrelationId = "",
     FeeKnowledge FeeStatus = FeeKnowledge.Unknown,
-    string? FeeAsset = null);
+    string? FeeAsset = null,
+    decimal? NetPnL = null,
+    decimal? FundingPnL = null);
 
 public sealed record PerformanceDayDto(string Date, decimal PnL, decimal Cumulative);
 
@@ -398,7 +408,13 @@ public sealed record PerformanceDto(
     decimal MonthlyPnL = 0m,
     IReadOnlyList<StrategyResultDto>? StrategyResults = null,
     string FeesStatus = "Unknown",
-    string? FeeAsset = null);
+    string? FeeAsset = null,
+    decimal GrossPnL = 0m,
+    decimal? NetPnL = null,
+    decimal KnownNetPnL = 0m,
+    int PendingNetTrades = 0,
+    decimal FundingPnL = 0m,
+    int FundingMissingTrades = 0);
 
 public interface ITradingQueryService
 {
@@ -432,6 +448,10 @@ public sealed record CreateBotsResult(int Created, int Skipped);
 public sealed record StartBotsRequest(string Mode, Guid? PreferredStrategyId = null);
 
 public sealed record StrategyBotsRequest(string Mode, Guid StrategyId);
+
+public sealed record SetStrategyBotsActiveRequest(string Mode, Guid StrategyId, bool IsNotActive);
+
+public sealed record SetBotsActiveResult(int Updated, int Stopped);
 
 public sealed record StartBotsResult(int Started, int Failed, string? Detail);
 
@@ -521,6 +541,7 @@ public interface IBotLifecycleService
     Task<CreateBotsResult> CreateSymbolBotsAsync(Guid userId, TradingMode mode, Guid strategyId, Guid riskProfileId, IReadOnlyList<string> symbols, CancellationToken cancellationToken = default);
     Task<StartBotsResult> StartAllIdleAsync(Guid userId, TradingMode mode, Guid? preferredStrategyId = null, CancellationToken cancellationToken = default);
     Task<StopBotsResult> StopAllRunningAsync(Guid userId, TradingMode mode, Guid? strategyId = null, CancellationToken cancellationToken = default);
+    Task<SetBotsActiveResult> SetStrategyBotsNotActiveAsync(Guid userId, TradingMode mode, Guid strategyId, bool isNotActive, CancellationToken cancellationToken = default);
     Task<BotDto> StartAsync(Guid botId, CancellationToken cancellationToken = default);
     Task<BotDto> StopAsync(Guid botId, CancellationToken cancellationToken = default);
     Task<DeleteBotsResult> DeleteBotsAsync(IReadOnlyList<Guid> ids, TradingMode? requiredMode, CancellationToken cancellationToken = default);
@@ -562,4 +583,22 @@ public interface IBotEngine
 {
     Task EvaluateRunningBotsAsync(CancellationToken cancellationToken = default);
     Task ClosePositionAsync(Guid positionId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Stops every running bot, then closes every live position with reduce-only market orders: first the
+    /// positions in the local book, then anything else Binance still reports. Ends with a fresh exchange read.
+    /// Safe to call again; reduce-only orders cannot open or flip a position.
+    /// </summary>
+    Task<FlattenAllReport> FlattenAllAsync(string reason, CancellationToken cancellationToken = default);
+}
+
+/// <param name="Remaining">Positions Binance still reported after the sweep, as "COIN side qty".</param>
+public sealed record FlattenAllReport(
+    int BotsStopped,
+    int LocalPositionsClosed,
+    int ExchangeClosesSent,
+    IReadOnlyList<string> Remaining,
+    IReadOnlyList<string> Failures)
+{
+    public bool Flat => Remaining.Count == 0 && Failures.Count == 0;
 }

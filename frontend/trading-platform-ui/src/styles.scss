@@ -875,6 +875,8 @@ a.btn { text-decoration: none; }
 .badge-paper { background: var(--accent-soft); color: #9ec5ff; }
 .badge-testnet { background: var(--warning-soft); color: #ffd58a; }
 .badge-live { background: var(--danger-soft); color: #ff9aaa; }
+.badge-shadow { background: #1f2a3a; color: #b8c7dc; }
+.badge-stale { background: var(--warning-soft); color: #ffd58a; }
 .badge-ok, .badge-running { background: var(--success-soft); color: #6dffb0; }
 .badge-paused { background: var(--warning-soft); color: #ffd58a; }
 .badge-stopped { background: #1b2433; color: var(--text-secondary); }

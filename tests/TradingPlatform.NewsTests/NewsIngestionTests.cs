@@ -98,6 +98,44 @@ public sealed class NewsIngestionTests
     }
 
     [Fact]
+    public void Ai_classification_without_a_model_client_still_scores_events()
+    {
+        var published = new DateTimeOffset(2026, 9, 26, 11, 0, 0, TimeSpan.Zero);
+        var article = Article("coindesk", "CoinDesk", "https://www.coindesk.com/etf", published);
+        var rules = new NewsPipeline(new NewsOptions()).Build([article]).Single();
+        var schema = new NewsPipeline(new NewsOptions(), new SchemaNewsClassifier()).Build([article]).Single();
+        schema.Direction.Should().Be(rules.Direction).And.Be(EventDirection.Bullish);
+        schema.ImpactScore.Should().Be(rules.ImpactScore);
+        schema.Reason.Should().StartWith("AI classification has no model client");
+    }
+
+    [Fact]
+    public void A_copy_of_any_clustered_article_joins_that_event()
+    {
+        var published = new DateTimeOffset(2026, 9, 26, 11, 0, 0, TimeSpan.Zero);
+        var first = Article("coindesk", "CoinDesk", "https://www.coindesk.com/etf", published);
+        var second = Article("rss", "The Block", "https://www.theblock.co/post/etf", published.AddMinutes(10));
+        var copy = Article("gdelt", "theblock.co", "https://theblock.co/post/etf/", published.AddMinutes(20));
+        copy.Title = "The Block: spot fund decision lands";
+        var events = new NewsPipeline(new NewsOptions()).Build([first, second, copy]);
+        events.Should().ContainSingle();
+        events[0].OriginalArticles.Should().HaveCount(3);
+    }
+
+    [Fact]
+    public void An_event_is_detected_when_the_first_copy_arrives()
+    {
+        var published = new DateTimeOffset(2026, 9, 26, 11, 0, 0, TimeSpan.Zero);
+        var first = Article("coingecko", "Cointelegraph", "https://cointelegraph.com/news/etf", published);
+        var second = Article("gdelt", "cointelegraph.com", "https://www.cointelegraph.com/news/etf", published);
+        first.RetrievedAtUtc = published.AddMinutes(4);
+        second.RetrievedAtUtc = published.AddHours(3);
+        var events = new NewsPipeline(new NewsOptions()).Build([second, first]);
+        events.Should().ContainSingle();
+        events[0].DetectedAtUtc.Should().Be(published.AddMinutes(4));
+    }
+
+    [Fact]
     public async Task A_provider_failure_does_not_stop_the_other_provider()
     {
         var root = Path.Combine(Path.GetTempPath(), "news-isolation-" + Guid.NewGuid().ToString("N"));

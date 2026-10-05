@@ -326,9 +326,25 @@ public static class AlphaIndicatorSeries
         return false;
     }
 
+    /// <summary><paramref name="htf"/> must be ordered by time, as <c>StrategyMarketContext.HigherTimeframeCache</c> builds it.</summary>
     public static int LastCompletedHigherTimeframe(IReadOnlyList<MarketCandle> htf, DateTimeOffset signalCloseTime)
     {
-        for (var i = htf.Count - 1; i >= 0; i--)
+        int lo = 0, hi = htf.Count - 1, last = -1;
+        while (lo <= hi)
+        {
+            var mid = (lo + hi) / 2;
+            if (htf[mid].CloseTime <= signalCloseTime)
+            {
+                last = mid;
+                lo = mid + 1;
+            }
+            else
+            {
+                hi = mid - 1;
+            }
+        }
+
+        for (var i = last; i >= 0; i--)
         {
             if (htf[i].IsClosed && htf[i].CloseTime <= signalCloseTime)
             {

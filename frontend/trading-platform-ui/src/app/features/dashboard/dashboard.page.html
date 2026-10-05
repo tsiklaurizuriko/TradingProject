@@ -135,7 +135,7 @@
   </section>
 
   <div class="dash-bots">
-    <app-bot-table title="Live Bots" [bots]="modeBots()" [positions]="modePositions()" [signals]="trading.workspaceSignals()" (start)="startBot($event)" (stop)="stopBot($event)" />
+    <app-bot-table title="Live Bots" [bots]="activeBots()" [positions]="modePositions()" [signals]="trading.workspaceSignals()" (start)="startBot($event)" (stop)="stopBot($event)" />
   </div>
   <div class="dash-book">
     <app-ledger-book

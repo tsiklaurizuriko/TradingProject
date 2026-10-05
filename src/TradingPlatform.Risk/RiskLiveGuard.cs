@@ -23,7 +23,9 @@ public sealed record LiveRiskFacts(
     int ConsecutiveLosses,
     DateTimeOffset? LastLossAt,
     DateTimeOffset UtcNow,
-    bool DrawdownKnown);
+    bool DrawdownKnown,
+    decimal WeeklyRealizedPnl = 0m,
+    decimal? DrawdownPercent = null);
 
 public static class RiskLiveGuard
 {
@@ -143,6 +145,16 @@ public static class RiskLiveGuard
         if (facts.DailyRealizedPnl <= -dailyLimit)
         {
             return "Daily realized loss is at the limit.";
+        }
+
+        if (profile.MaxWeeklyLossPercent > 0m && facts.WeeklyRealizedPnl <= -(facts.Equity * profile.MaxWeeklyLossPercent / 100m))
+        {
+            return "Weekly realized loss is at the limit.";
+        }
+
+        if (profile.MaxDrawdownPercent > 0m && facts.DrawdownPercent is { } drawdown && drawdown >= profile.MaxDrawdownPercent)
+        {
+            return "Equity drawdown from its recorded peak is at the limit.";
         }
 
         if (facts.Leverage > profile.MaxLeverage)

@@ -14,7 +14,8 @@ public static class NewsEventClusterer
         var clusters = new List<List<RawNewsItem>>();
         foreach (var item in ordered)
         {
-            var match = clusters.FirstOrDefault(cluster => SameEvent(cluster[0], item, options));
+            var match = clusters.FirstOrDefault(cluster => SameEvent(cluster[0], item, options))
+                ?? clusters.FirstOrDefault(cluster => cluster.Skip(1).Any(member => SameArticle(member, item)));
             if (match is null)
             {
                 clusters.Add([item]);
@@ -49,7 +50,8 @@ public static class NewsEventClusterer
         }
     }
 
-    public static bool SameEvent(RawNewsItem left, RawNewsItem right, NewsOptions options)
+    /// <summary>The same article: same publisher id or the same canonical URL.</summary>
+    public static bool SameArticle(RawNewsItem left, RawNewsItem right)
     {
         if (!string.IsNullOrWhiteSpace(left.OriginalSourceId)
             && string.Equals(left.Source, right.Source, StringComparison.OrdinalIgnoreCase)
@@ -60,7 +62,12 @@ public static class NewsEventClusterer
 
         var leftUrl = CanonicalUrl(left.SourceUrl);
         var rightUrl = CanonicalUrl(right.SourceUrl);
-        if (leftUrl.Length > 0 && string.Equals(leftUrl, rightUrl, StringComparison.OrdinalIgnoreCase))
+        return leftUrl.Length > 0 && string.Equals(leftUrl, rightUrl, StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static bool SameEvent(RawNewsItem left, RawNewsItem right, NewsOptions options)
+    {
+        if (SameArticle(left, right))
         {
             return true;
         }
@@ -149,7 +156,7 @@ public static class NewsEventClusterer
         {
             EventId = Hash(first),
             PublishedAtUtc = first.PublishedAtUtc,
-            DetectedAtUtc = cluster.Max(item => item.RetrievedAtUtc),
+            DetectedAtUtc = cluster.Min(item => item.RetrievedAtUtc),
             Assets = cluster.SelectMany(item => item.RelatedAssets).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
             ProviderAssetIds = cluster.SelectMany(item => item.RelatedProviderIds).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
             SourceCount = sources,

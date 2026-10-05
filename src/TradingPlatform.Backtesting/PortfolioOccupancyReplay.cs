@@ -271,7 +271,7 @@ public static class PortfolioOccupancyReplay
         {
             if (bar.Low <= slot.Stop)
             {
-                Close(slot, ApplySlippage(slot.Stop, settings.SlippagePercent, worseForBuy: false), bar.CloseTime, "Stop loss", settings, trades, ref equity);
+                Close(slot, ApplySlippage(BacktestReplay.StopTouchPrice(slot.Stop, bar.Open, isShort: false), settings.SlippagePercent, worseForBuy: false), bar.CloseTime, "Stop loss", settings, trades, ref equity);
                 return true;
             }
 
@@ -285,7 +285,7 @@ public static class PortfolioOccupancyReplay
         {
             if (bar.High >= slot.Stop)
             {
-                Close(slot, ApplySlippage(slot.Stop, settings.SlippagePercent, worseForBuy: true), bar.CloseTime, "Stop loss", settings, trades, ref equity);
+                Close(slot, ApplySlippage(BacktestReplay.StopTouchPrice(slot.Stop, bar.Open, isShort: true), settings.SlippagePercent, worseForBuy: true), bar.CloseTime, "Stop loss", settings, trades, ref equity);
                 return true;
             }
 

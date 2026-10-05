@@ -18,6 +18,11 @@ public static class DatabaseInitializer
         try
         {
             await db.Database.MigrateAsync(cancellationToken);
+            await TradingPlatform.Infrastructure.Security.CredentialRekey.RunAsync(
+                db,
+                scope.ServiceProvider.GetRequiredService<IConfiguration>()["Credentials:EncryptionKey"] ?? string.Empty,
+                logger,
+                cancellationToken);
             await ApplyCanonicalStrategiesAsync(db, logger, cancellationToken);
             if (environment.IsDevelopment())
             {
@@ -90,7 +95,7 @@ public static class DatabaseInitializer
 
         foreach (var review in plan.Reviews.Distinct(StringComparer.Ordinal))
         {
-            logger.LogWarning("Canonical strategy review: {Review}", review);
+            logger.LogInformation("Canonical strategy review: {Review}", review);
         }
 
         var enabled = strategies

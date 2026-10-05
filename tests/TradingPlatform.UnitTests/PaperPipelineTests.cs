@@ -398,12 +398,261 @@ public sealed class PaperPipelineTests
         bot.LastError.Should().Contain("not an exchange fill");
     }
 
-    private static List<MarketCandle> CrossingCandles()
+    [Theory]
+    [InlineData(49_990, 50_010, false)]
+    [InlineData(49_999, 50_001, true)]
+    public async Task Live_entry_checks_the_book_spread_and_sizes_with_the_account_fee(decimal bid, decimal ask, bool entered)
     {
+        var options = new DbContextOptionsBuilder<TradingDbContext>()
+            .UseInMemoryDatabase($"live-entry-{Guid.NewGuid():N}")
+            .Options;
+        await using var db = new TradingDbContext(options);
+        var user = new User { Email = "admin@localhost", NormalizedEmail = "ADMIN@LOCALHOST", DisplayName = "Admin", PasswordHash = "x" };
+        var strategy = new Strategy { User = user, UserId = user.Id, Name = "Always long" };
+        var version = new StrategyVersion
+        {
+            Strategy = strategy,
+            VersionNumber = 1,
+            DefinitionJson = """
+                {
+                  "name": "Always",
+                  "version": 1,
+                  "symbol": "BTCUSDT",
+                  "timeframe": "5m",
+                  "entry": { "operator": "AND", "conditions": [ { "indicator": "SMA", "period": 2, "comparison": "GREATER_THAN", "value": 0 } ] },
+                  "exit": { "operator": "OR", "conditions": [ { "type": "STOP_LOSS", "percent": 50 } ] }
+                }
+                """,
+            Symbol = "BTCUSDT",
+            Timeframe = Timeframe.FiveMinutes
+        };
+        strategy.Versions.Add(version);
+        var risk = new RiskProfile
+        {
+            Name = "LOW",
+            RiskPerTradePercent = 0.5m,
+            StopLossPercent = 2m,
+            TakeProfitPercent = 4m,
+            MaxLeverage = 3m,
+            MaxDailyLossPercent = 3m,
+            MaxPortfolioRiskPercent = 4m,
+            MaxSimultaneousPositions = 2,
+            AllowLive = true,
+            IsActive = true
+        };
+        var account = new ExchangeAccount { User = user, UserId = user.Id, Name = "Live", ApiKeyFingerprint = "live" };
+        var bot = new Bot
+        {
+            User = user,
+            UserId = user.Id,
+            ExchangeAccount = account,
+            StrategyVersion = version,
+            RiskProfile = risk,
+            Name = "BTCUSDT Live",
+            Status = BotStatus.Running,
+            Mode = TradingMode.Live,
+            Symbol = "BTCUSDT",
+            Timeframe = Timeframe.FiveMinutes,
+            StartedAt = DateTimeOffset.UtcNow
+        };
+        db.Users.Add(user);
+        db.Strategies.Add(strategy);
+        db.RiskProfiles.Add(risk);
+        db.ExchangeAccounts.Add(account);
+        db.Symbols.Add(new Symbol { Name = "BTCUSDT", BaseAsset = "BTC", QuoteAsset = "USDT", TickSize = 0.1m, StepSize = 0.001m, MinQuantity = 0.001m, MinNotional = 5m, QuantityPrecision = 3 });
+        db.Bots.Add(bot);
+        await db.SaveChangesAsync();
+
+        var candles = CrossingCandles(DateTimeOffset.UtcNow.AddMinutes(-80 * 5), basePrice: 50_000m);
+        var last = candles[^1].Close;
+        var cache = new MarketDataCache();
+        var store = new TradingStore(db);
+        var live = new LiveAccountCache();
+        live.Set(new LiveAccountSnapshot
+        {
+            HasKeys = true,
+            CanTrade = true,
+            FuturesBookFresh = true,
+            FuturesUsdt = 10_000m,
+            FuturesEquity = 10_000m,
+            UsdtFree = 10_000m,
+            UpdatedAt = DateTimeOffset.UtcNow
+        });
+        var clock = new SystemClock();
+        var correlation = new CorrelationIdAccessor();
+        var liveOrders = new RecordingLiveConnector { TakerFee = 0.05m };
+        var reconciliation = new ReconciliationState();
+        var engine = new BotEngine(
+            store,
+            new FakeMarket(candles, last) { Book = [new FuturesBookTicker("BTCUSDT", bid, ask)] },
+            cache,
+            new StrategyEngine(),
+            new StrategyDefinitionValidator(),
+            new RiskEngine(),
+            new ExchangeConnectorFactory([liveOrders]),
+            live,
+            new NullTradingRealtimePublisher(),
+            clock,
+            correlation,
+            Options.Create(new TradingOptions { LiveTradingEnabled = true, MaxEntrySpreadBps = 3m }),
+            new LiveIsolatedReconciler(store, live, cache, clock, correlation, NullLogger<LiveIsolatedReconciler>.Instance, reconciliation),
+            NullLogger<BotEngine>.Instance,
+            reconciliation: reconciliation);
+
+        await engine.EvaluateRunningBotsAsync();
+
+        if (entered)
+        {
+            liveOrders.Placed.Should().ContainSingle(order => !order.ReduceOnly, bot.LastError);
+            liveOrders.FeeAsked.Should().Contain("BTCUSDT");
+        }
+        else
+        {
+            liveOrders.Placed.Should().BeEmpty();
+            bot.LastError.Should().Contain("Spread");
+        }
+    }
+
+    [Fact]
+    public async Task Shadow_venue_runs_the_live_engine_from_entry_to_a_booked_stop_without_an_api_key()
+    {
+        var options = new DbContextOptionsBuilder<TradingDbContext>()
+            .UseInMemoryDatabase($"shadow-e2e-{Guid.NewGuid():N}")
+            .Options;
+        await using var db = new TradingDbContext(options);
+        var user = new User { Email = "admin@localhost", NormalizedEmail = "ADMIN@LOCALHOST", DisplayName = "Admin", PasswordHash = "x" };
+        var strategy = new Strategy { User = user, UserId = user.Id, Name = "Always long", IsEnabled = true };
+        var version = new StrategyVersion
+        {
+            Strategy = strategy,
+            VersionNumber = 1,
+            DefinitionJson = """
+                {
+                  "name": "Always",
+                  "version": 1,
+                  "symbol": "BTCUSDT",
+                  "timeframe": "5m",
+                  "entry": { "operator": "AND", "conditions": [ { "indicator": "SMA", "period": 2, "comparison": "GREATER_THAN", "value": 0 } ] },
+                  "exit": { "operator": "OR", "conditions": [ { "type": "STOP_LOSS", "percent": 50 } ] }
+                }
+                """,
+            Symbol = "BTCUSDT",
+            Timeframe = Timeframe.FiveMinutes
+        };
+        strategy.Versions.Add(version);
+        var risk = new RiskProfile
+        {
+            Name = "LOW",
+            RiskPerTradePercent = 0.5m,
+            StopLossPercent = 2m,
+            TakeProfitPercent = 4m,
+            MaxLeverage = 3m,
+            MaxDailyLossPercent = 3m,
+            MaxPortfolioRiskPercent = 4m,
+            MaxSimultaneousPositions = 2,
+            AllowLive = true,
+            IsActive = true
+        };
+        var account = new ExchangeAccount { User = user, UserId = user.Id, Name = "Binance Live", ApiKeyFingerprint = "none" };
+        var bot = new Bot
+        {
+            User = user,
+            UserId = user.Id,
+            ExchangeAccount = account,
+            StrategyVersion = version,
+            RiskProfile = risk,
+            Name = "BTCUSDT Shadow",
+            Status = BotStatus.Running,
+            Mode = TradingMode.Live,
+            Symbol = "BTCUSDT",
+            Timeframe = Timeframe.FiveMinutes,
+            StartedAt = DateTimeOffset.UtcNow
+        };
+        db.Users.Add(user);
+        db.Strategies.Add(strategy);
+        db.RiskProfiles.Add(risk);
+        db.ExchangeAccounts.Add(account);
+        db.Symbols.Add(new Symbol { Name = "BTCUSDT", BaseAsset = "BTC", QuoteAsset = "USDT", TickSize = 0.1m, StepSize = 0.001m, MinQuantity = 0.001m, MinNotional = 5m, QuantityPrecision = 3 });
+        db.Bots.Add(bot);
+        await db.SaveChangesAsync();
+
+        var candles = CrossingCandles(DateTimeOffset.UtcNow.AddMinutes(-80 * 5), basePrice: 50_000m);
+        var last = candles[^1].Close;
+        var market = new FakeMarket(candles, last)
+        {
+            Book = [new FuturesBookTicker("BTCUSDT", last - 0.5m, last + 0.5m)],
+            Premium = [new FuturesPremiumIndex("BTCUSDT", last, 0.0001m)],
+            Universe = [new RankedUsdtSpotSymbol("BTCUSDT", "BTC", "USDT", 1_000_000m, last, 0m, 0.1m, 0.001m, 0.001m, 5m, 1, 3)]
+        };
+        var cache = new MarketDataCache();
+        var store = new TradingStore(db);
+        var live = new LiveAccountCache();
+        var clock = new SystemClock();
+        var correlation = new CorrelationIdAccessor();
+        var shadow = new TradingPlatform.Execution.Shadow.ShadowExchange(new TradingPlatform.Execution.Shadow.ShadowExchangeOptions { StatePath = "" });
+        var feed = new TradingPlatform.Execution.Shadow.PublicShadowPriceFeed(market, clock);
+        var accounts = new TradingPlatform.Trading.Shadow.ShadowExchangeAccountService(
+            shadow,
+            feed,
+            store,
+            new ShadowVenueTests.MemoryCredentials(),
+            live,
+            clock,
+            NullLogger<TradingPlatform.Trading.Shadow.ShadowExchangeAccountService>.Instance);
+        var reconciliation = new ReconciliationState();
+        BotEngine Engine() => new(
+            store,
+            market,
+            cache,
+            new StrategyEngine(),
+            new StrategyDefinitionValidator(),
+            new RiskEngine(),
+            new ExchangeConnectorFactory([new TradingPlatform.Execution.Shadow.ShadowExchangeConnectorFactory(shadow, feed, market, clock)]),
+            live,
+            new NullTradingRealtimePublisher(),
+            clock,
+            correlation,
+            Options.Create(new TradingOptions { Venue = "Shadow", ShadowTradingEnabled = true, MaxEntrySpreadBps = 3m }),
+            new LiveIsolatedReconciler(store, live, cache, clock, correlation, NullLogger<LiveIsolatedReconciler>.Instance, reconciliation),
+            NullLogger<BotEngine>.Instance,
+            accounts: accounts,
+            reconciliation: reconciliation);
+
+        await Engine().EvaluateRunningBotsAsync();
+
+        var position = shadow.Positions(new Dictionary<string, decimal>()).Should().ContainSingle(bot.LastError).Subject;
+        position.Side.Should().Be(Domain.Positions.PositionSide.Long);
+        var stop = shadow.WorkingAlgos().Should().ContainSingle(algo => algo.IsStop).Subject;
+        (await db.Positions.SingleAsync(p => p.ClosedAt == null)).Quantity.Should().Be(position.Quantity);
+        (await db.Trades.SingleAsync()).ClosedAt.Should().BeNull();
+
+        var through = stop.Trigger - 10m;
+        shadow.Tick(
+            new Dictionary<string, decimal> { ["BTCUSDT"] = through },
+            new Dictionary<string, decimal>(),
+            _ => new FuturesBookTicker("BTCUSDT", through - 1m, through),
+            DateTimeOffset.UtcNow).Should().Be(1);
+        await accounts.GetStatusAsync(Guid.Empty);
+        await Engine().EvaluateRunningBotsAsync();
+
+        var trade = await db.Trades.SingleAsync();
+        trade.ClosedAt.Should().NotBeNull();
+        trade.ExitPrice.Should().BeLessThan(stop.Trigger);
+        trade.NetPnL.Should().NotBeNull("shadow fees are known USDT amounts");
+        trade.NetPnL.Should().BeLessThan(0m);
+        (await db.Positions.CountAsync(p => p.ClosedAt == null)).Should().Be(0);
+        reconciliation.BlockReason.Should().BeNull();
+        shadow.Positions(new Dictionary<string, decimal>()).Should().BeEmpty();
+    }
+
+    private static List<MarketCandle> CrossingCandles(DateTimeOffset? start = null, decimal basePrice = 100m)
+    {
+        var origin = start ?? DateTimeOffset.UnixEpoch;
+        var scale = basePrice / 100m;
         var candles = new List<MarketCandle>();
         for (var i = 0; i < 80; i++)
         {
-            var price = i < 50 ? 100m - i * 0.2m : 90m + (i - 50) * 0.8m;
+            var price = (i < 50 ? 100m - i * 0.2m : 90m + (i - 50) * 0.8m) * scale;
             candles.Add(new MarketCandle
             {
                 Open = price,
@@ -411,10 +660,10 @@ public sealed class PaperPipelineTests
                 Low = price,
                 Close = price,
                 Volume = 10,
-                OpenTime = DateTimeOffset.UnixEpoch.AddMinutes(i * 5),
-                CloseTime = DateTimeOffset.UnixEpoch.AddMinutes(i * 5 + 5),
+                OpenTime = origin.AddMinutes(i * 5),
+                CloseTime = origin.AddMinutes(i * 5 + 5),
                 IsClosed = true,
-                ExchangeTimestamp = DateTimeOffset.UnixEpoch.AddMinutes(i * 5 + 5)
+                ExchangeTimestamp = origin.AddMinutes(i * 5 + 5)
             });
         }
 
@@ -459,19 +708,25 @@ public sealed class PaperPipelineTests
 
         public Task<IReadOnlyList<RankedUsdtSpotSymbol>> GetPaperUniverseAsync(
             CancellationToken cancellationToken = default) =>
-            Task.FromResult<IReadOnlyList<RankedUsdtSpotSymbol>>([]);
+            Task.FromResult(Universe);
+
+        public IReadOnlyList<RankedUsdtSpotSymbol> Universe { get; init; } = [];
 
         public Task<IReadOnlyList<DiscoveredFuturesContract>> DiscoverUsdtPerpetualsAsync(
             CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<DiscoveredFuturesContract>>([]);
 
+        public IReadOnlyList<FuturesBookTicker> Book { get; init; } = [];
+
         public Task<IReadOnlyList<FuturesBookTicker>> GetBookTickersAsync(
             CancellationToken cancellationToken = default) =>
-            Task.FromResult<IReadOnlyList<FuturesBookTicker>>([]);
+            Task.FromResult(Book);
 
         public Task<IReadOnlyList<FuturesPremiumIndex>> GetPremiumIndexAsync(
             CancellationToken cancellationToken = default) =>
-            Task.FromResult<IReadOnlyList<FuturesPremiumIndex>>([]);
+            Task.FromResult(Premium);
+
+        public IReadOnlyList<FuturesPremiumIndex> Premium { get; set; } = [];
 
         public Task<(decimal? Previous, decimal? Latest)> GetOpenInterestPairAsync(
             string symbol,
@@ -565,5 +820,14 @@ public sealed class PaperPipelineTests
             Task.CompletedTask;
 
         public Task SubscribeUserDataAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public decimal? TakerFee { get; init; }
+        public List<string> FeeAsked { get; } = [];
+
+        public Task<decimal?> GetTakerFeePercentAsync(string symbol, CancellationToken cancellationToken = default)
+        {
+            FeeAsked.Add(symbol);
+            return Task.FromResult(TakerFee);
+        }
     }
 }

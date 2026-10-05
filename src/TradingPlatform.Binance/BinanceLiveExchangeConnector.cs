@@ -128,6 +128,8 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
         try
         {
             var trades = await _signed.GetFuturesUserTradesAsync(key, secret, order.Symbol, order.ExchangeOrderId, cancellationToken);
+            order = WithTradePrice(order, trades);
+            lookup = OrderLookup.Found(order);
             var commission = CommissionReader.FromUserTrades(trades);
             if (commission.Known)
             {
@@ -194,17 +196,47 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
             request.ReduceOnly,
             cancellationToken);
         var mapped = MapOrder(payload, request);
-        if ((mapped.Status == OrderStatus.Filled || mapped.Status == OrderStatus.PartiallyFilled)
-            && !string.IsNullOrWhiteSpace(mapped.ExchangeOrderId))
+        mapped = await AwaitMarketResultAsync(key, secret, request, mapped, cancellationToken);
+        if (mapped.FilledQuantity > 0m && !string.IsNullOrWhiteSpace(mapped.ExchangeOrderId))
         {
-            try
+            JsonElement? read = null;
+            foreach (var delay in TradePriceDelays)
             {
-                var trades = await _signed.GetFuturesUserTradesAsync(
-                    key,
-                    secret,
-                    request.Symbol,
-                    mapped.ExchangeOrderId,
-                    cancellationToken);
+                if (delay > TimeSpan.Zero)
+                {
+                    await Task.Delay(delay, cancellationToken);
+                    try
+                    {
+                        var again = await _signed.GetFuturesOrderAsync(key, secret, request.Symbol, null, mapped.ExchangeOrderId, cancellationToken);
+                        mapped = MapOrder(again, request) with { Fee = mapped.Fee, FeeKnown = mapped.FeeKnown, FeeAsset = mapped.FeeAsset };
+                    }
+                    catch (DomainException)
+                    {
+                    }
+                }
+
+                try
+                {
+                    read = await _signed.GetFuturesUserTradesAsync(
+                        key,
+                        secret,
+                        request.Symbol,
+                        mapped.ExchangeOrderId,
+                        cancellationToken);
+                    mapped = WithTradePrice(mapped, read.Value);
+                }
+                catch (DomainException)
+                {
+                }
+
+                if (mapped.AverageFillPrice is > 0m)
+                {
+                    break;
+                }
+            }
+
+            if (read is { } trades)
+            {
                 var fromTrades = CommissionReader.FromUserTrades(trades);
                 if (fromTrades.Known)
                 {
@@ -224,6 +256,57 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
                     mapped = mapped with { Fee = 0m, FeeKnown = false, FeeAsset = null };
                 }
             }
+        }
+
+        return mapped;
+    }
+
+    /// <summary>User trades can lag the order by a few seconds. Zero is the first read without waiting.</summary>
+    private static readonly TimeSpan[] TradePriceDelays =
+    [
+        TimeSpan.Zero,
+        TimeSpan.FromMilliseconds(500),
+        TimeSpan.FromMilliseconds(1000),
+        TimeSpan.FromMilliseconds(2000)
+    ];
+
+    private static readonly TimeSpan[] MarketResultDelays =
+    [
+        TimeSpan.FromMilliseconds(200),
+        TimeSpan.FromMilliseconds(400),
+        TimeSpan.FromMilliseconds(800),
+        TimeSpan.FromMilliseconds(1500)
+    ];
+
+    /// <summary>
+    /// USD-M can answer a MARKET order before matching finishes (status NEW, executedQty 0, avgPrice 0).
+    /// The order is read again until Binance reports a final status with a usable price.
+    /// </summary>
+    private async Task<ExchangeOrder> AwaitMarketResultAsync(
+        string key,
+        string secret,
+        PlaceOrderRequest request,
+        ExchangeOrder mapped,
+        CancellationToken cancellationToken)
+    {
+        if (request.Type != OrderType.Market || string.IsNullOrWhiteSpace(mapped.ExchangeOrderId))
+        {
+            return mapped;
+        }
+
+        foreach (var delay in MarketResultDelays)
+        {
+            if (!NeedsMarketResult(mapped))
+            {
+                return mapped;
+            }
+
+            await Task.Delay(delay, cancellationToken);
+            try
+            {
+                var payload = await _signed.GetFuturesOrderAsync(key, secret, request.Symbol, null, mapped.ExchangeOrderId, cancellationToken);
+                mapped = MapOrder(payload, request) with { Fee = mapped.Fee, FeeKnown = mapped.FeeKnown, FeeAsset = mapped.FeeAsset };
+            }
             catch (DomainException)
             {
             }
@@ -232,11 +315,42 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
         return mapped;
     }
 
+    private static bool NeedsMarketResult(ExchangeOrder order) =>
+        order.Status is OrderStatus.New or OrderStatus.Submitted or OrderStatus.Submitting
+        || (order.FilledQuantity > 0m && order.AverageFillPrice is not > 0m);
+
+    /// <summary>Fills a missing price from user trades when those trades cover the whole executed quantity.</summary>
+    private static ExchangeOrder WithTradePrice(ExchangeOrder order, JsonElement trades)
+    {
+        if (order.FilledQuantity <= 0m || order.AverageFillPrice is > 0m)
+        {
+            return order;
+        }
+
+        if (CommissionReader.FillFromUserTrades(trades) is not { } fill || fill.Quantity != order.FilledQuantity)
+        {
+            return order;
+        }
+
+        var average = fill.Quote / fill.Quantity;
+        return order with { Price = average, AverageFillPrice = average, CumulativeQuote = fill.Quote };
+    }
+
     public async Task PrepareSymbolRiskAsync(string symbol, MarginMode marginMode, int leverage, CancellationToken cancellationToken = default)
     {
         if (marginMode != MarginMode.Isolated)
         {
             throw new DomainException(ErrorCodes.RiskLimitExceeded, "Isolated margin only. Cross is not allowed.");
+        }
+
+        var hedge = await IsHedgeModeAsync(cancellationToken);
+        if (hedge != false)
+        {
+            throw new DomainException(
+                ErrorCodes.RiskLimitExceeded,
+                hedge == true
+                    ? "This Binance account is in Hedge position mode. Switch it to One-way mode before starting a bot."
+                    : "Could not read the Binance position mode. No order was sent.");
         }
 
         var (key, secret) = await RequireKeys(cancellationToken);
@@ -283,6 +397,110 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
         {
             return 0;
         }
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (decimal Percent, DateTimeOffset At)> TakerFees = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly TimeSpan TakerFeeTtl = TimeSpan.FromHours(6);
+
+    public async Task<decimal?> GetTakerFeePercentAsync(string symbol, CancellationToken cancellationToken = default)
+    {
+        var cacheKey = $"{_accountId:N}:{symbol}";
+        if (TakerFees.TryGetValue(cacheKey, out var cached) && DateTimeOffset.UtcNow - cached.At < TakerFeeTtl)
+        {
+            return cached.Percent;
+        }
+
+        try
+        {
+            var (key, secret) = await RequireKeys(cancellationToken);
+            var payload = await _signed.GetFuturesCommissionRateAsync(key, secret, symbol, cancellationToken);
+            if (ReadTakerFeePercent(payload) is not { } percent)
+            {
+                return null;
+            }
+
+            TakerFees[cacheKey] = (percent, DateTimeOffset.UtcNow);
+            return percent;
+        }
+        catch (DomainException)
+        {
+            return null;
+        }
+    }
+
+    public async Task<MaintenanceBracket?> GetMaintenanceBracketAsync(string symbol, decimal notional, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var (key, secret) = await RequireKeys(cancellationToken);
+            var payload = await _signed.GetFuturesLeverageBracketsAsync(key, secret, symbol, cancellationToken);
+            return ReadMaintenanceBracket(payload, symbol, notional);
+        }
+        catch (DomainException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>takerCommissionRate is a fraction ("0.000400"); the result is percent (0.04).</summary>
+    public static decimal? ReadTakerFeePercent(JsonElement payload)
+    {
+        if (payload.ValueKind != JsonValueKind.Object || !payload.TryGetProperty("takerCommissionRate", out var rate))
+        {
+            return null;
+        }
+
+        var value = rate.ValueKind switch
+        {
+            JsonValueKind.String when decimal.TryParse(rate.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) => parsed,
+            JsonValueKind.Number when rate.TryGetDecimal(out var number) => number,
+            _ => -1m
+        };
+        return value is >= 0m and < 0.01m ? value * 100m : null;
+    }
+
+    /// <summary>The bracket with notionalFloor ≤ notional &lt; notionalCap; the top bracket when notional is above every cap.</summary>
+    public static MaintenanceBracket? ReadMaintenanceBracket(JsonElement payload, string symbol, decimal notional)
+    {
+        var row = payload;
+        if (payload.ValueKind == JsonValueKind.Array)
+        {
+            row = payload.EnumerateArray().FirstOrDefault(item =>
+                item.ValueKind == JsonValueKind.Object
+                && (!item.TryGetProperty("symbol", out var name) || string.Equals(name.GetString(), symbol, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        if (row.ValueKind != JsonValueKind.Object || !row.TryGetProperty("brackets", out var brackets) || brackets.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        MaintenanceBracket? top = null;
+        var topFloor = -1m;
+        foreach (var bracket in brackets.EnumerateArray())
+        {
+            if (!bracket.TryGetProperty("maintMarginRatio", out var ratio)
+                || !bracket.TryGetProperty("notionalFloor", out var floor)
+                || !bracket.TryGetProperty("notionalCap", out var cap))
+            {
+                continue;
+            }
+
+            var found = new MaintenanceBracket(Dec(ratio), bracket.TryGetProperty("cum", out var cum) ? Dec(cum) : 0m);
+            var low = Dec(floor);
+            if (notional >= low && notional < Dec(cap))
+            {
+                return found;
+            }
+
+            if (low > topFloor)
+            {
+                topFloor = low;
+                top = found;
+            }
+        }
+
+        return notional >= topFloor && topFloor >= 0m ? top : null;
     }
 
     public async Task<ProtectiveStopsResult> PlaceClosePositionStopsAsync(
@@ -335,6 +553,11 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
         if (IsAccepted(error, acceptExisting))
         {
             return null;
+        }
+
+        if (ProtectiveOrderMath.IsNoOpenPosition(error))
+        {
+            return error;
         }
 
         if (IsImmediateTrigger(error))
@@ -529,9 +752,157 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
         }
     }
 
+    /// <summary>
+    /// Cancels every regular open order and every open algo (conditional) order on the coin.
+    /// Throws when either list could not be cleared, so callers do not assume the book is empty.
+    /// </summary>
     public async Task CancelAllOrdersAsync(string symbol, CancellationToken cancellationToken = default)
     {
-        await CancelOrderAsync(symbol, null, null, cancellationToken);
+        var (key, secret) = await RequireKeys(cancellationToken);
+        var name = symbol.ToUpperInvariant();
+        var failures = new List<string>();
+        try
+        {
+            await _signed.CancelAllFuturesOpenOrdersAsync(key, secret, name, cancellationToken);
+        }
+        catch (DomainException ex)
+        {
+            failures.Add(ex.Message);
+        }
+
+        try
+        {
+            var open = await _signed.GetFuturesOpenAlgoOrdersAsync(key, secret, cancellationToken);
+            foreach (var clientAlgoId in OpenAlgoClientIds(open, name))
+            {
+                try
+                {
+                    await _signed.CancelFuturesAlgoOrderAsync(key, secret, name, clientAlgoId, cancellationToken);
+                }
+                catch (DomainException ex) when (!IsConfirmedAbsent(ex))
+                {
+                    failures.Add(ex.Message);
+                }
+                catch (DomainException)
+                {
+                    // Triggered or cancelled in the meantime.
+                }
+            }
+        }
+        catch (DomainException ex)
+        {
+            failures.Add(ex.Message);
+        }
+
+        if (failures.Count > 0)
+        {
+            throw new DomainException(ErrorCodes.ExchangeUnavailable, $"Not every {name} order was cancelled: {string.Join("; ", failures)}");
+        }
+    }
+
+    internal static IEnumerable<string> OpenAlgoClientIds(JsonElement payload, string symbol)
+    {
+        var rows = payload;
+        if (rows.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var name in new[] { "orders", "data", "rows" })
+            {
+                if (rows.TryGetProperty(name, out var nested) && nested.ValueKind == JsonValueKind.Array)
+                {
+                    rows = nested;
+                    break;
+                }
+            }
+        }
+
+        if (rows.ValueKind != JsonValueKind.Array)
+        {
+            yield break;
+        }
+
+        foreach (var row in rows.EnumerateArray())
+        {
+            if (row.TryGetProperty("symbol", out var symbolEl)
+                && string.Equals(symbolEl.GetString(), symbol, StringComparison.OrdinalIgnoreCase)
+                && row.TryGetProperty("clientAlgoId", out var idEl)
+                && idEl.GetString() is { Length: > 0 } id)
+            {
+                yield return id;
+            }
+        }
+    }
+
+    public async Task<IReadOnlyList<ExchangePosition>> GetOpenPositionsAsync(CancellationToken cancellationToken = default)
+    {
+        var (key, secret) = await RequireKeys(cancellationToken);
+        var payload = await _signed.GetFuturesPositionsAsync(key, secret, cancellationToken);
+        return ReadExchangePositions(payload);
+    }
+
+    internal static IReadOnlyList<ExchangePosition> ReadExchangePositions(JsonElement payload)
+    {
+        var list = new List<ExchangePosition>();
+        foreach (var row in EnumeratePositionRows(payload))
+        {
+            var amount = row.TryGetProperty("positionAmt", out var amountEl) ? Dec(amountEl) : 0m;
+            var symbol = row.TryGetProperty("symbol", out var symbolEl) ? symbolEl.GetString() ?? "" : "";
+            if (amount == 0m || symbol.Length == 0)
+            {
+                continue;
+            }
+
+            list.Add(new ExchangePosition(
+                symbol.ToUpperInvariant(),
+                amount > 0m ? Domain.Positions.PositionSide.Long : Domain.Positions.PositionSide.Short,
+                Math.Abs(amount),
+                row.TryGetProperty("entryPrice", out var entryEl) ? Dec(entryEl) : 0m,
+                row.TryGetProperty("markPrice", out var markEl) ? Dec(markEl) : 0m));
+        }
+
+        return list;
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, (bool Hedge, DateTimeOffset At)> PositionModeCache = new();
+
+    public async Task<bool?> IsHedgeModeAsync(CancellationToken cancellationToken = default)
+    {
+        if (PositionModeCache.TryGetValue(_accountId, out var cached) && DateTimeOffset.UtcNow - cached.At < TimeSpan.FromMinutes(5))
+        {
+            return cached.Hedge;
+        }
+
+        var (key, secret) = await RequireKeys(cancellationToken);
+        try
+        {
+            var payload = await _signed.GetFuturesPositionModeAsync(key, secret, cancellationToken);
+            var hedge = ReadDualSide(payload);
+            if (hedge is not null)
+            {
+                PositionModeCache[_accountId] = (hedge.Value, DateTimeOffset.UtcNow);
+            }
+
+            return hedge;
+        }
+        catch (DomainException)
+        {
+            return null;
+        }
+    }
+
+    internal static bool? ReadDualSide(JsonElement payload)
+    {
+        if (payload.ValueKind != JsonValueKind.Object || !payload.TryGetProperty("dualSidePosition", out var dual))
+        {
+            return null;
+        }
+
+        return dual.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.String when bool.TryParse(dual.GetString(), out var parsed) => parsed,
+            _ => null
+        };
     }
 
     public Task SubscribeMarketDataAsync(string symbol, Timeframe timeframe, CancellationToken cancellationToken = default) =>

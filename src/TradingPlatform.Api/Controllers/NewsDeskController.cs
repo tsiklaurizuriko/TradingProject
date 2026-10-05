@@ -10,7 +10,7 @@ namespace TradingPlatform.Api.Controllers;
 
 [ApiController]
 [Route("api/trading/research/news")]
-[AllowAnonymous]
+[Authorize]
 public sealed class NewsDeskController : ControllerBase
 {
     private readonly IHostEnvironment _environment;

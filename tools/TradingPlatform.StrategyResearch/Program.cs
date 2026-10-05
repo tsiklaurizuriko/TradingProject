@@ -37,6 +37,23 @@ if (args.Any(a => string.Equals(a, "--news-research", StringComparison.OrdinalIg
 {
     return await NewsResearch.RunAsync(root, Arg(args, "--symbol"), Arg(args, "--timeframe") ?? "1h", Arg(args, "--news-stage") ?? "A", CancellationToken.None);
 }
+if (args.Any(a => string.Equals(a, "--vision-download", StringComparison.OrdinalIgnoreCase)))
+{
+    return await TradingPlatform.StrategyResearch.AlphaDiscovery.VisionBulkDownloader.RunAsync(
+        root, Arg(args, "--kinds") ?? "klines,funding", ParseInt(args, "--parallel", 48), CancellationToken.None);
+}
+if (Arg(args, "--alpha") is { } alphaStage)
+{
+    return TradingPlatform.StrategyResearch.AlphaDiscovery.AlphaRunner.Run(root, alphaStage, Arg(args, "--families"));
+}
+if (args.Any(a => string.Equals(a, "--perf", StringComparison.OrdinalIgnoreCase)))
+{
+    return PerfHarness.Run(root);
+}
+if (args.Any(a => string.Equals(a, "--news-event-study", StringComparison.OrdinalIgnoreCase)))
+{
+    return await NewsEventStudyRunner.RunAsync(root, CancellationToken.None);
+}
 if (args.Any(a => string.Equals(a, "--news-live", StringComparison.OrdinalIgnoreCase)))
 {
     return await NewsLiveAnalyzer.RunAsync(root, CancellationToken.None);

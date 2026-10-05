@@ -32,6 +32,8 @@ public sealed class LiveSignalRecord
     public DateTimeOffset SignalTimestamp { get; set; }
     public string Direction { get; set; } = string.Empty;
     public decimal ReferencePrice { get; set; }
+    /// <summary>Close time of the execution candle that gave <see cref="ReferencePrice"/>.</summary>
+    public DateTimeOffset? ReferencePriceAt { get; set; }
     public string EventId { get; set; } = string.Empty;
     public double NewsScore { get; set; }
     public double MarketScore { get; set; }
@@ -54,6 +56,12 @@ public static class NewsMarketConfirmation
         if (item.PublishedAtUtc > decisionTime)
         {
             return Reject(asset, item, "Stopped at time: Future news is not visible at the decision time.");
+        }
+
+        candlesByTimeframe = ClosedBy(candlesByTimeframe, decisionTime);
+        if (StaleExecution(candlesByTimeframe, strategy.Timeframes.Execution, decisionTime) is { } stale)
+        {
+            return Reject(asset, item, stale);
         }
 
         if (age > strategy.MaxNewsAgeMinutes)
@@ -121,17 +129,19 @@ public static class NewsMarketConfirmation
 
         var signal = bullish ? NewsMarketSignals.LongCandidate : NewsMarketSignals.ShortCandidate;
         var price = ReferencePrice(candlesByTimeframe, strategy.Timeframes.Execution);
+        var execution = candlesByTimeframe.TryGetValue(strategy.Timeframes.Execution, out var executionRows) ? executionRows : [];
         var record = new LiveSignalRecord
         {
             Symbol = asset.Symbol,
             SignalTimestamp = decisionTime,
             Direction = signal,
             ReferencePrice = price,
+            ReferencePriceAt = execution.Count > 0 ? execution[^1].CloseTime : null,
             EventId = item.EventId,
             NewsScore = newsScore,
             MarketScore = marketScore,
             FinalScore = total,
-            ForwardReturn = ForwardReturns(candlesByTimeframe.TryGetValue(strategy.Timeframes.Execution, out var execution) ? execution : [], decisionTime, price)
+            ForwardReturn = ForwardReturns(execution, decisionTime, price)
         };
         var reason = header + "SIGNAL:\n" + signal;
         return new NewsMarketDecision(
@@ -299,6 +309,36 @@ public static class NewsMarketConfirmation
     }
 
     private static bool Agree(bool bullish, bool up) => bullish == up;
+
+    /// <summary>Only candles closed at or before the decision are visible, whatever the caller loaded.</summary>
+    private static IReadOnlyDictionary<string, IReadOnlyList<MarketCandle>> ClosedBy(
+        IReadOnlyDictionary<string, IReadOnlyList<MarketCandle>> book,
+        DateTimeOffset decisionTime)
+    {
+        if (book.Values.All(rows => rows.Count == 0 || rows[^1].CloseTime <= decisionTime))
+        {
+            return book;
+        }
+
+        return book.ToDictionary(
+            pair => pair.Key,
+            pair => (IReadOnlyList<MarketCandle>)pair.Value.Where(candle => candle.CloseTime <= decisionTime).ToList(),
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static string? StaleExecution(IReadOnlyDictionary<string, IReadOnlyList<MarketCandle>> book, string timeframe, DateTimeOffset decisionTime)
+    {
+        if (!book.TryGetValue(timeframe, out var rows) || rows.Count == 0
+            || !TimeframeExtensions.TryParseInterval(timeframe, out var parsed))
+        {
+            return null;
+        }
+
+        var lag = decisionTime - rows[^1].CloseTime;
+        return lag > parsed.ToDuration() * 2
+            ? "Stopped at market data: the last closed " + timeframe + " candle is " + lag.TotalMinutes.ToString("0", CultureInfo.InvariantCulture) + "m older than the decision."
+            : null;
+    }
 
     private static decimal ReferencePrice(IReadOnlyDictionary<string, IReadOnlyList<MarketCandle>> book, string timeframe) =>
         book.TryGetValue(timeframe, out var candles) && candles.Count > 0 ? candles[^1].Close : 0m;
@@ -475,7 +515,7 @@ public static class NewsLiveAnalyzer
         await File.WriteAllTextAsync(Path.Combine(dir, "latest.txt"), text.ToString(), cancellationToken);
     }
 
-    private static IEnumerable<NewsAssetContext> Targets(NewsEvent item, NewsAssetCatalog catalog)
+    public static IEnumerable<NewsAssetContext> Targets(NewsEvent item, NewsAssetCatalog catalog)
     {
         if (item.MarketScope == MarketScope.Global && item.AffectedAssets.Count == 0)
         {
@@ -590,7 +630,7 @@ public static class NewsLiveAnalyzer
         }).OrderBy(bar => bar.OpenTime).ToList() ?? [];
     }
 
-    private static NewsOptions LoadOptions(string repoRoot)
+    public static NewsOptions LoadOptions(string repoRoot)
     {
         var path = Path.Combine(repoRoot, "src", "TradingPlatform.Api", "appsettings.json");
         if (!File.Exists(path))
@@ -598,13 +638,13 @@ public static class NewsLiveAnalyzer
             return new NewsOptions();
         }
 
-        using var document = JsonDocument.Parse(File.ReadAllText(path));
+        using var document = JsonDocument.Parse(File.ReadAllText(path), new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true });
         if (!document.RootElement.TryGetProperty("News", out var news))
         {
             return new NewsOptions();
         }
 
-        return JsonSerializer.Deserialize<NewsOptions>(news.GetRawText(), new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new NewsOptions();
+        return JsonSerializer.Deserialize<NewsOptions>(news.GetRawText(), new JsonSerializerOptions { PropertyNameCaseInsensitive = true, ReadCommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true }) ?? new NewsOptions();
     }
 
     private sealed record CachedBar(DateTimeOffset OpenTime, DateTimeOffset CloseTime, decimal Open, decimal High, decimal Low, decimal Close, decimal Volume, decimal TakerBuyVolume = 0);

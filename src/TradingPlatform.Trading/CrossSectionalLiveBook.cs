@@ -114,6 +114,8 @@ public static class CrossSectionalRiskBook
             TakeProfitPercent = 4m,
             MaxLeverage = leverage,
             MaxDailyLossPercent = source.MaxDailyLossPercent,
+            MaxWeeklyLossPercent = source.MaxWeeklyLossPercent,
+            MaxDrawdownPercent = source.MaxDrawdownPercent,
             MaxPortfolioRiskPercent = flags.MaxCrossSectionalRiskPercent,
             MaxSimultaneousPositions = flags.MaxTotalPositions,
             MaxConsecutiveLosses = source.MaxConsecutiveLosses,

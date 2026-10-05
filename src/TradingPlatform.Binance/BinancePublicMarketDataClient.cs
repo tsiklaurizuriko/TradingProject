@@ -122,14 +122,138 @@ public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
             }
         }
 
+        var series = KlineSeries.Normalize(candles, out var duplicates);
+        var quality = KlineSeries.Inspect(series, timeframe, duplicates);
         _logger.LogInformation(
-            "Loaded {Count} historical USD-M {Interval} candles for {Symbol} from {Start} to {End}",
-            candles.Count,
+            "Loaded {Count} historical USD-M {Interval} candles for {Symbol} from {Start} to {End} ({Duplicates} duplicates dropped, {Missing} bars missing in {Gaps} gaps)",
+            series.Count,
             interval,
             symbol,
             start,
-            end);
-        return candles;
+            end,
+            quality.Duplicates,
+            quality.MissingBars,
+            quality.Gaps.Count);
+        return series;
+    }
+
+    public Task<IReadOnlyList<TimedValue>> GetOpenInterestHistoryAsync(
+        string symbol,
+        Timeframe period,
+        DateTimeOffset start,
+        DateTimeOffset end,
+        CancellationToken cancellationToken = default)
+    {
+        var floor = DateTimeOffset.UtcNow.AddDays(-29);
+        var from = start < floor ? floor : start;
+        return ReadTimedPagesAsync(
+            cursor => $"futures/data/openInterestHist?symbol={Uri.EscapeDataString(symbol.ToUpperInvariant())}&period={period.ToBinanceInterval()}&startTime={cursor}&endTime={end.ToUnixTimeMilliseconds()}&limit=500",
+            500,
+            "timestamp",
+            "sumOpenInterest",
+            from,
+            end,
+            cancellationToken);
+    }
+
+    public Task<IReadOnlyList<TimedValue>> GetTopTraderPositionRatioHistoryAsync(
+        string symbol,
+        Timeframe period,
+        DateTimeOffset start,
+        DateTimeOffset end,
+        CancellationToken cancellationToken = default)
+    {
+        var floor = DateTimeOffset.UtcNow.AddDays(-29);
+        var from = start < floor ? floor : start;
+        return ReadTimedPagesAsync(
+            cursor => $"futures/data/topLongShortPositionRatio?symbol={Uri.EscapeDataString(symbol.ToUpperInvariant())}&period={period.ToBinanceInterval()}&startTime={cursor}&endTime={end.ToUnixTimeMilliseconds()}&limit=500",
+            500,
+            "timestamp",
+            "longShortRatio",
+            from,
+            end,
+            cancellationToken);
+    }
+
+    public Task<IReadOnlyList<TimedValue>> GetFundingHistoryAsync(
+        string symbol,
+        DateTimeOffset start,
+        DateTimeOffset end,
+        CancellationToken cancellationToken = default) =>
+        ReadTimedPagesAsync(
+            cursor => $"fapi/v1/fundingRate?symbol={Uri.EscapeDataString(symbol.ToUpperInvariant())}&startTime={cursor}&endTime={end.ToUnixTimeMilliseconds()}&limit=1000",
+            1000,
+            "fundingTime",
+            "fundingRate",
+            start,
+            end,
+            cancellationToken);
+
+    private async Task<IReadOnlyList<TimedValue>> ReadTimedPagesAsync(
+        Func<long, string> url,
+        int pageSize,
+        string timeField,
+        string valueField,
+        DateTimeOffset start,
+        DateTimeOffset end,
+        CancellationToken cancellationToken)
+    {
+        var rows = new List<TimedValue>();
+        var cursor = start.ToUnixTimeMilliseconds();
+        var endMs = end.ToUnixTimeMilliseconds();
+        for (var page = 0; page < 40 && cursor <= endMs; page++)
+        {
+            var payload = await GetJsonOrNullAsync(url(cursor), cancellationToken);
+            if (payload is null || payload.Value.ValueKind != JsonValueKind.Array)
+            {
+                break;
+            }
+
+            var batch = ParseTimedValues(payload.Value, timeField, valueField);
+            if (batch.Count == 0)
+            {
+                break;
+            }
+
+            rows.AddRange(batch);
+            var next = batch[^1].Time.ToUnixTimeMilliseconds() + 1;
+            if (next <= cursor || batch.Count < pageSize)
+            {
+                break;
+            }
+
+            cursor = next;
+        }
+
+        return rows
+            .GroupBy(row => row.Time)
+            .Select(group => group.Last())
+            .OrderBy(row => row.Time)
+            .ToList();
+    }
+
+    internal static List<TimedValue> ParseTimedValues(JsonElement payload, string timeField, string valueField)
+    {
+        var rows = new List<TimedValue>();
+        foreach (var row in payload.EnumerateArray())
+        {
+            if (!row.TryGetProperty(timeField, out var timeEl)
+                || !timeEl.TryGetInt64(out var ms)
+                || !row.TryGetProperty(valueField, out var valueEl)
+                || valueEl.ValueKind == JsonValueKind.Null)
+            {
+                continue;
+            }
+
+            var text = valueEl.ValueKind == JsonValueKind.String ? valueEl.GetString() : valueEl.GetRawText();
+            if (decimal.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+            {
+                rows.Add(new TimedValue(DateTimeOffset.FromUnixTimeMilliseconds(ms), value));
+            }
+        }
+
+        rows.Sort((a, b) => a.Time.CompareTo(b.Time));
+        return rows;
     }
 
     public async Task<(decimal? Previous, decimal? Latest)> GetOpenInterestPairAsync(string symbol, CancellationToken cancellationToken = default)
@@ -521,12 +645,41 @@ public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
         return candles;
     }
 
+    private static readonly object SkipSync = new();
+    private static readonly TimeSpan SkipReportInterval = TimeSpan.FromSeconds(30);
+    private static DateTimeOffset _skipWindowStart = DateTimeOffset.MinValue;
+    private static int _skippedInWindow;
+
+    /// <summary>One warning per 30 s with the number of requests skipped, instead of one line per request.</summary>
+    private void ReportSkipped(string url)
+    {
+        int skipped;
+        lock (SkipSync)
+        {
+            var now = DateTimeOffset.UtcNow;
+            _skippedInWindow++;
+            if (now - _skipWindowStart < SkipReportInterval)
+            {
+                return;
+            }
+
+            skipped = _skippedInWindow;
+            _skippedInWindow = 0;
+            _skipWindowStart = now;
+        }
+
+        _logger.LogWarning(
+            "Binance USD-M weight budget is full. {Count} public request(s) skipped since the last report; they are retried next cycle. Latest: {Url}",
+            skipped,
+            url);
+    }
+
     private async Task<JsonElement?> GetJsonOrNullAsync(string url, CancellationToken cancellationToken)
     {
         var weight = BinancePublicWeight.ForRequest(url);
-        if (!await BinancePublicWeightGate.TryAcquireAsync(weight, TimeSpan.FromMilliseconds(500), cancellationToken))
+        if (!await BinancePublicWeightGate.TryAcquireAsync(weight, TimeSpan.FromMilliseconds(500), cancellationToken, BinancePublicWeight.SignedReserve))
         {
-            _logger.LogWarning("Binance USD-M request skipped. The shared IP weight budget is full: {Url}", url);
+            ReportSkipped(url);
             return null;
         }
 

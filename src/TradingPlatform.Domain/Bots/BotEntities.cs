@@ -22,6 +22,8 @@ public sealed class Bot : SoftDeletableEntity
     public string Symbol { get; set; } = "BTCUSDT";
     public Timeframe Timeframe { get; set; } = Timeframe.FiveMinutes;
     public bool CancelOpenOrdersOnEmergencyStop { get; set; } = true;
+    /// <summary>Operator lock. While true the bot cannot be started from any path.</summary>
+    public bool IsNotActive { get; set; }
     public string? LastError { get; set; }
     public DateTimeOffset? StartedAt { get; set; }
     public DateTimeOffset? StoppedAt { get; set; }

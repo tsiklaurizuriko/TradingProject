@@ -64,10 +64,19 @@ public sealed class LiveIsolatedReconciler
             var book = (await _store.GetOpenPositionsForModeAsync(TradingMode.Live, cancellationToken)).ToList();
         var now = _clock.UtcNow;
         var missing = 0;
+        var recovering = new List<string>();
+        var unresolved = await _store.GetUnresolvedLiveOrdersAsync(cancellationToken);
         foreach (var position in book)
         {
             if (!IsolatedOccupancy.IsLiveGhost(position, live.OpenPositions, now))
             {
+                continue;
+            }
+
+            if (unresolved.Any(order => order.BotId == position.BotId
+                && string.Equals(order.Symbol, position.Symbol, StringComparison.OrdinalIgnoreCase)))
+            {
+                recovering.Add(position.Symbol);
                 continue;
             }
 
@@ -87,6 +96,12 @@ public sealed class LiveIsolatedReconciler
         var claims = await _store.GetStrategyEntryClaimsAsync(openSymbols, cancellationToken);
         var entryBySymbol = claims
             .Where(claim => claim.Filled)
+            .GroupBy(claim => IsolatedOccupancy.CoinKey(claim.Symbol), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group => group.OrderByDescending(claim => claim.CreatedAt).First().BotId,
+                StringComparer.OrdinalIgnoreCase);
+        var lastEntryBySymbol = claims
             .GroupBy(claim => IsolatedOccupancy.CoinKey(claim.Symbol), StringComparer.OrdinalIgnoreCase)
             .ToDictionary(
                 group => group.Key,
@@ -151,8 +166,7 @@ public sealed class LiveIsolatedReconciler
             {
                 continue;
             }
-
-            entryBySymbol.TryGetValue(IsolatedOccupancy.CoinKey(remote.Symbol), out var entryId);
+            lastEntryBySymbol.TryGetValue(IsolatedOccupancy.CoinKey(remote.Symbol), out var entryId);
             var owner = IsolatedOccupancy.PickOwnerForNewRow(
                 remote.Symbol,
                 running,
@@ -274,6 +288,14 @@ public sealed class LiveIsolatedReconciler
             return;
         }
 
+        if (recovering.Count > 0)
+        {
+            var reason = $"{string.Join(", ", recovering)} is flat on Binance while an order is still being looked up. The local position is kept until the lookup books the real fill. New live entries are blocked.";
+            _state.Fail(reason, _clock.UtcNow);
+            _logger.LogWarning("Reconciliation waiting on order recovery. {Reason}", reason);
+            return;
+        }
+
         _state.Succeed(live.ApiKeyHint ?? "live-account", _clock.UtcNow);
         _logger.LogInformation("Reconciliation succeeded for {Account} at {At}.", _state.AccountId, _state.SucceededAt);
         }
@@ -301,10 +323,13 @@ public sealed class LiveIsolatedReconciler
                 && string.Equals(trade.Symbol, position.Symbol, StringComparison.OrdinalIgnoreCase))
             {
                 trade.ClosedAt = closedAt;
+                trade.FeeStatus = FeeKnowledge.Uncertain;
+                trade.FeeAsset = null;
+                trade.NetPnL = null;
             }
 
             bot.LastError =
-                $"Local position {position.Symbol} was absent from a fresh exchange snapshot. The local row was closed. No exchange order, fill, or mark-price PnL was created.";
+                $"Local position {position.Symbol} was absent from a fresh exchange snapshot. The local row was closed. No exchange order, fill, or mark-price PnL was created. PnL is uncertain until the Binance trade history sync rebuilds this trip.";
         }
 
         _logger.LogWarning(

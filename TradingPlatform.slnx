@@ -10,6 +10,7 @@
     <Project Path="src/TradingPlatform.Trading/TradingPlatform.Trading.csproj" />
     <Project Path="src/TradingPlatform.Backtesting/TradingPlatform.Backtesting.csproj" />
     <Project Path="src/TradingPlatform.Research/TradingPlatform.Research.csproj" />
+    <Project Path="src/TradingPlatform.News/TradingPlatform.News.csproj" />
     <Project Path="src/TradingPlatform.Binance/TradingPlatform.Binance.csproj" />
     <Project Path="src/TradingPlatform.Workers/TradingPlatform.Workers.csproj" />
     <Project Path="src/TradingPlatform.Api/TradingPlatform.Api.csproj" />
@@ -20,6 +21,7 @@
     <Project Path="tests/TradingPlatform.TradingTests/TradingPlatform.TradingTests.csproj" />
     <Project Path="tests/TradingPlatform.BacktestingTests/TradingPlatform.BacktestingTests.csproj" />
     <Project Path="tests/TradingPlatform.ResearchTests/TradingPlatform.ResearchTests.csproj" />
+    <Project Path="tests/TradingPlatform.NewsTests/TradingPlatform.NewsTests.csproj" />
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/TradingPlatform.StrategyValidation/TradingPlatform.StrategyValidation.csproj" />

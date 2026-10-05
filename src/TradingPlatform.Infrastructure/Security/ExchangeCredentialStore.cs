@@ -3,6 +3,7 @@ using System.Text;
 using Microsoft.EntityFrameworkCore;
 using TradingPlatform.Application.Abstractions;
 using TradingPlatform.Application.Abstractions.Exchange;
+using TradingPlatform.Domain.Errors;
 using TradingPlatform.Domain.Exchanges;
 using TradingPlatform.Infrastructure.Persistence;
 
@@ -64,9 +65,18 @@ public sealed class ExchangeCredentialStore : IExchangeCredentialStore
             return null;
         }
 
-        var apiKey = _protector.Unprotect(Encoding.UTF8.GetString(credential.ApiKeyCipher));
-        var apiSecret = _protector.Unprotect(Encoding.UTF8.GetString(credential.ApiSecretCipher));
-        return (apiKey, apiSecret);
+        try
+        {
+            var apiKey = _protector.Unprotect(Encoding.UTF8.GetString(credential.ApiKeyCipher));
+            var apiSecret = _protector.Unprotect(Encoding.UTF8.GetString(credential.ApiSecretCipher));
+            return (apiKey, apiSecret);
+        }
+        catch (Exception ex) when (ex is CryptographicException or FormatException)
+        {
+            throw new DomainException(
+                ErrorCodes.LiveTradingDisabled,
+                "Stored Binance API keys cannot be decrypted with the current Credentials:EncryptionKey. Start with the environment that saved them, or enter the API keys again.");
+        }
     }
 
     public Task<ExchangeAccount?> GetLiveAccountAsync(Guid userId, CancellationToken cancellationToken = default) =>

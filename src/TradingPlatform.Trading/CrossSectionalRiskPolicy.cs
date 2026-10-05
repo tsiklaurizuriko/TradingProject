@@ -49,7 +49,7 @@ public static class CrossSectionalRiskPolicy
 
     public static string? LiveActivationBlock(TradingOptions options, bool exchangeHealthy, bool marketDataHealthy, bool accountHealthy, bool riskHalted, bool dailyLossHalted, bool emergencyStop, bool isolatedConfirmed)
     {
-        if (!options.LiveTradingEnabled)
+        if (!options.EntriesEnabled)
         {
             return "LIVE = OFF. Global live trading is disabled.";
         }

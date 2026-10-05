@@ -194,6 +194,61 @@ public sealed class NewsMarketConfirmationTests
         decision.Record.ForwardReturn["4h"].Should().BeNull();
     }
 
+    [Fact]
+    public void Candles_that_close_after_the_decision_are_not_visible()
+    {
+        var candles = Bars(up: true, expandVolume: true, takerFraction: 0.9m);
+        candles[59].Volume = 200m;
+        candles[59].TakerBuyVolume = 180m;
+        var decisionTime = candles[59].CloseTime;
+        var full = EvaluateAt(Book(candles), decisionTime);
+        var cut = EvaluateAt(Book(candles.Take(60).ToList()), decisionTime);
+
+        full.Record.Should().NotBeNull();
+        full.Record!.ReferencePrice.Should().Be(candles[59].Close);
+        full.Record.ReferencePriceAt.Should().Be(decisionTime);
+        full.FinalScore.Should().Be(cut.FinalScore);
+        full.Reason.Should().Be(cut.Reason);
+    }
+
+    [Fact]
+    public void Stale_execution_candles_stop_the_decision()
+    {
+        var candles = Bars(up: true, expandVolume: true, takerFraction: 0.9m);
+        var decision = EvaluateAt(Book(candles), candles[^1].CloseTime.AddHours(1));
+
+        decision.Signal.Should().Be(NewsMarketSignals.NoTrade);
+        decision.Reason.Should().Contain("Stopped at market data");
+        EvaluateAt(Book(candles), candles[^1].CloseTime.AddMinutes(20)).Reason.Should().NotContain("Stopped at market data");
+    }
+
+    private static Dictionary<string, IReadOnlyList<MarketCandle>> Book(IReadOnlyList<MarketCandle> candles) => new()
+    {
+        ["5m"] = candles,
+        ["15m"] = candles,
+        ["1h"] = candles
+    };
+
+    private static NewsMarketDecision EvaluateAt(IReadOnlyDictionary<string, IReadOnlyList<MarketCandle>> book, DateTimeOffset decisionTime) =>
+        NewsMarketConfirmation.Evaluate(
+            new NewsEvent
+            {
+                EventId = "sol-etf",
+                PublishedAtUtc = decisionTime.AddMinutes(-6),
+                Direction = EventDirection.Bullish,
+                ImpactScore = 0.9,
+                ConfidenceScore = 0.94,
+                EventType = NewsEventType.Etf,
+                PrimaryAsset = "SOL",
+                Assets = ["SOL"],
+                AffectedAssets = [new AssetRelationship { BaseAsset = "SOL", Symbol = "SOLUSDT", Relevance = 1, IsPrimary = true }],
+                MarketScope = MarketScope.Asset
+            },
+            new NewsAssetContext("SOLUSDT", "SOL", "solana"),
+            decisionTime,
+            book,
+            new NewsOptions { Enabled = true });
+
     private static NewsMarketDecision Evaluate(
         EventDirection Direction,
         bool up,

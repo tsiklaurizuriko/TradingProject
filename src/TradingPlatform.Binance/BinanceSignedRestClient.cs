@@ -10,6 +10,9 @@ namespace TradingPlatform.Binance;
 
 public sealed class BinanceSignedRestClient
 {
+    /// <summary>Signed USD-M calls. Its base URL is Binance:FuturesSignedRestBaseUrl, so Testnet orders never share the mainnet market-data client.</summary>
+    public const string SignedFuturesClientName = "binance-futures-signed";
+
     private readonly HttpClient _spot;
     private readonly HttpClient _futures;
     private readonly ILogger<BinanceSignedRestClient> _logger;
@@ -18,7 +21,7 @@ public sealed class BinanceSignedRestClient
     public BinanceSignedRestClient(HttpClient http, IHttpClientFactory httpFactory, ILogger<BinanceSignedRestClient> logger, IConfiguration configuration)
     {
         _spot = http;
-        _futures = httpFactory.CreateClient("binance-futures");
+        _futures = httpFactory.CreateClient(SignedFuturesClientName);
         _logger = logger;
         _recvWindowMs = configuration.GetValue("Binance:RecvWindowMs", 5000);
     }
@@ -188,6 +191,21 @@ public sealed class BinanceSignedRestClient
         return await SendAsync(_futures, HttpMethod.Post, "fapi/v1/order", fields, apiKey, apiSecret, cancellationToken);
     }
 
+    /// <summary>GET fapi/v1/positionSide/dual. <c>dualSidePosition=true</c> means hedge mode.</summary>
+    public Task<JsonElement> GetFuturesPositionModeAsync(string apiKey, string apiSecret, CancellationToken cancellationToken) =>
+        SendAsync(_futures, HttpMethod.Get, "fapi/v1/positionSide/dual", new Dictionary<string, string>(), apiKey, apiSecret, cancellationToken);
+
+    /// <summary>DELETE fapi/v1/allOpenOrders. Cancels regular open orders only; algo orders are cancelled separately.</summary>
+    public Task<JsonElement> CancelAllFuturesOpenOrdersAsync(string apiKey, string apiSecret, string symbol, CancellationToken cancellationToken) =>
+        SendAsync(
+            _futures,
+            HttpMethod.Delete,
+            "fapi/v1/allOpenOrders",
+            new Dictionary<string, string> { ["symbol"] = symbol.ToUpperInvariant() },
+            apiKey,
+            apiSecret,
+            cancellationToken);
+
     public Task<JsonElement> GetFuturesLeverageBracketsAsync(
         string apiKey,
         string apiSecret,
@@ -200,6 +218,16 @@ public sealed class BinanceSignedRestClient
         };
         return SendAsync(_futures, HttpMethod.Get, "fapi/v1/leverageBracket", fields, apiKey, apiSecret, cancellationToken);
     }
+
+    public Task<JsonElement> GetFuturesCommissionRateAsync(string apiKey, string apiSecret, string symbol, CancellationToken cancellationToken) =>
+        SendAsync(
+            _futures,
+            HttpMethod.Get,
+            "fapi/v1/commissionRate",
+            new Dictionary<string, string> { ["symbol"] = symbol.ToUpperInvariant() },
+            apiKey,
+            apiSecret,
+            cancellationToken);
 
     public async Task SetFuturesMarginTypeAsync(
         string apiKey,
@@ -345,6 +373,57 @@ public sealed class BinanceSignedRestClient
         return SendAsync(_futures, HttpMethod.Delete, "fapi/v1/order", fields, apiKey, apiSecret, cancellationToken);
     }
 
+    public const string ListenKeyPath = "fapi/v1/listenKey";
+
+    public async Task<string> CreateFuturesListenKeyAsync(string apiKey, CancellationToken cancellationToken)
+    {
+        var json = await SendKeyOnlyAsync(HttpMethod.Post, apiKey, cancellationToken);
+        return json.ValueKind == JsonValueKind.Object
+            && json.TryGetProperty("listenKey", out var key)
+            && key.GetString() is { Length: > 0 } value
+            ? value
+            : throw new DomainException(ErrorCodes.ExchangeUnavailable, "Binance did not return a user-data listen key.");
+    }
+
+    public Task KeepAliveFuturesListenKeyAsync(string apiKey, CancellationToken cancellationToken) =>
+        SendKeyOnlyAsync(HttpMethod.Put, apiKey, cancellationToken);
+
+    public Task CloseFuturesListenKeyAsync(string apiKey, CancellationToken cancellationToken) =>
+        SendKeyOnlyAsync(HttpMethod.Delete, apiKey, cancellationToken);
+
+    /// <summary>USER_STREAM endpoints take the API key header only. The secret is not sent or used.</summary>
+    private async Task<JsonElement> SendKeyOnlyAsync(HttpMethod method, string apiKey, CancellationToken cancellationToken)
+    {
+        if (!await BinancePublicWeightGate.TryAcquireAsync(1, TimeSpan.FromSeconds(5), cancellationToken))
+        {
+            throw new DomainException(ErrorCodes.ExchangeRateLimit, "Binance IP weight budget is full. The request was not sent.");
+        }
+
+        using var request = new HttpRequestMessage(method, ListenKeyPath);
+        request.Headers.TryAddWithoutValidation("X-MBX-APIKEY", apiKey);
+        HttpResponseMessage response;
+        try
+        {
+            response = await _futures.SendAsync(request, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            throw new DomainException(ErrorCodes.ExchangeUnavailable, "Binance listen key request failed.", new Dictionary<string, object?> { ["error"] = ex.Message });
+        }
+
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new DomainException(ErrorCodes.ExchangeUnavailable, TrimBinanceError(body));
+        }
+
+        return string.IsNullOrWhiteSpace(body) ? default : JsonSerializer.Deserialize<JsonElement>(body);
+    }
+
     private async Task<JsonElement> SendAsync(
         HttpClient client,
         HttpMethod method,
@@ -355,19 +434,69 @@ public sealed class BinanceSignedRestClient
         CancellationToken cancellationToken)
     {
         var weight = BinancePublicWeight.ForRequest(path + (fields.ContainsKey("symbol") ? "?symbol=1" : ""));
-        if (!await BinancePublicWeightGate.TryAcquireAsync(weight, TimeSpan.FromSeconds(2), cancellationToken))
+        if (!await BinancePublicWeightGate.TryAcquireAsync(weight, WeightWait(method, path), cancellationToken))
         {
             throw new DomainException(
                 ErrorCodes.ExchangeRateLimit,
                 "Binance IP weight budget is full. The request was not sent.");
         }
 
+        await EnsureClockAsync(client, force: false, cancellationToken);
+        var (response, body) = await SendSignedOnceAsync(client, method, path, fields, apiKey, apiSecret, cancellationToken);
+        if (!response.IsSuccessStatusCode && ReadBinanceCode(body) == -1021)
+        {
+            response.Dispose();
+            await EnsureClockAsync(client, force: true, cancellationToken);
+            (response, body) = await SendSignedOnceAsync(client, method, path, fields, apiKey, apiSecret, cancellationToken);
+        }
+
+        using var sent = response;
+        if (IsFrequencyBan(response.StatusCode, body))
+        {
+            var pause = TimeSpan.FromMinutes(1);
+            if (response.Headers.RetryAfter?.Delta is { } retry && retry > TimeSpan.Zero)
+            {
+                pause = retry;
+            }
+
+            BinancePublicWeightGate.CoolDown(pause);
+            _logger.LogWarning("Binance asked this IP to slow down for {Seconds}s. Further requests wait.", (int)pause.TotalSeconds);
+            throw new DomainException(ErrorCodes.ExchangeRateLimit, TrimBinanceError(body));
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var level = ReadBinanceCode(body) is { } code && BenignCodes.Contains(code) ? LogLevel.Debug : LogLevel.Warning;
+            _logger.Log(level, "Binance signed {Path} failed: {Status} {Body}", path, (int)response.StatusCode, body);
+            throw new DomainException(ClassifyFailure((int)response.StatusCode, body), TrimBinanceError(body));
+        }
+
+        return string.IsNullOrWhiteSpace(body)
+            ? default
+            : JsonSerializer.Deserialize<JsonElement>(body);
+    }
+
+    /// <summary>
+    /// -4046 margin type unchanged and -4059 position side unchanged are success to callers.
+    /// -2011 and -2013 (order unknown) are read by callers as confirmed absent.
+    /// </summary>
+    private static readonly HashSet<int> BenignCodes = [-4046, -4059, -2011, -2013];
+
+    private async Task<(HttpResponseMessage Response, string Body)> SendSignedOnceAsync(
+        HttpClient client,
+        HttpMethod method,
+        string path,
+        IReadOnlyDictionary<string, string> fields,
+        string apiKey,
+        string apiSecret,
+        CancellationToken cancellationToken)
+    {
         var query = new SortedDictionary<string, string>(StringComparer.Ordinal);
         foreach (var kv in fields)
         {
             query[kv.Key] = kv.Value;
         }
-        query["timestamp"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture);
+        query["timestamp"] = ServerNow(client).ToString(CultureInfo.InvariantCulture);
         query["recvWindow"] = _recvWindowMs.ToString(CultureInfo.InvariantCulture);
         var payload = string.Join("&", query.Select(kv => $"{kv.Key}={Uri.EscapeDataString(kv.Value)}"));
         var signature = BinanceHmac.Sign(apiSecret, payload);
@@ -395,28 +524,124 @@ public sealed class BinanceSignedRestClient
         }
 
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
-        if (IsFrequencyBan(response.StatusCode, body))
+        return (response, body);
+    }
+
+    private sealed class ClockState
+    {
+        public long OffsetMs;
+        public DateTimeOffset SyncedAt = DateTimeOffset.MinValue;
+        public readonly SemaphoreSlim Gate = new(1, 1);
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, ClockState> Clocks = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly TimeSpan ClockResync = TimeSpan.FromMinutes(10);
+
+    private static ClockState ClockFor(HttpClient client) =>
+        Clocks.GetOrAdd(client.BaseAddress?.ToString() ?? "", _ => new ClockState());
+
+    private static long ServerNow(HttpClient client) =>
+        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + Volatile.Read(ref ClockFor(client).OffsetMs);
+
+    /// <summary>
+    /// Binance rejects a signed request whose timestamp is off its server clock by more than recvWindow (-1021).
+    /// The local clock offset is measured against the server time endpoint and applied to every timestamp.
+    /// </summary>
+    private async Task EnsureClockAsync(HttpClient client, bool force, CancellationToken cancellationToken)
+    {
+        var state = ClockFor(client);
+        if (!force && DateTimeOffset.UtcNow - state.SyncedAt < ClockResync)
         {
-            var pause = TimeSpan.FromMinutes(1);
-            if (response.Headers.RetryAfter?.Delta is { } retry && retry > TimeSpan.Zero)
+            return;
+        }
+
+        await state.Gate.WaitAsync(cancellationToken);
+        try
+        {
+            if (!force && DateTimeOffset.UtcNow - state.SyncedAt < ClockResync)
             {
-                pause = retry;
+                return;
             }
 
-            BinancePublicWeightGate.CoolDown(pause);
-            _logger.LogWarning("Binance asked this IP to slow down for {Seconds}s. Further requests wait.", (int)pause.TotalSeconds);
-            throw new DomainException(ErrorCodes.ExchangeRateLimit, TrimBinanceError(body));
-        }
+            var timePath = ReferenceEquals(client, _futures) ? "fapi/v1/time" : "api/v3/time";
+            var sentAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            using var response = await client.GetAsync(timePath, cancellationToken);
+            var receivedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return;
+            }
 
-        if (!response.IsSuccessStatusCode)
+            var json = JsonSerializer.Deserialize<JsonElement>(body);
+            if (json.ValueKind != JsonValueKind.Object
+                || !json.TryGetProperty("serverTime", out var serverEl)
+                || !serverEl.TryGetInt64(out var serverTime))
+            {
+                return;
+            }
+
+            var offset = serverTime - ((sentAt + receivedAt) / 2);
+            Volatile.Write(ref state.OffsetMs, offset);
+            if (Math.Abs(offset) > 1000)
+            {
+                _logger.LogWarning("Local clock is {OffsetMs} ms off Binance server time. Signed requests use the server clock.", offset);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            _logger.LogWarning("Binance signed {Path} failed: {Status} {Body}", path, (int)response.StatusCode, body);
-            throw new DomainException(ErrorCodes.OrderRejected, TrimBinanceError(body));
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Binance server time sync failed. The previous clock offset is kept.");
+        }
+        finally
+        {
+            state.SyncedAt = DateTimeOffset.UtcNow;
+            state.Gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// 5xx, -1006 and -1007 mean Binance may or may not have executed the request, so callers must look
+    /// the order up instead of treating it as rejected.
+    /// </summary>
+    internal static string ClassifyFailure(int status, string body)
+    {
+        if (status >= 500)
+        {
+            return ErrorCodes.ExchangeUnavailable;
         }
 
-        return string.IsNullOrWhiteSpace(body)
-            ? default
-            : JsonSerializer.Deserialize<JsonElement>(body);
+        var code = ReadBinanceCode(body);
+        return code is -1006 or -1007 or -1001 ? ErrorCodes.ExchangeUnavailable : ErrorCodes.OrderRejected;
+    }
+
+    /// <summary>Signed calls that change exchange state. They wait longer for weight so a stop or close is not dropped.</summary>
+    internal static TimeSpan WeightWait(HttpMethod method, string path) =>
+        method != HttpMethod.Get && path.Contains("order", StringComparison.OrdinalIgnoreCase)
+            ? TimeSpan.FromSeconds(10)
+            : TimeSpan.FromSeconds(2);
+
+    private static int? ReadBinanceCode(string body)
+    {
+        try
+        {
+            var json = JsonSerializer.Deserialize<JsonElement>(body);
+            if (json.ValueKind == JsonValueKind.Object
+                && json.TryGetProperty("code", out var code)
+                && code.TryGetInt32(out var value))
+            {
+                return value;
+            }
+        }
+        catch
+        {
+            // not JSON
+        }
+
+        return null;
     }
 
     private static bool IsFrequencyBan(System.Net.HttpStatusCode status, string body) =>
@@ -425,14 +650,16 @@ public sealed class BinanceSignedRestClient
         || body.Contains("too frequent", StringComparison.OrdinalIgnoreCase)
         || body.Contains("Too many requests", StringComparison.OrdinalIgnoreCase);
 
-    private static string TrimBinanceError(string body)
+    /// <summary>Keeps the Binance error code in the message; callers match on codes such as -4130 and -2013.</summary>
+    internal static string TrimBinanceError(string body)
     {
         try
         {
             var json = JsonSerializer.Deserialize<JsonElement>(body);
-            if (json.TryGetProperty("msg", out var msg))
+            if (json.ValueKind == JsonValueKind.Object && json.TryGetProperty("msg", out var msg))
             {
-                return msg.GetString() ?? "Binance rejected the request.";
+                var text = msg.GetString() ?? "Binance rejected the request.";
+                return ReadBinanceCode(body) is { } code ? $"{text} (code {code})" : text;
             }
         }
         catch

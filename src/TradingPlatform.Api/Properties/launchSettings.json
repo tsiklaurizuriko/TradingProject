@@ -3,6 +3,15 @@
     "TradingPlatform.Api": {
       "commandName": "Project",
       "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Live"
+      },
+      "dotnetRunMessages": true,
+      "launchBrowser": false,
+      "applicationUrl": "http://localhost:5080"
+    },
+    "Development": {
+      "commandName": "Project",
+      "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development"
       },
       "dotnetRunMessages": true,

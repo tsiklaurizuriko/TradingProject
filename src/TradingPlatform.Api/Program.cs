@@ -15,6 +15,7 @@ try
 {
     var builder = WebApplication.CreateBuilder(args);
     TradingPlatform.Application.Trading.TradingHostConfiguration.RejectUnsupportedMode(builder.Configuration);
+    builder.Configuration.AddInMemoryCollection(TradingPlatform.Application.Trading.LocalSecrets.Resolve(builder.Configuration));
 
     builder.Host.UseSerilog((context, services, configuration) =>
         configuration
@@ -26,9 +27,10 @@ try
             .WriteTo.Console()
             .WriteTo.File("logs/api-.log", rollingInterval: RollingInterval.Day));
 
+    SecretsGuard.Enforce(builder.Configuration, builder.Environment, Log.Logger);
     builder.Services.AddTradingPlatformApi(builder.Configuration);
 
-    builder.Services.AddControllers()
+    builder.Services.AddControllers(options => options.Conventions.Add(new OperatorMutationsConvention()))
         .AddJsonOptions(options =>
         {
             options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
@@ -44,17 +46,18 @@ try
 
     app.UseSerilogRequestLogging();
 
-    app.MapOpenApi();
+    var openApi = app.MapOpenApi();
     if (app.Environment.IsDevelopment())
     {
+        openApi.AllowAnonymous();
         app.UseSwaggerUI(options =>
         {
             options.SwaggerEndpoint("/openapi/v1.json", "Trading Platform API v1");
             options.RoutePrefix = "swagger";
             options.DocumentTitle = "Trading Platform API";
         });
-        app.MapScalarApiReference();
-        app.MapGet("/", () => Results.Redirect("/swagger")).ExcludeFromDescription();
+        app.MapScalarApiReference().AllowAnonymous();
+        app.MapGet("/", () => Results.Redirect("/swagger")).ExcludeFromDescription().AllowAnonymous();
     }
 
     app.UseCors("Default");
@@ -63,16 +66,24 @@ try
 
     app.MapControllers();
     app.MapHub<TradingPlatform.Api.Hubs.TradingHub>(TradingPlatform.Api.Hubs.TradingHub.Route);
-    app.MapPrometheusScrapingEndpoint("/metrics");
+    app.MapPrometheusScrapingEndpoint("/metrics").AllowAnonymous();
     app.MapHealthChecks("/health/live", new HealthCheckOptions
     {
         Predicate = check => check.Tags.Contains("live")
-    });
+    }).AllowAnonymous();
     app.MapHealthChecks("/health/ready", new HealthCheckOptions
     {
         Predicate = check => check.Tags.Contains("ready")
-    });
-    app.MapHealthChecks("/health");
+    }).AllowAnonymous();
+    app.MapHealthChecks("/health").AllowAnonymous();
+
+    Log.Information(
+        "Trading mode banner: Venue={Venue} LiveTradingEnabled={Live} KillSwitchEnabled={Kill} HostBotEngine={Host} Environment={Env}",
+        TradingPlatform.Application.Trading.TradingVenue.Read(app.Configuration),
+        app.Configuration.GetValue<bool>("Trading:LiveTradingEnabled"),
+        app.Configuration.GetValue<bool>("Trading:KillSwitchEnabled"),
+        app.Configuration.GetValue("Trading:HostBotEngine", true),
+        app.Environment.EnvironmentName);
 
     app.Run();
 }

@@ -12,7 +12,7 @@ namespace TradingPlatform.Api.Controllers;
 
 [ApiController]
 [Route("api/trading")]
-[AllowAnonymous]
+[Authorize]
 public sealed class TradingController : ControllerBase
 {
     private readonly ITradingQueryService _query;
@@ -238,6 +238,14 @@ public sealed class TradingController : ControllerBase
         return _lifecycle.StopAllRunningAsync(UserId(), parsed, request.StrategyId, cancellationToken);
     }
 
+    [HttpPost("bots/not-active-strategy")]
+    public Task<SetBotsActiveResult> SetStrategyNotActive([FromBody] SetStrategyBotsActiveRequest request, CancellationToken cancellationToken)
+    {
+        var parsed = RequireLive(request.Mode);
+
+        return _lifecycle.SetStrategyBotsNotActiveAsync(UserId(), parsed, request.StrategyId, request.IsNotActive, cancellationToken);
+    }
+
     [HttpGet("strategies")]
     public Task<IReadOnlyList<StrategyDto>> Strategies([FromQuery] string? mode, CancellationToken cancellationToken) =>
         _query.GetStrategiesAsync(mode, cancellationToken);
@@ -326,6 +334,11 @@ public sealed class TradingController : ControllerBase
         await _lifecycle.EmergencyStopAsync(cancellationToken);
         return NoContent();
     }
+
+    /// <summary>Stops all bots and closes every live position with reduce-only market orders.</summary>
+    [HttpPost("flatten-all")]
+    public Task<FlattenAllReport> FlattenAll(CancellationToken cancellationToken) =>
+        _engine.FlattenAllAsync($"Flatten all by operator {User.Identity?.Name ?? "unknown"}.", cancellationToken);
 
     [HttpPost("backtests")]
     public Task<BacktestResultDto> RunBacktest([FromBody] RunBacktestRequest request, CancellationToken cancellationToken) =>
@@ -439,8 +452,34 @@ public sealed class TradingController : ControllerBase
     }
 
     [HttpPost("/api/strategies/cross-sectional-reversal/{strategyId}/live/disable")]
-    public ActionResult CrossSectionalLiveDisable(string strategyId, [FromServices] IOptions<TradingOptions> options) =>
-        KnownCrossSection(strategyId) ? Ok(CrossSectionalReversalGate.Describe(options.Value)) : NotFound();
+    public ActionResult CrossSectionalLiveDisable(string strategyId, [FromServices] IOptions<TradingOptions> options)
+    {
+        if (!KnownCrossSection(strategyId))
+        {
+            return NotFound();
+        }
+
+        var flags = options.Value.CrossSectionalReversal;
+        if (strategyId.Contains("1h", StringComparison.OrdinalIgnoreCase))
+        {
+            flags.Return1hEnabled = false;
+        }
+        else if (strategyId.Contains("15m", StringComparison.OrdinalIgnoreCase))
+        {
+            flags.Return15mEnabled = false;
+        }
+        else
+        {
+            flags.LiveEnabled = false;
+        }
+
+        if (!flags.Return1hEnabled && !flags.Return15mEnabled)
+        {
+            flags.LiveEnabled = false;
+        }
+
+        return Ok(CrossSectionalReversalGate.Describe(options.Value));
+    }
 
     private static bool KnownCrossSection(string strategyId) =>
         strategyId is "cross_sectional_reversal_return_15m" or "cross_sectional_reversal_return_1h" or "cross_sectional_reversal";

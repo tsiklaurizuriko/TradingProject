@@ -38,7 +38,7 @@ public sealed class TradingStore : ITradingStore
     {
         try
         {
-            return await BotsWithGraph().Where(b => b.Status == BotStatus.Running).ToListAsync(cancellationToken);
+            return await BotsWithGraph().Where(b => b.Status == BotStatus.Running && !b.IsNotActive).ToListAsync(cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -102,7 +102,8 @@ public sealed class TradingStore : ITradingStore
                 && (order.Status == OrderStatus.New
                     || order.Status == OrderStatus.Submitting
                     || order.Status == OrderStatus.Submitted
-                    || order.Status == OrderStatus.PartiallyFilled))
+                    || order.Status == OrderStatus.PartiallyFilled
+                    || order.Status == OrderStatus.Uncertain))
             .Select(order => new StrategyEntryClaim(order.Symbol, order.BotId, false, order.CreatedAt))
             .ToListAsync(cancellationToken);
         if (symbols.Length == 0)
@@ -434,6 +435,45 @@ public sealed class TradingStore : ITradingStore
     public Task<int> CountOrdersSinceForModeAsync(TradingMode mode, DateTimeOffset sinceUtc, CancellationToken cancellationToken = default) =>
         _db.Orders.CountAsync(o => o.Mode == mode && o.CreatedAt >= sinceUtc, cancellationToken);
 
+    public const string EquityAsset = "EQUITY";
+
+    public async Task RecordEquityPointAsync(Guid exchangeAccountId, TradingMode mode, decimal equity, DateTimeOffset at, TimeSpan minGap, CancellationToken cancellationToken = default)
+    {
+        if (equity <= 0m)
+        {
+            return;
+        }
+
+        var cutoff = at - minGap;
+        var recent = _db.BalanceSnapshots.Local.Any(row => row.ExchangeAccountId == exchangeAccountId && row.Mode == mode && row.Asset == EquityAsset && row.SnapshotAt > cutoff)
+            || await _db.BalanceSnapshots.AnyAsync(row => row.ExchangeAccountId == exchangeAccountId && row.Mode == mode && row.Asset == EquityAsset && row.SnapshotAt > cutoff, cancellationToken);
+        if (recent)
+        {
+            return;
+        }
+
+        await _db.BalanceSnapshots.AddAsync(new BalanceSnapshot
+        {
+            ExchangeAccountId = exchangeAccountId,
+            Asset = EquityAsset,
+            Free = equity,
+            PortfolioValueQuote = equity,
+            Mode = mode,
+            SnapshotAt = at
+        }, cancellationToken);
+    }
+
+    public async Task<(decimal? Peak, DateTimeOffset? LastAt)> GetEquityPeakAsync(Guid exchangeAccountId, TradingMode mode, DateTimeOffset sinceUtc, CancellationToken cancellationToken = default)
+    {
+        var rows = _db.BalanceSnapshots.Where(row => row.ExchangeAccountId == exchangeAccountId && row.Mode == mode && row.Asset == EquityAsset && row.SnapshotAt >= sinceUtc);
+        if (!await rows.AnyAsync(cancellationToken))
+        {
+            return (null, null);
+        }
+
+        return (await rows.MaxAsync(row => row.PortfolioValueQuote, cancellationToken), await rows.MaxAsync(row => row.SnapshotAt, cancellationToken));
+    }
+
     public async Task<decimal> SumClosedPnLSinceForModeAsync(TradingMode mode, DateTimeOffset sinceUtc, CancellationToken cancellationToken = default)
     {
         var rows = await LoadClosedSinceAsync(mode, sinceUtc, cancellationToken);
@@ -560,8 +600,16 @@ public sealed class TradingStore : ITradingStore
         await _db.Orders.AddAsync(order, cancellationToken);
     }
 
+    /// <summary>An exchange trade id is booked once. A repeat (retry, second sync path, replayed event) is skipped.</summary>
     public async Task AddExecutionAsync(Execution execution, CancellationToken cancellationToken = default)
     {
+        if (!string.IsNullOrWhiteSpace(execution.ExchangeTradeId)
+            && (_db.Executions.Local.Any(row => row.ExchangeTradeId == execution.ExchangeTradeId)
+                || await _db.Executions.AnyAsync(row => row.ExchangeTradeId == execution.ExchangeTradeId, cancellationToken)))
+        {
+            return;
+        }
+
         await _db.Executions.AddAsync(execution, cancellationToken);
     }
 
@@ -627,7 +675,7 @@ public sealed class TradingStore : ITradingStore
         var rows = await _db.Trades
             .AsNoTracking()
             .Where(t => t.BotId == botId && t.ClosedAt != null && t.ClosedAt >= sinceUtc)
-            .Select(t => new ClosedPnlRow(t.Symbol, t.Quantity, t.OpenedAt, t.ClosedAt, t.PnL, t.Fees, t.CorrelationId))
+            .Select(t => new ClosedPnlRow(t.Symbol, t.Quantity, t.OpenedAt, t.ClosedAt, t.NetPnL ?? t.PnL, t.Fees, t.CorrelationId))
             .ToListAsync(cancellationToken);
         return ClosedTripMatch.Unique(
             rows,
@@ -647,7 +695,7 @@ public sealed class TradingStore : ITradingStore
             .Where(t => t.BotId == botId && t.ClosedAt != null)
             .OrderByDescending(t => t.ClosedAt)
             .Take(20)
-            .Select(t => new { t.PnL, t.ClosedAt })
+            .Select(t => new { PnL = t.NetPnL ?? t.PnL, t.ClosedAt })
             .ToListAsync(cancellationToken);
 
         var losses = 0;
@@ -693,7 +741,7 @@ public sealed class TradingStore : ITradingStore
             .Where(t => t.Bot.Mode == mode && t.Symbol == name && t.ClosedAt != null)
             .OrderByDescending(t => t.ClosedAt)
             .Take(40)
-            .Select(t => new ClosedPnlRow(t.Symbol, t.Quantity, t.OpenedAt, t.ClosedAt, t.PnL, t.Fees, t.CorrelationId))
+            .Select(t => new ClosedPnlRow(t.Symbol, t.Quantity, t.OpenedAt, t.ClosedAt, t.NetPnL ?? t.PnL, t.Fees, t.CorrelationId))
             .ToListAsync(cancellationToken);
         var unique = ClosedTripMatch.Unique(
             recent,
@@ -718,7 +766,7 @@ public sealed class TradingStore : ITradingStore
             .OrderByDescending(t => t.ClosedAt);
         var limited = take is { } cap ? query.Take(cap) : query;
         return await limited
-            .Select(t => new ClosedPnlRow(t.Symbol, t.Quantity, t.OpenedAt, t.ClosedAt, t.PnL, t.Fees, t.CorrelationId))
+            .Select(t => new ClosedPnlRow(t.Symbol, t.Quantity, t.OpenedAt, t.ClosedAt, t.NetPnL ?? t.PnL, t.Fees, t.CorrelationId))
             .ToListAsync(cancellationToken);
     }
 
@@ -806,7 +854,9 @@ public sealed class TradingStore : ITradingStore
                 t.Side == OrderSide.Sell ? "Short" : "Long",
                 t.CorrelationId,
                 t.FeeStatus,
-                t.FeeAsset))
+                t.FeeAsset,
+                t.NetPnL,
+                t.FundingPnL))
             .ToListAsync(cancellationToken);
 
     public async Task<IReadOnlyList<Signal>> GetRecentSignalsAsync(int take, CancellationToken cancellationToken = default) =>

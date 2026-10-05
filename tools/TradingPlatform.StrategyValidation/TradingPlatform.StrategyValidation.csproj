@@ -9,5 +9,6 @@
     <ProjectReference Include="..\..\src\TradingPlatform.Application\TradingPlatform.Application.csproj" />
     <ProjectReference Include="..\..\src\TradingPlatform.Domain\TradingPlatform.Domain.csproj" />
     <ProjectReference Include="..\..\src\TradingPlatform.Strategies\TradingPlatform.Strategies.csproj" />
+    <ProjectReference Include="..\..\src\TradingPlatform.Research\TradingPlatform.Research.csproj" />
   </ItemGroup>
 </Project>

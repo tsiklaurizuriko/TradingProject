@@ -94,6 +94,9 @@ public static class StrategyTemplateKeys
     public const string CrossSectionalReversalReturn15m = "cross_sectional_reversal_return_15m";
     public const string CrossSectionalReversalReturn1h = "cross_sectional_reversal_return_1h";
     public const string FlatRange = "flat_range";
+    public const string ObsCompressionBreakout = "obs_compression_breakout_1h";
+    public const string ObsShockFade = "obs_shock_fade_1h";
+    public const string ObsTopTraderContrarian = "obs_toptrader_contrarian_1h";
     public const string MacContrarian710 = "mac_contrarian_7_10";
     public const string ZigZagFade = "zigzag_fade";
     public const string DonchianV2 = "donchian_v2_55";
@@ -251,6 +254,9 @@ public static class StrategyTemplateKeys
 
     public static readonly string[] Range = [FlatRange];
 
+    /// <summary>Phase 2 alpha configurations closest to break-even. Not validated; forward observation at small size only.</summary>
+    public static readonly string[] Observation = [ObsCompressionBreakout, ObsShockFade, ObsTopTraderContrarian];
+
     public static readonly string[] Flow = [FlowZone, ImpulseCatch];
 
     public static readonly string[] Positioning = [SqueezeWatch];
@@ -300,7 +306,7 @@ public static class StrategyTemplateKeys
 
     public static readonly string[] Refactored = [];
 
-    public static readonly string[] All = [.. Frozen, .. Research, .. NearMiss, .. CrossSectionalReversal, .. Range, .. Flow, .. Positioning, .. Imported];
+    public static readonly string[] All = [.. Frozen, .. Research, .. NearMiss, .. CrossSectionalReversal, .. Range, .. Flow, .. Positioning, .. Imported, .. Observation];
 
     /// <summary>
     /// Operator catalog: PAPER or weak guidance only. Avoid/blocked templates stay in the engine
@@ -334,7 +340,10 @@ public static class StrategyTemplateKeys
         CombinedBinHCluc,
         Hlhb,
         FAdxSma,
-        TripleSupertrend
+        TripleSupertrend,
+        ObsCompressionBreakout,
+        ObsShockFade,
+        ObsTopTraderContrarian
     ];
 
     public static readonly string[] SupportedTimeframes = ["5m", "15m", "1h"];
@@ -428,6 +437,11 @@ public static class StrategyTemplateKeys
         if (IsCrossSectionalReversal(template))
         {
             return ["15m"];
+        }
+
+        if (IsObservation(template))
+        {
+            return ["1h"];
         }
 
         return SupportedTimeframes;
@@ -540,6 +554,12 @@ public static class StrategyTemplateKeys
     public static bool IsFlatRange(string? key) =>
         string.Equals(Normalize(key), FlatRange, StringComparison.Ordinal);
 
+    public static bool IsObservation(string? key) =>
+        Observation.Contains(Normalize(key), StringComparer.Ordinal);
+
+    public static bool IsTopTraderContrarian(string? key) =>
+        string.Equals(Normalize(key), ObsTopTraderContrarian, StringComparison.Ordinal);
+
     public static bool IsRefactored(string? key) => IsCanonical(key);
 
     public static bool IsResearchOnlyFamily(string? key) => IsScalping(key) || IsPriceAction(key) || IsCrossSectionalReversal(key);
@@ -563,6 +583,7 @@ public static class StrategyTemplateKeys
         CryptoPairsArb => ["OHLCV", "CausalPairUniverse"],
         XsRelativeStrength or CrossSectionalReversalReturn15m or CrossSectionalReversalReturn1h => ["OHLCV", "CrossSectionUniverse"],
         MtfTrendStructure or ScalpMtf => ["OHLCV", "CompletedHtf"],
+        ObsTopTraderContrarian => ["OHLCV", "TopTraderPositionRatio", "CrossSectionUniverse"],
         _ => ["OHLCV"]
     };
 
@@ -589,6 +610,7 @@ public static class StrategyTemplateKeys
         var pa when IsPriceAction(pa) => "SCALPING_PRICE_ACTION",
         var near when IsNearMiss(near) => "NEAR_MISS",
         var csr when IsCrossSectionalReversal(csr) => "CROSS_SECTIONAL_REVERSAL",
+        ObsCompressionBreakout or ObsShockFade or ObsTopTraderContrarian => "OBSERVATION",
         _ => "TREND"
     };
 
@@ -949,6 +971,13 @@ public static class StrategyTemplates
                 VolumeFilterEnabled = false
             },
             var refactored when StrategyTemplateKeys.IsRefactored(refactored) => RefactoredDefaults(core),
+            var observation when StrategyTemplateKeys.IsObservation(observation) => core with
+            {
+                Timeframe = "1h",
+                AllowedSide = StrategySides.Both,
+                VolumeFilterEnabled = false,
+                Quality = new StrategyQualityParams()
+            },
             _ => core
         };
     }
@@ -1447,6 +1476,9 @@ public static class StrategyTemplates
         StrategyTemplateKeys.CrossSectionalReversalReturn15m => "Return 15m Reversal",
         StrategyTemplateKeys.CrossSectionalReversalReturn1h => "Return 1h Reversal",
         StrategyTemplateKeys.FlatRange => "Flat Range",
+        StrategyTemplateKeys.ObsCompressionBreakout => "Compression Breakout 72h",
+        StrategyTemplateKeys.ObsShockFade => "Shock Fade 24h",
+        StrategyTemplateKeys.ObsTopTraderContrarian => "Top-Trader Contrarian 72h",
         StrategyTemplateKeys.MacContrarian710 => "Contrarian SMA 7/10",
         StrategyTemplateKeys.ZigZagFade => "ZigZag Fade",
         StrategyTemplateKeys.DonchianV2 => "Donchian 55/5",
@@ -1552,6 +1584,12 @@ public static class StrategyTemplates
             "Repeatable cross-sectional reversal factor — not validated for trading.",
         StrategyTemplateKeys.FlatRange =>
             "ფლეტზე ზედა და ქვედა ზღვარი იკეტება. ლონგი ქვედა მეხუთედში, შორტი ზედა მეხუთედში. სტოპი შესვლის ზღვარია, ტეიკ-პროფიტი მოპირდაპირე ზღვარი. ზომა ისე ითვლება, რომ სტოპმა დაგეგმილი რისკი წაიღოს. 24 საათში იხურება. არ არის validated.",
+        StrategyTemplateKeys.ObsCompressionBreakout =>
+            "OBSERVATION. 1 საათი, ორივე მხარე. 24 საათის volatility 30 დღისაზე 2-ჯერ დაბალია და დახურვამ წინა 7 დღის მაქსიმუმი (ან მინიმუმი) გაარღვია — შესვლა გარღვევის მხარეს. მხოლოდ 4-საათიან UTC დახურვებზე. 72 საათში იხურება. სტოპი 2.5σ (2–15%), ტეიკი 3R — მხოლოდ ღობეა. Phase 2: BASE ხარჯზე Sharpe +0.07, CONSERVATIVE-ზე −0.17. არ არის validated.",
+        StrategyTemplateKeys.ObsShockFade =>
+            "OBSERVATION. 1 საათი, ორივე მხარე. სანთლის დიაპაზონი 7-დღიან საშუალოზე 5-ჯერ დიდია და მოცულობა 3-ჯერ — მოძრაობის საწინააღმდეგოდ შესვლა. 24 საათში იხურება. სტოპი 2.5σ (2–15%), ტეიკი 3R — მხოლოდ ღობეა. Phase 2: event PF 1.12, net Sharpe −0.73. არ არის validated.",
+        StrategyTemplateKeys.ObsTopTraderContrarian =>
+            "OBSERVATION. 1 საათი, ორივე მხარე. ყოველ 00:00 UTC-ზე ყველა მონეტის top-trader long/short (positions) 30-დღიანი z-score რანჟირდება. ტოპ-ტრეიდერები უჩვეულოდ შორტში — ლონგი (ქვედა 20%), უჩვეულოდ ლონგში — შორტი (ზედა 20%). 72 საათში იხურება. სტოპი 2.5σ (2–15%), ტეიკი 3R. Phase 2: Sharpe −0.19, MaxDD 14%. არ არის validated.",
         StrategyTemplateKeys.MacContrarian710 =>
             "MAc(7,10,0.01). 5m SMA(7)/SMA(10). სწრაფი საშუალო ნელზე 1%-ით მაღლაა — შორტი, 1%-ით დაბლაა — ლონგი. რისკი 0.5%, სტოპი 5%, ტეიკი 5%, 3x.",
         StrategyTemplateKeys.ZigZagFade =>
@@ -1594,6 +1632,10 @@ public static class StrategyTemplates
         StrategyTemplateKeys.OiBreakoutConfirmation => "OHLCV + OpenInterest. OI_HISTORICAL_DATA_LIMITATION (~29d). OI_SAMPLE_LIMITED.",
         var near when StrategyTemplateKeys.IsNearMiss(near) =>
             "Closed 5m entry plus last closed 1m, 3m, 15m, and 1h. Missing series is not fabricated.",
+        StrategyTemplateKeys.ObsCompressionBreakout or StrategyTemplateKeys.ObsShockFade =>
+            "1000 closed 1h klines. Quote volume is base volume × close. Universe: median daily volume ≥ $5M over the prior 30 days.",
+        StrategyTemplateKeys.ObsTopTraderContrarian =>
+            "1h klines plus GET /futures/data/topLongShortPositionRatio (1h, ~30 days) for every coin with median daily volume ≥ $5M. Missing ratio = coin not ranked.",
         _ => "Closed kline candles only."
     };
 
@@ -1621,6 +1663,7 @@ public static class StrategyTemplates
         StrategyTemplateKeys.BtcDailyMax10 => StrategyValidationStatuses.HistoricallyFittedCandidate,
         var near when StrategyTemplateKeys.IsNearMiss(near) => StrategyValidationStatuses.NearMiss,
         var csr when StrategyTemplateKeys.IsCrossSectionalReversal(csr) => StrategyValidationStatuses.Researching,
+        var observation when StrategyTemplateKeys.IsObservation(observation) => StrategyValidationStatuses.Researching,
         var key when StrategyTemplateKeys.IsResearch(key) => "RESEARCHING",
         _ => "VALIDATION_PENDING"
     };

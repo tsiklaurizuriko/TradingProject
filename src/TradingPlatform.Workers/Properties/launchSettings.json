@@ -4,6 +4,13 @@
       "commandName": "Project",
       "dotnetRunMessages": true,
       "environmentVariables": {
+        "DOTNET_ENVIRONMENT": "Live"
+      }
+    },
+    "Development": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "environmentVariables": {
         "DOTNET_ENVIRONMENT": "Development"
       }
     }

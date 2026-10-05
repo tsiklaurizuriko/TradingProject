@@ -42,15 +42,15 @@ public sealed class SystemController : ControllerBase
         var exchangeReady = live.HasKeys && live.FuturesBookFresh;
         var reconciliationReady = _reconciliation.IsFresh(DateTimeOffset.UtcNow, maxAge);
         var riskValid = true;
-        var gateOpen = options.LiveTradingEnabled
+        var gateOpen = options.EntriesEnabled
             && !options.KillSwitchEnabled
             && reconciliationReady
             && _reconciliation.BlockReason is null
             && exchangeReady;
         var blockedReason = gateOpen
             ? null
-            : !options.LiveTradingEnabled
-                ? LiveEntryGate.BlockedMessage
+            : !options.EntriesEnabled
+                ? LiveEntryGate.EntriesOffMessage(options.VenueKind)
                 : options.KillSwitchEnabled
                     ? "Kill switch is active."
                     : _reconciliation.BlockReason
@@ -66,7 +66,9 @@ public sealed class SystemController : ControllerBase
             liveEntryGateOpen = gateOpen,
             unresolvedOrderCount = _reconciliation.UnresolvedOrderCount,
             blockedReason,
-            liveTradingEnabled = options.LiveTradingEnabled,
+            liveTradingEnabled = options.VenueKind == TradingVenueKind.Live && options.LiveTradingEnabled,
+            venue = options.VenueKind.ToString(),
+            entriesEnabled = options.EntriesEnabled,
             supportedMode = "Live",
             defaultMode = "Live",
             entries = report.Entries.ToDictionary(

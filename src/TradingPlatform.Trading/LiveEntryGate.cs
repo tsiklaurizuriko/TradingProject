@@ -1,3 +1,4 @@
+using TradingPlatform.Application.Trading;
 using TradingPlatform.Domain.Trading;
 
 namespace TradingPlatform.Trading;
@@ -11,12 +12,20 @@ public sealed record LiveEntryFacts(
     bool StrategyEnabled,
     bool RiskAccepted,
     bool SymbolFiltersValid,
-    bool ReducingExposure);
+    bool ReducingExposure,
+    TradingVenueKind Venue = TradingVenueKind.Live);
 
 public static class LiveEntryGate
 {
     public const string BlockedMessage =
         "Live entries are blocked. Trading:LiveTradingEnabled is false. Exits of an open position still run. Startup does not turn this flag on.";
+
+    public static string EntriesOffMessage(TradingVenueKind venue) => venue switch
+    {
+        TradingVenueKind.Shadow => "Shadow entries are blocked. Trading:ShadowTradingEnabled is false. Exits of an open position still run.",
+        TradingVenueKind.Testnet => "Testnet entries are blocked. Trading:TestnetTradingEnabled is false. Exits of an open position still run.",
+        _ => BlockedMessage
+    };
 
     public static string? BlockNewEntry(TradingMode mode, bool liveTradingEnabled) =>
         Block(new LiveEntryFacts(mode, liveTradingEnabled, false, true, false, true, true, true, false));
@@ -35,7 +44,7 @@ public static class LiveEntryGate
 
         if (!facts.LiveTradingEnabled)
         {
-            return BlockedMessage;
+            return EntriesOffMessage(facts.Venue);
         }
 
         if (facts.KillSwitchActive)

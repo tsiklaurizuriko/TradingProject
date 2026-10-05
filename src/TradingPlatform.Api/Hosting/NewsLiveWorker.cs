@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using TradingPlatform.Application.Abstractions;
 using TradingPlatform.Application.Abstractions.Exchange;
 using TradingPlatform.Application.Abstractions.MarketData;
 using TradingPlatform.Application.Trading;
@@ -159,6 +160,14 @@ public sealed class NewsLiveWorker : BackgroundService
             return;
         }
 
+        if (!await scope.ServiceProvider.GetRequiredService<IWorkerLease>().HoldAsync(WorkerLeaseNames.NewsTrading, cancellationToken))
+        {
+            _pending.Clear();
+            _nextTradeUtc = DateTimeOffset.UtcNow.AddMinutes(Math.Max(1, options.PollMinutes));
+            _logger.LogInformation("Another host holds the news trading lease. Scoring and signals are left to that host.");
+            return;
+        }
+
         var remembered = new NewsPipeline(options, catalog: catalog).Build(
             await database.RecentArticlesAsync(now.AddMinutes(-options.Strategy.MaxNewsAgeMinutes), cancellationToken));
         if (remembered.Count > 0)
@@ -192,13 +201,42 @@ public sealed class NewsLiveWorker : BackgroundService
         }
 
         IExchangeConnector? connector = null;
+        Guid? liveAccountId = null;
         if (session.Running)
         {
-            connector = scope.ServiceProvider.GetRequiredService<IExchangeConnectorFactory>().Create(TradingMode.Live, null);
+            var admin = await scope.ServiceProvider.GetRequiredService<ITradingStore>().GetFirstAdminAsync(cancellationToken);
+            var account = await scope.ServiceProvider.GetRequiredService<IExchangeCredentialStore>().GetLiveAccountAsync(admin.Id, cancellationToken);
+            if (account is null)
+            {
+                report.Errors.Add("News trading is running but no live Binance account is saved. No order was sent.");
+            }
+            else
+            {
+                liveAccountId = account.Id;
+                connector = scope.ServiceProvider.GetRequiredService<IExchangeConnectorFactory>().Create(TradingMode.Live, account.Id);
+            }
         }
 
         var reconciliation = scope.ServiceProvider.GetRequiredService<ReconciliationState>();
-        await PersistSignalsAsync(database, events, report, session, profile, risk, connector, now, options, trading, reconciliation, cancellationToken);
+        var tradingStore = scope.ServiceProvider.GetRequiredService<ITradingStore>();
+        var dayStart = new DateTimeOffset(now.UtcDateTime.Date, TimeSpan.Zero);
+        var accountSnapshot = scope.ServiceProvider.GetRequiredService<ILiveAccountCache>().Current;
+        var openLoss = Math.Min(0m, accountSnapshot.OpenPositions.Sum(row => row.UnrealizedPnL));
+        decimal? drawdown = null;
+        if (session.Running && liveAccountId is { } accountId)
+        {
+            var (peak, lastPointAt) = await tradingStore.GetEquityPeakAsync(accountId, TradingMode.Live, now.AddDays(-Math.Max(1, trading.EquityPeakLookbackDays)), cancellationToken);
+            drawdown = BotEngine.DrawdownPercent(peak, lastPointAt, accountSnapshot.FuturesEquity, now);
+        }
+
+        var live = new NewsLiveContext(
+            accountSnapshot,
+            scope.ServiceProvider.GetRequiredService<IPublicMarketDataClient>(),
+            session.Running ? await tradingStore.SumClosedPnLSinceForModeAsync(TradingMode.Live, dayStart, cancellationToken) + openLoss : 0m,
+            session.Running ? await tradingStore.GetLossStreakForModeAsync(TradingMode.Live, cancellationToken) : (0, null),
+            session.Running ? await tradingStore.SumClosedPnLSinceForModeAsync(TradingMode.Live, BotEngine.WeekStart(now), cancellationToken) + openLoss : 0m,
+            drawdown);
+        await PersistSignalsAsync(database, events, report, session, profile, risk, connector, live, now, options, trading, reconciliation, cancellationToken);
 
         await NewsLiveAnalyzer.WriteAsync(root, report, options.Strategy.Timeframes.Execution, cancellationToken);
         var candidates = report.Decisions.Count(item => item.Signal != NewsMarketSignals.NoTrade);
@@ -218,6 +256,7 @@ public sealed class NewsLiveWorker : BackgroundService
         RiskProfile profile,
         IRiskEngine risk,
         IExchangeConnector? connector,
+        NewsLiveContext live,
         DateTimeOffset now,
         NewsOptions options,
         TradingOptions trading,
@@ -225,6 +264,15 @@ public sealed class NewsLiveWorker : BackgroundService
         CancellationToken cancellationToken)
     {
         var eventsById = events.ToDictionary(item => item.EventId, StringComparer.Ordinal);
+        var (equity, available, equityBlock) = NewsTradeAdapter.LiveEquity(live.Account, DateTimeOffset.UtcNow, TimeSpan.FromMinutes(2));
+        var filters = new Dictionary<string, RankedUsdtSpotSymbol>(StringComparer.OrdinalIgnoreCase);
+        if (session.Running)
+        {
+            foreach (var row in await live.Market.GetPaperUniverseAsync(cancellationToken))
+            {
+                filters[row.Symbol] = row;
+            }
+        }
         var approved = await database.ApprovedOpenCountAsync(cancellationToken);
         foreach (var decision in report.Decisions)
         {
@@ -253,25 +301,107 @@ public sealed class NewsLiveWorker : BackgroundService
                 decision.Symbol,
                 direction,
                 now.AddMinutes(-options.Strategy.SignalCooldownMinutes),
-                cancellationToken);
+                cancellationToken)
+                || live.Account.OpenPositions.Any(p => string.Equals(p.Symbol, decision.Symbol, StringComparison.OrdinalIgnoreCase));
             var price = decision.Record?.ReferencePrice ?? 0m;
+            DateTimeOffset? priceAt = null;
+            if (session.Running && direction != "NO_TRADE")
+            {
+                try
+                {
+                    var fresh = await live.Market.GetLastPriceAsync(decision.Symbol, cancellationToken);
+                    if (fresh > 0m)
+                    {
+                        price = fresh;
+                        priceAt = DateTimeOffset.UtcNow;
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // Age below stays at the candle close, which the risk check treats as stale.
+                }
+            }
+
+            filters.TryGetValue(decision.Symbol, out var filter);
             var snapshot = new RiskSnapshot
             {
-                Equity = 10_000m,
-                AvailableBalance = 10_000m,
+                Equity = equity,
+                AvailableBalance = available,
                 Symbol = decision.Symbol,
                 Price = price,
+                AccountDailyPnL = live.DailyRealizedPnl,
+                AccountWeeklyPnL = live.WeeklyRealizedPnl,
+                DrawdownPercent = live.DrawdownPercent,
                 SymbolAlreadyOpen = occupied,
                 OpenPositionCount = approved,
-                MarketDataAgeMs = 0,
-                Sizing = new RiskSizingHints { StepSize = 0.001m, MinQuantity = 0.001m, MinNotional = 5m, TakerFeePercent = RiskEngine.DefaultTakerFeePercent, SlippagePercent = RiskEngine.DefaultSlippagePercent }
+                MarketDataAgeMs = decision.Record?.ReferencePriceAt is { } candleClose
+                    && TimeframeExtensions.TryParseInterval(options.Strategy.Timeframes.Execution, out var executionTimeframe)
+                        ? MarketDataAge.Milliseconds(DateTimeOffset.UtcNow, priceAt, candleClose, executionTimeframe.ToDuration())
+                        : int.MaxValue,
+                Sizing = new RiskSizingHints
+                {
+                    StepSize = filter?.StepSize ?? 0m,
+                    MinQuantity = filter?.MinQuantity ?? 0m,
+                    MinNotional = filter?.MinNotional ?? 5m,
+                    QuantityPrecision = filter?.QuantityPrecision ?? 0,
+                    TakerFeePercent = connector is null
+                        ? RiskEngine.DefaultTakerFeePercent
+                        : await connector.GetTakerFeePercentAsync(decision.Symbol, cancellationToken) ?? RiskEngine.DefaultTakerFeePercent,
+                    SlippagePercent = RiskEngine.DefaultSlippagePercent
+                }
             };
-            var handoff = price <= 0m && direction != "NO_TRADE"
-                ? new NewsRiskHandoff(direction, "Rejected", "No reference price.", 0, 0, 0, 0, 0, 0, "REJECTED", null)
-                : NewsTradeAdapter.Handoff(direction, price <= 0m ? 1m : price, 0.01m, profile, snapshot, risk, now, trading.LiveTradingEnabled && session.Running && string.Equals(session.Mode, "Live", StringComparison.OrdinalIgnoreCase), session.Running);
-            if (direction == "NO_TRADE")
+            var liveOn = trading.EntriesEnabled && session.Running && string.Equals(session.Mode, "Live", StringComparison.OrdinalIgnoreCase);
+            var handoff = direction == "NO_TRADE"
+                ? NewsTradeAdapter.Handoff(direction, 1m, 0.01m, profile, snapshot, risk, now, false, false)
+                : price <= 0m
+                    ? NewsTradeAdapter.Rejected(direction, "No reference price.")
+                    : session.Running && equityBlock is not null
+                        ? NewsTradeAdapter.Rejected(direction, equityBlock)
+                        : session.Running && filter is null
+                            ? NewsTradeAdapter.Rejected(direction, $"{decision.Symbol} has no Binance USD-M filters. No order.")
+                            : NewsTradeAdapter.Handoff(
+                                direction,
+                                price,
+                                filter?.TickSize ?? 0.01m,
+                                profile,
+                                snapshot,
+                                risk,
+                                now,
+                                liveOn,
+                                session.Running,
+                                NewsTradeAdapter.ClientOrderId(source.EventId, decision.Symbol));
+
+            if (session.Running && handoff.RiskDecision == "Approved")
             {
-                handoff = NewsTradeAdapter.Handoff(direction, 1m, 0.01m, profile, snapshot, risk, now, false, false);
+                var liveBlock = RiskLiveGuard.Reject(
+                    TradingMode.Live,
+                    profile,
+                    new LiveRiskFacts(
+                        equity,
+                        0m,
+                        Math.Max(approved, live.Account.OpenPositions.Count),
+                        occupied ? 1 : 0,
+                        live.DailyRealizedPnl,
+                        profile.RiskPerTradePercent,
+                        handoff.Leverage,
+                        profile.StopLossPercent,
+                        handoff.Quantity,
+                        handoff.Notional,
+                        filter?.MinQuantity ?? 0m,
+                        filter?.MinNotional ?? 0m,
+                        equityBlock is null ? available : null,
+                        handoff.Margin,
+                        trading.KillSwitchEnabled,
+                        live.Streak.ConsecutiveLosses,
+                        live.Streak.LastLossAt,
+                        now,
+                        profile.MaxDrawdownPercent <= 0m || live.DrawdownPercent is not null,
+                        live.WeeklyRealizedPnl,
+                        live.DrawdownPercent));
+                if (liveBlock is not null)
+                {
+                    handoff = NewsTradeAdapter.Rejected(direction, liveBlock);
+                }
             }
 
             if (handoff.RiskDecision == "Approved")
@@ -289,7 +419,7 @@ public sealed class NewsLiveWorker : BackgroundService
                     handoff.Request,
                     new LiveEntryFacts(
                         TradingMode.Live,
-                        trading.LiveTradingEnabled,
+                        trading.EntriesEnabled,
                         trading.KillSwitchEnabled,
                         reconciliation.IsFresh(now, TimeSpan.FromSeconds(Math.Max(1, trading.ReconciliationMaxAgeSeconds))),
                         reconciliation.BlockReason is not null,
@@ -299,17 +429,34 @@ public sealed class NewsLiveWorker : BackgroundService
                         false),
                     cancellationToken);
                 exchangeId = fill?.ExchangeOrderId;
-                if (fill is not null && handoff.StopLossPrice > 0m && handoff.TakeProfitPrice > 0m)
+                if (fill is not null && fill.FilledQuantity > 0m)
                 {
                     var closeSide = direction == "SHORT" ? OrderSide.Buy : OrderSide.Sell;
-                    await connector.PlaceClosePositionStopsAsync(
-                        decision.Symbol,
-                        closeSide,
-                        handoff.StopLossPrice,
-                        handoff.TakeProfitPrice,
-                        handoff.Request.ClientOrderId + "-sl",
-                        handoff.Request.ClientOrderId + "-tp",
-                        cancellationToken);
+                    var stops = handoff.StopLossPrice > 0m
+                        ? await connector.PlaceClosePositionStopsAsync(
+                            decision.Symbol,
+                            closeSide,
+                            handoff.StopLossPrice,
+                            handoff.TakeProfitPrice,
+                            handoff.Request.ClientOrderId + "-sl",
+                            handoff.Request.ClientOrderId + "-tp",
+                            cancellationToken)
+                        : new ProtectiveStopsResult(false, false, "No stop price.");
+                    if (!stops.HasWorkingStop)
+                    {
+                        await connector.PlaceOrderAsync(
+                            new PlaceOrderRequest(
+                                handoff.Request.ClientOrderId + "-x",
+                                decision.Symbol,
+                                closeSide,
+                                OrderType.Market,
+                                fill.FilledQuantity,
+                                null,
+                                TimeSpan.FromSeconds(5),
+                                ReduceOnly: true),
+                            cancellationToken);
+                        handoff = handoff with { RiskReason = $"Stop failed ({stops.StopError}). The fill was closed with a reduce-only order." };
+                    }
                 }
 
                 handoff = handoff with { OrderDecision = fill is null ? "NOT_SENT" : fill.Status.ToString() };
@@ -473,4 +620,13 @@ public sealed class NewsLiveWorker : BackgroundService
 
         return start;
     }
+
+    /// <summary>Daily and weekly figures are realized PnL plus open losses, matching the bot engine.</summary>
+    private sealed record NewsLiveContext(
+        LiveAccountSnapshot Account,
+        IPublicMarketDataClient Market,
+        decimal DailyRealizedPnl,
+        (int ConsecutiveLosses, DateTimeOffset? LastLossAt) Streak,
+        decimal WeeklyRealizedPnl = 0m,
+        decimal? DrawdownPercent = null);
 }

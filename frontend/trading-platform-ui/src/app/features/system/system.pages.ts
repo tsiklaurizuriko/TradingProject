@@ -57,7 +57,7 @@ function toRiskRequest(form: RiskDraft): SaveRiskProfileRequest {
                 <strong>{{ row.name }}</strong>
                 <span class="chip">{{ row.timeframe }}</span>
               </div>
-              <button class="btn sm" type="button" [class.secondary]="!dirty(row.id)" [class.accent]="dirty(row.id)" [disabled]="busy || !dirty(row.id)" (click)="save(row)">Save</button>
+              <button class="btn sm" type="button" [class.secondary]="!dirty(row.id)" [class.accent]="dirty(row.id)" [disabled]="busy || !dirty(row.id) || !auth.isOperator()" [attr.title]="auth.isOperator() ? null : 'Operator role required'" (click)="save(row)">Save</button>
             </div>
             <div class="risk-fields">
               <label>Risk %<input type="number" step="0.1" [ngModel]="draftOf(row).riskPerTradePercent" (ngModelChange)="patch(row, 'riskPerTradePercent', $event)" /></label>
@@ -76,6 +76,7 @@ function toRiskRequest(form: RiskDraft): SaveRiskProfileRequest {
 })
 export class RiskPage {
   readonly trading = inject(TradingService);
+  readonly auth = inject(AuthService);
   private readonly toast = inject(ToastService);
   readonly drafts = signal<Record<string, RiskDraft>>({});
   busy = false;
@@ -86,6 +87,7 @@ export class RiskPage {
 
   draftOf(row: {
     id: string;
+    riskProfileId?: string | null;
     riskPerTradePercent?: number;
     stopLossPercent?: number;
     takeProfitPercent?: number;
@@ -98,18 +100,20 @@ export class RiskPage {
     if (existing) {
       return existing;
     }
+    // Fields this page does not edit must round-trip from the stored profile, or a save would reset them.
+    const stored = this.trading.riskProfiles().find((profile) => profile.id === row.riskProfileId);
     return {
-      riskPerTradePercent: row.riskPerTradePercent || 0.5,
-      stopLossPercent: row.stopLossPercent || 2,
-      takeProfitPercent: row.takeProfitPercent || 4,
-      maxLeverage: row.maxLeverage || 3,
-      maxDailyLossPercent: 3,
-      maxPortfolioRiskPercent: 4,
-      maxSimultaneousPositions: row.maxSimultaneousPositions || 5,
-      maxConsecutiveLosses: row.maxConsecutiveLosses || 5,
-      cooldownMinutes: row.cooldownMinutes || 30,
-      minimumLiquidationSafetyBufferPercent: 1,
-      allowLive: true,
+      riskPerTradePercent: stored?.riskPerTradePercent ?? row.riskPerTradePercent ?? 0.5,
+      stopLossPercent: stored?.stopLossPercent ?? row.stopLossPercent ?? 2,
+      takeProfitPercent: stored?.takeProfitPercent ?? row.takeProfitPercent ?? 4,
+      maxLeverage: stored?.maxLeverage ?? row.maxLeverage ?? 3,
+      maxDailyLossPercent: stored?.maxDailyLossPercent ?? 3,
+      maxPortfolioRiskPercent: stored?.maxPortfolioRiskPercent ?? 4,
+      maxSimultaneousPositions: stored?.maxSimultaneousPositions ?? row.maxSimultaneousPositions ?? 5,
+      maxConsecutiveLosses: stored?.maxConsecutiveLosses ?? row.maxConsecutiveLosses ?? 5,
+      cooldownMinutes: stored?.cooldownMinutes ?? row.cooldownMinutes ?? 30,
+      minimumLiquidationSafetyBufferPercent: stored?.minimumLiquidationSafetyBufferPercent ?? 1,
+      allowLive: stored?.allowLive ?? false,
     };
   }
 
@@ -117,7 +121,7 @@ export class RiskPage {
     return !!this.drafts()[id];
   }
 
-  patch(row: { id: string; riskPerTradePercent?: number; stopLossPercent?: number; takeProfitPercent?: number; maxLeverage?: number }, key: keyof RiskDraft, value: number): void {
+  patch(row: { id: string; riskProfileId?: string | null; riskPerTradePercent?: number; stopLossPercent?: number; takeProfitPercent?: number; maxLeverage?: number }, key: keyof RiskDraft, value: number): void {
     const next = { ...this.draftOf(row), [key]: Number(value) };
     this.drafts.update((map) => ({ ...map, [row.id]: next }));
   }
@@ -173,7 +177,7 @@ export class RiskPage {
         <input type="password" autocomplete="new-password" [(ngModel)]="apiSecret" />
       </label>
       <div class="btn-row" style="margin-top:16px">
-        <button class="btn danger" type="button" [disabled]="busy" (click)="save()">Save live key</button>
+        <button class="btn danger" type="button" [disabled]="busy || !auth.isOperator()" [attr.title]="auth.isOperator() ? null : 'Operator role required'" (click)="save()">Save live key</button>
         <button class="btn secondary" type="button" [disabled]="busy" (click)="reload()">Test</button>
       </div>
     </section>
@@ -181,6 +185,7 @@ export class RiskPage {
 })
 export class ExchangesPage {
   readonly trading = inject(TradingService);
+  readonly auth = inject(AuthService);
   private readonly toast = inject(ToastService);
   apiKey = '';
   apiSecret = '';

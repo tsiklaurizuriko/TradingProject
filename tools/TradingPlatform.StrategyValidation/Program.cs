@@ -13,6 +13,11 @@ if (args.Any(a => string.Equals(a, "--benchmark", StringComparison.OrdinalIgnore
     return 0;
 }
 
+if (args.Any(a => string.Equals(a, "--audit-scorecard", StringComparison.OrdinalIgnoreCase)))
+{
+    return await AuditScorecard.RunAsync(FindRepoRoot(), args);
+}
+
 var smoke = args.Any(a => string.Equals(a, "--smoke", StringComparison.OrdinalIgnoreCase));
 var root = FindRepoRoot();
 var cacheDir = Path.Combine(root, "artifacts", "strategy-validation-cache");

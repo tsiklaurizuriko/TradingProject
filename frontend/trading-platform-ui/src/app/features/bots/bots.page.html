@@ -97,9 +97,19 @@
             <span class="count-chip">{{ group.bots.length }}</span>
           </button>
           <div class="section-head-meta">
+            <label class="tiny group-not-active" [class.is-on]="groupNotActive(group.bots)" title="No bot in this group can be started while this is ticked">
+              <input
+                type="checkbox"
+                [checked]="groupNotActive(group.bots)"
+                [indeterminate]="groupPartlyNotActive(group.bots)"
+                [disabled]="busy || !isGuid(group.key)"
+                (change)="setGroupNotActive(group, $any($event.target).checked)"
+              />
+              Not active
+            </label>
             <span class="tiny">{{ bookLabel(group.bots[0]) }}</span>
             <span class="tiny" [class.is-live]="runningCount(group.bots) > 0">{{ runningCount(group.bots) }} running</span>
-            <button class="btn accent sm" type="button" title="Start this group only" [disabled]="busy || idleCount(group.bots) === 0" (click)="requestStartGroup(group)">
+            <button class="btn accent sm" type="button" title="Start this group only" [disabled]="busy || startableCount(group.bots) === 0" (click)="requestStartGroup(group)">
               {{ busyGroup === group.key && groupAction === 'start' ? 'Starting…' : 'Start' }}
             </button>
             <button class="btn danger sm" type="button" title="Stop this group only" [disabled]="busy || runningCount(group.bots) === 0" (click)="stopGroup(group)">
@@ -118,6 +128,9 @@
                     <div class="tiny">{{ bot.displayName }} · {{ bot.timeframe }} · {{ bookLabel(bot) }}</div>
                   </div>
                   <div class="section-head-meta">
+                    @if (bot.isNotActive) {
+                      <span class="badge">Not active</span>
+                    }
                     <app-status-badge [label]="botStatus(bot.status).label" [cls]="botStatus(bot.status).cls" />
                   </div>
                 </div>
@@ -134,7 +147,7 @@
                   @if (bot.status === 'Running') {
                     <button class="btn danger" type="button" [disabled]="busy || busyId === bot.id" (click)="stop(bot)">Stop</button>
                   } @else {
-                    <button class="btn" type="button" [class.danger]="ui.isLive()" [disabled]="busy || busyId === bot.id" (click)="start(bot)">Start</button>
+                    <button class="btn" type="button" [class.danger]="ui.isLive()" [disabled]="busy || busyId === bot.id || bot.isNotActive" [title]="bot.isNotActive ? 'Not active. Untick Not active on the group first.' : ''" (click)="start(bot)">Start</button>
                   }
                   <a class="btn secondary" [routerLink]="['/bots', bot.id]">Details</a>
                   <button class="btn ghost" type="button" [disabled]="busy" (click)="askDeleteOne(bot)">Delete</button>

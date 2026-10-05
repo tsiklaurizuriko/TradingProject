@@ -54,6 +54,8 @@ public sealed class DatabaseSeeder
         }
         """;
 
+    public const string DevelopmentAdminPassword = "ChangeMe_Admin_123!";
+
     private readonly TradingDbContext _db;
     private readonly IPasswordHasher _passwordHasher;
     private readonly IConfiguration _configuration;
@@ -183,8 +185,14 @@ public sealed class DatabaseSeeder
             return;
         }
 
+        var password = _configuration["Seed:AdminPassword"];
+        if (string.IsNullOrWhiteSpace(password))
+        {
+            _logger.LogWarning("No admin user exists and Seed:AdminPassword is not set. No admin was seeded.");
+            return;
+        }
+
         var adminRole = await _db.Roles.FirstAsync(r => r.Name == RoleNames.Admin, cancellationToken);
-        var password = _configuration["Seed:AdminPassword"] ?? "ChangeMe_Admin_123!";
         var user = new User
         {
             Email = email,
@@ -241,10 +249,10 @@ public sealed class DatabaseSeeder
             var hour = row.Key is StrategyTemplateKeys.FAdxSma or StrategyTemplateKeys.TripleSupertrend;
             var freqtradeLong = binhv || hlhb || row.Key is StrategyTemplateKeys.ClucMay72018 or StrategyTemplateKeys.CombinedBinHCluc;
             var longOnly = emaCross || tsMomentum || freqtradeLong || impulse;
-                var parameters = StrategyTemplates.DefaultsFor(row.Key, qualityOn: !row.Research && !flat && !flow && !squeeze && !impulse && !StrategyTemplateKeys.IsHistoricallyFitted(row.Key)) with
+                var parameters = StrategyTemplates.DefaultsFor(row.Key, qualityOn: !row.Research && !flat && !flow && !squeeze && !impulse && !StrategyTemplateKeys.IsObservation(row.Key) && !StrategyTemplateKeys.IsHistoricallyFitted(row.Key)) with
             {
                 AllowedSide = longOnly ? StrategySides.Long : StrategySides.Both,
-                Timeframe = binhv ? "1m" : hlhb ? "4h" : hour ? "1h" : donchianV2 ? "1d" : zigzag ? "30m" : tsMomentum ? "1d" : emaCross ? "30m" : impulse ? "15m" : flat || flow || squeeze ? "1h" : StrategyTemplateKeys.IsHistoricallyFitted(row.Key) || crossSection ? "15m" : "5m"
+                Timeframe = SeedTimeframe(row.Key)
             };
             if (strategy is null)
             {
@@ -270,7 +278,7 @@ public sealed class DatabaseSeeder
                     VersionNumber = 1,
                     DefinitionJson = StrategyTemplates.Build(strategy.Name, 1, parameters),
                     Symbol = "BTCUSDT",
-                    Timeframe = binhv ? Timeframe.OneMinute : hlhb ? Timeframe.FourHours : hour ? Timeframe.OneHour : donchianV2 ? Timeframe.OneDay : zigzag ? Timeframe.ThirtyMinutes : tsMomentum ? Timeframe.OneDay : emaCross ? Timeframe.ThirtyMinutes : impulse ? Timeframe.FifteenMinutes : flat || flow || squeeze ? Timeframe.OneHour : fitted || crossSection ? Timeframe.FifteenMinutes : Timeframe.FiveMinutes
+                    Timeframe = TimeframeExtensions.TryParseInterval(parameters.Timeframe, out var seeded) ? seeded : Timeframe.FiveMinutes
                 });
                 _db.Strategies.Add(strategy);
                 existing.Add(strategy);
@@ -462,6 +470,12 @@ public sealed class DatabaseSeeder
             }
         }
     }
+
+    /// <summary>
+    /// The timeframe a catalog row is seeded on. It must equal what <see cref="AlignBotTimeframesAsync"/> enforces,
+    /// or the version column and the definition JSON disagree after the next start.
+    /// </summary>
+    public static string SeedTimeframe(string key) => StrategyTemplateKeys.TimeframesFor(key)[0];
 
     private static void AlignCatalogStrategy(
         Strategy strategy,
@@ -748,6 +762,12 @@ public sealed class DatabaseSeeder
             "1h, both sides. Price moved less than 3% over 24 hours, open interest rose at least 15%, and funding is at or below -0.10% — buy the crowded shorts. The same quiet price and open-interest rise with funding at or above +0.10% — sell the crowded longs. Missing funding or open interest sends no order. While open, exit when funding leaves that extreme or price moves 2% against the entry. Book is risk 0.5%, stop 4%, take 8%, leverage 2x, 3 positions. Not measured on the past.", false),
         (StrategyTemplateKeys.FlatRange, "Flat Range",
             "ფლეტზე წინა 24 საათის ზედა და ქვედა ზღვარი იკეტება. ლონგი ქვედა 20%-ში, შორტი ზედა 20%-ში. სტოპი შესვლის ზღვარია, ტეიკ-პროფიტი მოპირდაპირე ზღვარი. პოზიციის ზომა ისე ითვლება, რომ სტოპმა დაგეგმილი რისკი წაიღოს. 24 საათში იხურება.", false),
+        (StrategyTemplateKeys.ObsCompressionBreakout, "Compression Breakout 72h",
+            "OBSERVATION. 1h, ორივე მხარე. ყოველ 4 საათში: თუ 24-საათიანი ვოლატილობა 720-საათიანის ნახევარზე ნაკლებია და დახურვა 168 საათის მაქსიმუმს ზემოთაა — ლონგი, მინიმუმს ქვემოთ — შორტი. 72 საათში იხურება. კატასტროფული სტოპი 2.5σ (2%–15%), ტეიკი 3× სტოპი, მარჟა მაქს. 8 USDT. კვლევაში წმინდა Sharpe უარყოფითი იყო. არ არის validated.", false),
+        (StrategyTemplateKeys.ObsShockFade, "Shock Fade 24h",
+            "OBSERVATION. 1h, ორივე მხარე. სანთლის დიაპაზონი ≥ 5× საშუალოზე (168 სთ) და მოცულობა ≥ 3× — მოძრაობის საწინააღმდეგოდ შესვლა. 24 საათში იხურება. კატასტროფული სტოპი 2.5σ (2%–15%), ტეიკი 3× სტოპი, მარჟა მაქს. 8 USDT. ლაივის range-shock დაცვა ასეთ სანთლებზე შესვლას ხშირად ბლოკავს. არ არის validated.", false),
+        (StrategyTemplateKeys.ObsTopTraderContrarian, "Top-Trader Contrarian 72h",
+            "OBSERVATION. 1h, ორივე მხარე, 00:00 UTC-ზე. ტოპ-ტრეიდერების პოზიციების long/short ფარდობის 30-დღიანი z ყველა ≥ $5M მონეტაზე. ყველაზე „მოკლე“ 20% — ლონგი, ყველაზე „გრძელი“ 20% — შორტი. 72 საათში იხურება. საჭიროა ≥ 20 მონეტა. კატასტროფული სტოპი 2.5σ (2%–15%), მარჟა მაქს. 8 USDT. არ არის validated.", false),
         (StrategyTemplateKeys.MacContrarian710, "Contrarian SMA 7/10",
             "MAc(7,10,0.01) on 5m. Fast SMA above the slow band is short. Fast SMA below the slow band is long. Protective book is risk 0.5%, stop 5%, take 5%, leverage 3x.", true),
         (StrategyTemplateKeys.ZigZagFade, "ZigZag Fade",
@@ -961,6 +981,9 @@ public sealed class DatabaseSeeder
         [StrategyTemplateKeys.SqueezeWatch] = (0.5m, 4m, 8m, 2m, 3),
         [StrategyTemplateKeys.ImpulseCatch] = (0.5m, 6m, 20m, 2m, 8),
         [StrategyTemplateKeys.FlatRange] = (0.5m, 2m, 4m, 3m, 5),
+        [StrategyTemplateKeys.ObsCompressionBreakout] = (0.5m, 8m, 24m, 2m, 5),
+        [StrategyTemplateKeys.ObsShockFade] = (0.5m, 8m, 24m, 2m, 5),
+        [StrategyTemplateKeys.ObsTopTraderContrarian] = (0.5m, 8m, 24m, 2m, 8),
         [StrategyTemplateKeys.MacContrarian710] = (0.5m, 5m, 5m, 3m, 5),
         [StrategyTemplateKeys.ZigZagFade] = (0.5m, 4m, 8m, 3m, 5),
         [StrategyTemplateKeys.DonchianV2] = (0.5m, 8m, 30m, 1m, 1),

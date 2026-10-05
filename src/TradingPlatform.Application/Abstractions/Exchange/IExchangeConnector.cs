@@ -1,4 +1,5 @@
 using TradingPlatform.Domain.Exchanges;
+using TradingPlatform.Domain.Positions;
 using TradingPlatform.Domain.Risk;
 using TradingPlatform.Domain.Trading;
 
@@ -73,11 +74,20 @@ public sealed record PlaceOrderRequest(
     TimeSpan? Timeout,
     bool ReduceOnly = false);
 
+/// <param name="StopRestored">The new stop failed but the stop that was working before the replace is back on the book.</param>
 public sealed record ProtectiveStopsResult(
     bool StopPlaced,
     bool TakePlaced,
     string? StopError = null,
-    string? TakeError = null);
+    string? TakeError = null,
+    bool StopRestored = false)
+{
+    /// <summary>A stop is working on the exchange: either the requested one or the previous one.</summary>
+    public bool HasWorkingStop => StopPlaced || StopRestored;
+}
+
+/// <summary>One open USD-M position as the exchange reports it. Quantity is unsigned; Side says the direction.</summary>
+public sealed record ExchangePosition(string Symbol, PositionSide Side, decimal Quantity, decimal EntryPrice, decimal MarkPrice);
 
 public static class ProtectiveOrderMath
 {
@@ -90,6 +100,10 @@ public static class ProtectiveOrderMath
         Contains(message, "-4130")
         || Contains(message, "-4116")
         || Contains(message, "duplicat");
+
+    /// <summary>Binance -4509: a closePosition stop needs an open position. Retrying cannot succeed until one exists.</summary>
+    public static bool IsNoOpenPosition(string? message) =>
+        Contains(message, "-4509");
 
     public static decimal RestingTrigger(decimal mark, decimal tickSize, bool closingShort, bool stop)
     {
@@ -138,7 +152,29 @@ public interface IExchangeConnector
     Task CancelAllOrdersAsync(string symbol, CancellationToken cancellationToken = default);
     Task SubscribeMarketDataAsync(string symbol, Timeframe timeframe, CancellationToken cancellationToken = default);
     Task SubscribeUserDataAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Every non-zero position on the account, read from the exchange (not from the local book).</summary>
+    Task<IReadOnlyList<ExchangePosition>> GetOpenPositionsAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<ExchangePosition>>([]);
+
+    /// <summary>
+    /// True when the account uses hedge (dual-side) position mode. Order payloads in this project assume
+    /// one-way mode, so anything other than <c>false</c> must block new entries. Null means it could not be read.
+    /// </summary>
+    Task<bool?> IsHedgeModeAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult<bool?>(false);
+
+    /// <summary>This account's taker commission on the coin, in percent (0.04 = 0.04%). Null when it could not be read.</summary>
+    Task<decimal?> GetTakerFeePercentAsync(string symbol, CancellationToken cancellationToken = default) =>
+        Task.FromResult<decimal?>(null);
+
+    /// <summary>Maintenance margin of the leverage bracket that holds <paramref name="notional"/>. Null when it could not be read.</summary>
+    Task<MaintenanceBracket?> GetMaintenanceBracketAsync(string symbol, decimal notional, CancellationToken cancellationToken = default) =>
+        Task.FromResult<MaintenanceBracket?>(null);
 }
+
+/// <summary>Rate is a fraction (0.004 = 0.4%). Amount is Binance's "cum" maintenance amount in USDT.</summary>
+public sealed record MaintenanceBracket(decimal Rate, decimal Amount);
 
 public interface IExchangeConnectorFactory
 {

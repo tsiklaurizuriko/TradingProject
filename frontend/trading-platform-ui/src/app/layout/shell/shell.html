@@ -59,8 +59,15 @@
         </div>
       </div>
       <div class="topbar-mode" role="status" aria-label="Trading mode">
-        <span class="badge badge-live">LIVE</span>
-        <span class="tiny">{{ trading.health()?.liveTradingEnabled ? 'Orders enabled' : 'Orders disabled' }}</span>
+        <span [class]="'badge ' + venue().cls">{{ venue().label }}</span>
+        @if (venue().label === 'LIVE') {
+          <span class="tiny">{{ trading.health()?.liveTradingEnabled ? 'Orders enabled' : 'Orders disabled' }}</span>
+        } @else {
+          <span class="tiny">No real orders</span>
+        }
+        @if (dataStale()) {
+          <span class="badge badge-stale" [attr.title]="trading.health()?.blockedReason || 'Exchange data is not fresh. New entries are blocked.'">DATA STALE</span>
+        }
       </div>
       <div class="topbar-actions">
         <label class="search">
@@ -79,8 +86,8 @@
     @if (ui.liveWarning()) {
       <div class="live-rail" role="status">
         <span class="live-rail-led" aria-hidden="true"></span>
-        <span class="live-rail-tag">LIVE</span>
-        <span class="live-rail-copy">{{ trading.health()?.liveTradingEnabled ? 'Live order submission is enabled' : 'Live order submission is disabled' }}{{ trading.health()?.blockedReason ? ' — ' + trading.health()?.blockedReason : '' }}</span>
+        <span class="live-rail-tag">{{ venue().label }}</span>
+        <span class="live-rail-copy">{{ venue().copy }}{{ trading.health()?.blockedReason ? ' — ' + trading.health()?.blockedReason : '' }}</span>
       </div>
     }
 

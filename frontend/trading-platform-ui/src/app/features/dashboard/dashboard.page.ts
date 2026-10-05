@@ -135,6 +135,7 @@ export class DashboardPage {
   );
 
   readonly modeBots = computed(() => this.trading.workspaceBots());
+  readonly activeBots = computed(() => this.modeBots().filter((bot) => !bot.isNotActive));
   readonly modePositions = computed(() => this.trading.workspacePositions());
   readonly modeTrades = computed(() => this.trading.workspaceTrades());
   readonly chartDays = computed(() => {

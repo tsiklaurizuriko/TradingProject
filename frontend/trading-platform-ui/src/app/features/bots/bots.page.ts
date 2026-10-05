@@ -249,9 +249,52 @@ export class BotsPage {
     return bots.filter((bot) => bot.status !== 'Running').length;
   }
 
+  startableCount(bots: BotDto[]): number {
+    return bots.filter((bot) => bot.status !== 'Running' && !bot.isNotActive).length;
+  }
+
+  readonly isGuid = isGuid;
+
+  groupNotActive(bots: BotDto[]): boolean {
+    return bots.length > 0 && bots.every((bot) => bot.isNotActive);
+  }
+
+  groupPartlyNotActive(bots: BotDto[]): boolean {
+    return bots.some((bot) => bot.isNotActive) && !this.groupNotActive(bots);
+  }
+
+  async setGroupNotActive(group: StrategyBotGroup, isNotActive: boolean): Promise<void> {
+    if (!isGuid(group.key)) {
+      return;
+    }
+    this.busy = true;
+    this.busyGroup = group.key;
+    try {
+      const result = await this.trading.setWorkspaceStrategyNotActive(group.key, isNotActive);
+      await this.trading.refresh();
+      this.toast.show(
+        isNotActive ? `${group.name} not active` : `${group.name} active`,
+        isNotActive
+          ? `No bot in this group can start until you untick Not active.${result.stopped ? ` ${result.stopped} running bot(s) were stopped. Positions were not closed.` : ''}`
+          : 'Bots in this group can be started again. None were started.',
+        'info',
+      );
+    } catch (error) {
+      this.toast.show('Change blocked', apiMessage(error), 'error');
+      await this.trading.refresh();
+    } finally {
+      this.busy = false;
+      this.busyGroup = null;
+    }
+  }
+
   requestStartGroup(group: StrategyBotGroup): void {
-    if (!this.idleCount(group.bots)) {
-      this.toast.show('Nothing to start', `Every bot in ${group.name} is already running.`, 'info');
+    if (this.groupNotActive(group.bots)) {
+      this.toast.show('Group not active', `${group.name} is marked not active. Untick Not active first.`, 'error');
+      return;
+    }
+    if (!this.startableCount(group.bots)) {
+      this.toast.show('Nothing to start', `Every bot in ${group.name} is already running or not active.`, 'info');
       return;
     }
     if (this.ui.isLive() || this.ui.confirmStartAll()) {
@@ -328,7 +371,7 @@ export class BotsPage {
   }
 
   private async startGroupBots(group: StrategyBotGroup): Promise<StartBotsResult> {
-    const idle = group.bots.filter((bot) => bot.status !== 'Running');
+    const idle = group.bots.filter((bot) => bot.status !== 'Running' && !bot.isNotActive);
     if (!isGuid(group.key)) {
       return this.startListed(idle);
     }

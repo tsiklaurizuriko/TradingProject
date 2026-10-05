@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.SignalR;
 
 namespace TradingPlatform.Api.Hubs;
 
-[AllowAnonymous]
+[Authorize]
 public sealed class TradingHub : Hub
 {
     public const string Route = "/hubs/trading";

@@ -7,8 +7,15 @@ public static class TradeFee
     /// <summary>
     /// Writes a commission onto a trade. A replace is a full recompute of the same trip.
     /// An add merges the next leg. An unknown or uncertain result never overwrites a stored amount with 0.
+    /// The stored net is recomputed afterwards, so set <c>PnL</c> (gross) before calling this.
     /// </summary>
     public static void Apply(Trade trade, FeeBook next, bool replace)
+    {
+        Merge(trade, next, replace);
+        TradePnl.Refresh(trade);
+    }
+
+    private static void Merge(Trade trade, FeeBook next, bool replace)
     {
         var current = FeeBook.FromStored(trade.FeeStatus, trade.Fees, trade.FeeAsset);
         if (replace && next.Status == FeeKnowledge.Unknown && current.Status == FeeKnowledge.Known)

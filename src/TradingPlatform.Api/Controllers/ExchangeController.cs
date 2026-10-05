@@ -7,7 +7,7 @@ namespace TradingPlatform.Api.Controllers;
 
 [ApiController]
 [Route("api/trading/exchange")]
-[AllowAnonymous]
+[Authorize]
 public sealed class ExchangeController : ControllerBase
 {
     private readonly IExchangeAccountService _exchange;
@@ -28,6 +28,8 @@ public sealed class ExchangeController : ControllerBase
     private Guid UserId()
     {
         var value = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
-        return Guid.TryParse(value, out var id) ? id : Guid.Empty;
+        return Guid.TryParse(value, out var id) && id != Guid.Empty
+            ? id
+            : throw new TradingPlatform.Domain.Errors.DomainException(TradingPlatform.Domain.Errors.ErrorCodes.Unauthorized, "Exchange credentials need a signed-in user.");
     }
 }

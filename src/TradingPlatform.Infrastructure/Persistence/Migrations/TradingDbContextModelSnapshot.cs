@@ -327,6 +327,9 @@ namespace TradingPlatform.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("ExchangeAccountId")
                         .HasColumnType("uuid");
 
+                    b.Property<bool>("IsNotActive")
+                        .HasColumnType("boolean");
+
                     b.Property<string>("LastError")
                         .HasColumnType("text");
 
@@ -1549,7 +1552,9 @@ namespace TradingPlatform.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ExchangeTradeId");
+                    b.HasIndex("ExchangeTradeId")
+                        .IsUnique()
+                        .HasFilter("\"ExchangeTradeId\" IS NOT NULL");
 
                     b.HasIndex("OrderId");
 
@@ -1904,6 +1909,10 @@ namespace TradingPlatform.Infrastructure.Persistence.Migrations
                         .HasPrecision(28, 8)
                         .HasColumnType("numeric(28,8)");
 
+                    b.Property<decimal>("MaxDrawdownPercent")
+                        .HasPrecision(28, 8)
+                        .HasColumnType("numeric(28,8)");
+
                     b.Property<decimal>("MaxLeverage")
                         .HasPrecision(28, 8)
                         .HasColumnType("numeric(28,8)");
@@ -1914,6 +1923,10 @@ namespace TradingPlatform.Infrastructure.Persistence.Migrations
 
                     b.Property<int>("MaxSimultaneousPositions")
                         .HasColumnType("integer");
+
+                    b.Property<decimal>("MaxWeeklyLossPercent")
+                        .HasPrecision(28, 8)
+                        .HasColumnType("numeric(28,8)");
 
                     b.Property<decimal>("MinimumLiquidationSafetyBufferPercent")
                         .HasPrecision(28, 8)
@@ -2161,6 +2174,10 @@ namespace TradingPlatform.Infrastructure.Persistence.Migrations
                     b.Property<int>("FeeStatus")
                         .HasColumnType("integer");
 
+                    b.Property<decimal?>("FundingPnL")
+                        .HasPrecision(28, 8)
+                        .HasColumnType("numeric(28,8)");
+
                     b.Property<string>("HypothesisId")
                         .HasColumnType("text");
 
@@ -2169,6 +2186,10 @@ namespace TradingPlatform.Infrastructure.Persistence.Migrations
 
                     b.Property<decimal>("MaxFavorableExcursion")
                         .HasColumnType("numeric");
+
+                    b.Property<decimal?>("NetPnL")
+                        .HasPrecision(28, 8)
+                        .HasColumnType("numeric(28,8)");
 
                     b.Property<DateTimeOffset>("OpenedAt")
                         .HasColumnType("timestamp with time zone");

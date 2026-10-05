@@ -320,7 +320,8 @@ export class PositionTableComponent {
                   <th class="num"><app-sort-btn column="qty" [query]="list" align="end">Vol</app-sort-btn></th>
                   <th class="num"><app-sort-btn column="entry" [query]="list" align="end">Entry</app-sort-btn></th>
                   <th class="num"><app-sort-btn column="exit" [query]="list" align="end">Avg Close</app-sort-btn></th>
-                  <th class="num"><app-sort-btn column="pnl" [query]="list" align="end">PnL</app-sort-btn></th>
+                  <th class="num"><app-sort-btn column="pnl" [query]="list" align="end">Gross PnL</app-sort-btn></th>
+                  <th class="num"><app-sort-btn column="net" [query]="list" align="end">Net PnL</app-sort-btn></th>
                   <th class="num"><app-sort-btn column="pnlPct" [query]="list" align="end">PnL %</app-sort-btn></th>
                 </tr>
               </thead>
@@ -333,6 +334,11 @@ export class PositionTableComponent {
                     <td class="num">{{ price(row.entryPrice) }}</td>
                     <td class="num">{{ price(row.exitPrice) }}</td>
                     <td class="num" [class]="pnlClass(row.pnL)">{{ signedMoney(row.pnL) }}</td>
+                    @if (row.closedAt && row.netPnL != null) {
+                      <td class="num" [class]="pnlClass(row.netPnL)">{{ signedMoney(row.netPnL) }}</td>
+                    } @else {
+                      <td class="num muted" [attr.title]="row.netPendingReason || null">{{ row.closedAt ? 'Pending fees' : '—' }}</td>
+                    }
                     <td class="num" [class]="pnlClass(row.pnLPercent)">{{ row.closedAt ? pct(row.pnLPercent) : '—' }}</td>
                   </tr>
                 }
@@ -368,6 +374,7 @@ export class TradeTableComponent {
         entry: (row) => row.entryPrice,
         exit: (row) => row.exitPrice,
         pnl: (row) => row.pnL,
+        net: (row) => row.netPnL ?? Number.NEGATIVE_INFINITY,
         pnlPct: (row) => row.pnLPercent,
       },
     ),

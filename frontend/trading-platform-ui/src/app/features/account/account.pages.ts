@@ -126,6 +126,20 @@ export class PerformancePage {
     return 'Fees ' + money(this.fees()) + (asset ? ' ' + asset : '');
   }
 
+  /** Net is shown only when every closed trade has a certified USDT fee; otherwise the pending count is shown. */
+  netLabel(): string {
+    const snap = this.snap();
+    if (!snap || !snap.closedTrades) {
+      return this.feesLabel();
+    }
+    const gross = 'Gross ' + signedMoney(snap.grossPnL ?? 0);
+    const pending = snap.pendingNetTrades ?? 0;
+    const net = snap.netPnL != null
+      ? 'Net ' + signedMoney(snap.netPnL)
+      : `Net pending fees on ${pending} trade${pending === 1 ? '' : 's'}`;
+    return `${gross} · ${net}`;
+  }
+
   equitySub(): string {
     const net = this.netPnl();
     const ret = this.snap()?.returnPercent;

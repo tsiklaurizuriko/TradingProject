@@ -61,6 +61,39 @@ public static class CommissionReader
         return Combine(rows);
     }
 
+    /// <summary>Executed quantity and quote value summed over user-trade rows. Null when any row lacks a positive price or quantity.</summary>
+    public static (decimal Quantity, decimal Quote)? FillFromUserTrades(JsonElement trades)
+    {
+        if (trades.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        var quantity = 0m;
+        var quote = 0m;
+        foreach (var trade in trades.EnumerateArray())
+        {
+            if (!trade.TryGetProperty("qty", out var qtyEl) || !trade.TryGetProperty("price", out var priceEl))
+            {
+                return null;
+            }
+
+            var qty = Read(qtyEl);
+            var price = Read(priceEl);
+            if (qty <= 0m || price <= 0m)
+            {
+                return null;
+            }
+
+            quantity += qty;
+            quote += trade.TryGetProperty("quoteQty", out var quoteEl) && Read(quoteEl) is > 0m and var rowQuote
+                ? rowQuote
+                : qty * price;
+        }
+
+        return quantity > 0m ? (quantity, quote) : null;
+    }
+
     private static Result Combine(List<(decimal Amount, string? Asset, bool HasAmount)> rows)
     {
         if (rows.Count == 0)

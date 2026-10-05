@@ -90,7 +90,12 @@ public static class ServiceCollectionExtensions
 
     private static void AddJwtAuthentication(IServiceCollection services, IConfiguration configuration)
     {
-        var signingKey = configuration["Jwt:SigningKey"] ?? "CHANGE-ME-to-a-long-random-signing-key-32chars-min";
+        var signingKey = configuration["Jwt:SigningKey"];
+        if (string.IsNullOrWhiteSpace(signingKey))
+        {
+            throw new InvalidOperationException("Jwt:SigningKey is not configured. The API does not fall back to a built-in key.");
+        }
+
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             .AddJwtBearer(options =>
             {
@@ -120,6 +125,14 @@ public static class ServiceCollectionExtensions
                     }
                 };
             });
-        services.AddAuthorization();
+        services.AddAuthorization(options =>
+        {
+            options.FallbackPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder()
+                .RequireAuthenticatedUser()
+                .Build();
+            options.AddPolicy(ApiPolicies.Operator, policy => policy
+                .RequireAuthenticatedUser()
+                .RequireRole(OperatorRoles.All));
+        });
     }
 }

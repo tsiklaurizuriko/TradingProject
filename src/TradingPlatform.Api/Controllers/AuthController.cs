@@ -12,21 +12,29 @@ public sealed class AuthController : ControllerBase
     private readonly IAuthService _auth;
     private readonly IValidator<RegisterRequest> _registerValidator;
     private readonly IValidator<LoginRequest> _loginValidator;
+    private readonly IConfiguration _configuration;
 
     public AuthController(
         IAuthService auth,
         IValidator<RegisterRequest> registerValidator,
-        IValidator<LoginRequest> loginValidator)
+        IValidator<LoginRequest> loginValidator,
+        IConfiguration configuration)
     {
         _auth = auth;
         _registerValidator = registerValidator;
         _loginValidator = loginValidator;
+        _configuration = configuration;
     }
 
     [AllowAnonymous]
     [HttpPost("register")]
     public async Task<ActionResult<AuthResponse>> Register([FromBody] RegisterRequest request, CancellationToken cancellationToken)
     {
+        if (!_configuration.GetValue<bool>("Auth:AllowSelfRegistration"))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { code = "REGISTRATION_DISABLED", message = "Self-registration is off. An administrator creates accounts." });
+        }
+
         await _registerValidator.ValidateAndThrowAsync(request, cancellationToken);
         var result = await _auth.RegisterAsync(request, Ip(), cancellationToken);
         return Ok(result);

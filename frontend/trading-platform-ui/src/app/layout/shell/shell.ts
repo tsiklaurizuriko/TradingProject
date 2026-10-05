@@ -5,7 +5,7 @@ import { filter, map } from 'rxjs';
 import { AuthService } from '../../core/auth/auth.service';
 import { TradingHubService } from '../../core/realtime/trading-hub.service';
 import { TradingService } from '../../core/trading/trading.service';
-import { formatClock } from '../../core/trading/trading.models';
+import { formatClock, modeBadge } from '../../core/trading/trading.models';
 import { ToastService } from '../../core/ui/toast.service';
 import { TradingMode, UiStateService } from '../../core/ui/ui-state.service';
 import { IconComponent } from '../../shared/icon/icon';
@@ -106,6 +106,29 @@ export class Shell {
       return { label: 'Degraded', tone: 'warn' as const };
     }
     return { label: 'Connected', tone: 'ok' as const };
+  });
+
+  readonly venue = computed(() => {
+    const health = this.trading.health();
+    const name = (health?.venue ?? 'Live').toString();
+    const key = name.toLowerCase();
+    if (key === 'shadow') {
+      return { label: 'SHADOW', cls: modeBadge(name), copy: 'Simulated fills on live prices. No order reaches Binance.' };
+    }
+    if (key === 'testnet') {
+      return { label: 'TESTNET', cls: modeBadge(name), copy: 'Binance futures testnet. No real money.' };
+    }
+    return {
+      label: 'LIVE',
+      cls: modeBadge(name),
+      copy: health?.liveTradingEnabled ? 'Live order submission is enabled' : 'Live order submission is disabled',
+    };
+  });
+
+  /** Exchange account or reconciliation is not fresh; new entries are blocked server-side. */
+  readonly dataStale = computed(() => {
+    const health = this.trading.health();
+    return !!health && (health.exchangeReady === false || health.reconciliationReady === false);
   });
 
   readonly userLabel = computed(() => this.auth.current()?.email ?? 'Administrator');

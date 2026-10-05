@@ -31,6 +31,35 @@ public static class NewsTradeAdapter
         _ => "NO_TRADE"
     };
 
+    /// <summary>
+    /// Equity and free margin for news sizing, read from the live futures book. A book that is missing,
+    /// not futures-authoritative, or older than <paramref name="maxAge"/> gives a block reason instead of a number.
+    /// </summary>
+    public static (decimal Equity, decimal Available, string? Block) LiveEquity(LiveAccountSnapshot live, DateTimeOffset utcNow, TimeSpan maxAge)
+    {
+        if (!live.HasKeys || !live.FuturesBookFresh || live.UpdatedAt is not { } at || utcNow - at > maxAge)
+        {
+            return (0m, 0m, "The live Binance futures balance is not fresh. News sizing needs it. No order.");
+        }
+
+        var available = live.UsdtFree ?? live.FuturesUsdt;
+        var equity = live.FuturesEquity > 0m ? live.FuturesEquity : available + live.OpenPositions.Sum(p => p.UnrealizedPnL);
+        return equity > 0m && available > 0m
+            ? (equity, available, null)
+            : (0m, 0m, "The live Binance futures balance is zero. No order.");
+    }
+
+    /// <summary>Same event and coin always give the same Binance client id, so a retried cycle cannot double-submit.</summary>
+    public static string ClientOrderId(string eventId, string symbol)
+    {
+        var hash = System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes($"{eventId}|{symbol.ToUpperInvariant()}"));
+        return "news-" + Convert.ToHexString(hash)[..20].ToLowerInvariant();
+    }
+
+    public static NewsRiskHandoff Rejected(string direction, string reason) =>
+        new(direction, "Rejected", reason, 0, 0, 0, 0, 0, 0, "REJECTED", null);
+
     public static NewsRiskHandoff Handoff(
         string direction,
         decimal price,
@@ -40,7 +69,8 @@ public static class NewsTradeAdapter
         IRiskEngine risk,
         DateTimeOffset utcNow,
         bool liveTradingEnabled,
-        bool sessionRunning)
+        bool sessionRunning,
+        string? clientOrderId = null)
     {
         if (!sessionRunning || direction is not ("LONG" or "SHORT"))
         {
@@ -56,7 +86,7 @@ public static class NewsTradeAdapter
 
         var side = direction == "SHORT" ? PositionSide.Short : PositionSide.Long;
         var (stop, take) = LiveProtectivePrices.FromEntry(price, profile.StopLossPercent, profile.TakeProfitPercent, tickSize, side);
-        var clientId = "news-" + Guid.NewGuid().ToString("N")[..16];
+        var clientId = clientOrderId ?? "news-" + Guid.NewGuid().ToString("N")[..16];
         var request = new PlaceOrderRequest(
             clientId,
             snapshot.Symbol,

@@ -26,9 +26,11 @@ public sealed class AlphaStrategyTests
             + StrategyTemplateKeys.Flow.Length
             + StrategyTemplateKeys.Positioning.Length
             + StrategyTemplateKeys.Imported.Length
-            + StrategyTemplateKeys.Refactored.Length);
+            + StrategyTemplateKeys.Refactored.Length
+            + StrategyTemplateKeys.Observation.Length);
         StrategyTemplateKeys.Scalping.Should().HaveCount(22);
-        StrategyTemplateKeys.OperatorCatalog.Should().HaveCount(27);
+        StrategyTemplateKeys.Observation.Should().HaveCount(3);
+        StrategyTemplateKeys.OperatorCatalog.Should().HaveCount(30);
         StrategyTemplateKeys.IsOperatorCatalog(StrategyTemplateKeys.BtcDailyMax10).Should().BeTrue();
         StrategyTemplateKeys.IsOperatorCatalog(StrategyTemplateKeys.TsMomentum285).Should().BeTrue();
         StrategyTemplateKeys.TimeframesFor(StrategyTemplateKeys.TsMomentum285).Should().Equal("1d");
@@ -46,7 +48,8 @@ public sealed class AlphaStrategyTests
                 .Concat(StrategyTemplateKeys.Flow)
                 .Concat(StrategyTemplateKeys.Positioning)
                 .Concat(StrategyTemplateKeys.Imported)
-                .Concat(StrategyTemplateKeys.Refactored));
+                .Concat(StrategyTemplateKeys.Refactored)
+                .Concat(StrategyTemplateKeys.Observation));
         StrategyTemplateKeys.IsOperatorCatalog(StrategyTemplateKeys.CrossSectionalReversalReturn15m).Should().BeFalse();
     }
 
@@ -216,6 +219,32 @@ public sealed class AlphaStrategyTests
         htf[9].IsClosed = true;
         var idx = AlphaIndicatorSeries.LastCompletedHigherTimeframe(htf, signalClose);
         idx.Should().BeLessThanOrEqualTo(7);
+    }
+
+    [Fact]
+    public void Htf_index_matches_a_backward_scan_at_every_signal_time()
+    {
+        var htf = Range(50, 100m);
+        htf[20].IsClosed = false;
+        htf[49].IsClosed = false;
+        static int Scan(IReadOnlyList<MarketCandle> rows, DateTimeOffset t)
+        {
+            for (var i = rows.Count - 1; i >= 0; i--)
+            {
+                if (rows[i].IsClosed && rows[i].CloseTime <= t)
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        for (var minutes = -90; minutes <= 60 * 52; minutes += 15)
+        {
+            var t = htf[0].OpenTime.AddMinutes(minutes);
+            AlphaIndicatorSeries.LastCompletedHigherTimeframe(htf, t).Should().Be(Scan(htf, t), "at {0}", t);
+        }
     }
 
     [Fact]

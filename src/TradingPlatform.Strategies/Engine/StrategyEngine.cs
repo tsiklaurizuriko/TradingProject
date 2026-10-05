@@ -318,10 +318,12 @@ public sealed class StrategyEngine : IStrategyEngine
 {
     private readonly IndicatorRegistry _indicators = new();
     private readonly Dictionary<string, IReadOnlyList<decimal?>> _cache = new(StringComparer.OrdinalIgnoreCase);
+    private IReadOnlyList<MarketCandle>? _cacheCandles;
 
     public SignalType Evaluate(StrategyDefinition definition, StrategyContext context, out string reason)
     {
         _cache.Clear();
+        _cacheCandles = null;
         if (context.ClosedCandles.Count == 0)
         {
             reason = "No closed candles yet.";
@@ -333,9 +335,35 @@ public sealed class StrategyEngine : IStrategyEngine
             return StrategyTemplateEvaluator.Evaluate(definition, context, _indicators, out reason);
         }
 
-        if (context.HasOpenPosition)
+        return EvaluateRules(definition, context.HasOpenPosition, context.ClosedCandles, context.ClosedCandles.Count - 1, out reason);
+    }
+
+    /// <summary>
+    /// Rule strategies at bar <paramref name="index"/> of the cache. Indicator series are computed once per candle
+    /// list and read at the index; every registered indicator is causal, so this equals evaluating the prefix.
+    /// </summary>
+    private SignalType EvaluateRulesAt(StrategyDefinition definition, StrategyContext context, CausalIndicatorCache cache, int index, out string reason)
+    {
+        if (!ReferenceEquals(_cacheCandles, cache.Candles))
         {
-            if (EvaluateGroup(definition.Exit, context, requirePosition: true))
+            _cache.Clear();
+            _cacheCandles = cache.Candles;
+        }
+
+        if (index < 0 || cache.Candles.Count == 0)
+        {
+            reason = "No closed candles yet.";
+            return SignalType.NoAction;
+        }
+
+        return EvaluateRules(definition, context.HasOpenPosition, cache.Candles, Math.Min(index, cache.Candles.Count - 1), out reason);
+    }
+
+    private SignalType EvaluateRules(StrategyDefinition definition, bool hasOpenPosition, IReadOnlyList<MarketCandle> candles, int index, out string reason)
+    {
+        if (hasOpenPosition)
+        {
+            if (EvaluateGroup(definition.Exit, candles, index))
             {
                 reason = "Exit conditions matched.";
                 return SignalType.Exit;
@@ -344,7 +372,7 @@ public sealed class StrategyEngine : IStrategyEngine
             return SignalType.Hold;
         }
 
-        if (EvaluateGroup(definition.Entry, context, requirePosition: false))
+        if (EvaluateGroup(definition.Entry, candles, index))
         {
             reason = "Entry conditions matched.";
             return SignalType.Buy;
@@ -366,7 +394,7 @@ public sealed class StrategyEngine : IStrategyEngine
             return StrategyTemplateEvaluator.EvaluateAt(definition, context, cache, index, out reason);
         }
 
-        return Evaluate(definition, context, out reason);
+        return EvaluateRulesAt(definition, context, cache, index, out reason);
     }
 
     public StrategySignalDetail EvaluateDetailAt(
@@ -380,7 +408,7 @@ public sealed class StrategyEngine : IStrategyEngine
             return StrategyTemplateEvaluator.EvaluateDetailAt(definition, context, cache, index);
         }
 
-        var signal = Evaluate(definition, context, out var reason);
+        var signal = EvaluateRulesAt(definition, context, cache, index, out var reason);
         return new StrategySignalDetail(signal, reason);
     }
 
@@ -391,14 +419,14 @@ public sealed class StrategyEngine : IStrategyEngine
         int index) =>
         EvaluateDetailAt(definition, context, cache, index);
 
-    private bool EvaluateGroup(ConditionGroup? group, StrategyContext context, bool requirePosition)
+    private bool EvaluateGroup(ConditionGroup? group, IReadOnlyList<MarketCandle> candles, int index)
     {
         if (group is null || group.Conditions.Count == 0)
         {
             return false;
         }
 
-        var results = group.Conditions.Select(c => EvaluateNode(c, context, requirePosition)).ToArray();
+        var results = group.Conditions.Select(c => EvaluateNode(c, candles, index)).ToArray();
         return group.Operator switch
         {
             BooleanOperator.And => results.All(x => x),
@@ -408,11 +436,11 @@ public sealed class StrategyEngine : IStrategyEngine
         };
     }
 
-    private bool EvaluateNode(ConditionNode node, StrategyContext context, bool requirePosition)
+    private bool EvaluateNode(ConditionNode node, IReadOnlyList<MarketCandle> candles, int index)
     {
         if (node.Group is not null)
         {
-            return EvaluateGroup(node.Group, context, requirePosition);
+            return EvaluateGroup(node.Group, candles, index);
         }
 
         // Protective SL/TP live on the Isolated risk book (fill snapshot / Binance closes).
@@ -428,18 +456,17 @@ public sealed class StrategyEngine : IStrategyEngine
             return false;
         }
 
-        var left = Series(node.Indicator, node.Period ?? 14, context.ClosedCandles);
-        var right = ResolveValue(node.Value, context.ClosedCandles);
-        return Compare(left, right, node.Comparison.Value);
+        var left = Series(node.Indicator, node.Period ?? 14, candles);
+        var right = ResolveValue(node.Value, candles);
+        return Compare(left, right, node.Comparison.Value, index);
     }
 
-    private bool Compare(IReadOnlyList<decimal?> left, IReadOnlyList<decimal?> right, ComparisonKind comparison)
+    private static bool Compare(IReadOnlyList<decimal?> left, IReadOnlyList<decimal?> right, ComparisonKind comparison, int i)
     {
-        var i = left.Count - 1;
         var prev = i - 1;
-        if (i < 0) return false;
+        if (i < 0 || i >= left.Count || right.Count == 0) return false;
         var l = left[i];
-        var r = right.Count == left.Count ? right[i] : right.LastOrDefault();
+        var r = right[Math.Min(i, right.Count - 1)];
         if (l is null || r is null) return false;
 
         return comparison switch
@@ -459,13 +486,12 @@ public sealed class StrategyEngine : IStrategyEngine
     {
         if (value is null)
         {
-            return candles.Select(_ => (decimal?)null).ToArray();
+            return new ConstantSeries(null, candles.Count);
         }
         var el = value.Value;
         if (el.ValueKind == JsonValueKind.Number)
         {
-            var number = el.GetDecimal();
-            return Enumerable.Repeat((decimal?)number, candles.Count).ToArray();
+            return new ConstantSeries(el.GetDecimal(), candles.Count);
         }
         if (el.ValueKind == JsonValueKind.Object)
         {
@@ -473,7 +499,24 @@ public sealed class StrategyEngine : IStrategyEngine
             var period = el.TryGetProperty("period", out var p) ? p.GetInt32() : 14;
             return Series(indicator ?? "SMA", period, candles);
         }
-        return candles.Select(_ => (decimal?)null).ToArray();
+        return new ConstantSeries(null, candles.Count);
+    }
+
+    private sealed class ConstantSeries(decimal? value, int count) : IReadOnlyList<decimal?>
+    {
+        public decimal? this[int index] => (uint)index < (uint)count ? value : throw new ArgumentOutOfRangeException(nameof(index));
+
+        public int Count => count;
+
+        public IEnumerator<decimal?> GetEnumerator()
+        {
+            for (var i = 0; i < count; i++)
+            {
+                yield return value;
+            }
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
     private IReadOnlyList<decimal?> Series(string name, int period, IReadOnlyList<MarketCandle> candles)

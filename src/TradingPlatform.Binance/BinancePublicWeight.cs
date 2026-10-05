@@ -8,6 +8,9 @@ public static class BinancePublicWeight
 {
     public const int MinuteBudget = 1800;
 
+    /// <summary>Weight public market data must leave free, so account snapshots, orders and fill history are not starved by candle loads.</summary>
+    public const int SignedReserve = 400;
+
     public static int ForRequest(string relativeUrl)
     {
         var path = relativeUrl;
@@ -69,6 +72,11 @@ public static class BinancePublicWeight
         if (path.Contains("exchangeInfo", StringComparison.Ordinal))
         {
             return 1;
+        }
+
+        if (path.Contains("positionSide/dual", StringComparison.Ordinal))
+        {
+            return 30;
         }
 
         if (path.Contains("openAlgoOrders", StringComparison.Ordinal))
@@ -149,7 +157,7 @@ public static class BinancePublicWeightGate
         }
     }
 
-    public static async Task<bool> TryAcquireAsync(int weight, TimeSpan maxWait, CancellationToken cancellationToken)
+    public static async Task<bool> TryAcquireAsync(int weight, TimeSpan maxWait, CancellationToken cancellationToken, int headroom = 0)
     {
         if (weight <= 0)
         {
@@ -175,7 +183,7 @@ public static class BinancePublicWeightGate
                     var until = _blockedUntil - _clock();
                     wait = until < remaining ? until : remaining;
                 }
-                else if (_used + weight <= BinancePublicWeight.MinuteBudget)
+                else if (_used + weight + headroom <= BinancePublicWeight.MinuteBudget)
                 {
                     Window.Enqueue((_clock(), weight));
                     _used += weight;

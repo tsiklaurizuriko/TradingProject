@@ -8,6 +8,7 @@ import {
   BotDto,
   CreateBotsResult,
   DeleteBotsResult,
+  SetBotsActiveResult,
   StartBotsResult,
   StopBotsResult,
   ExchangeConnectionDto,
@@ -38,6 +39,7 @@ import {
   CrossSectionalReversalStatusDto,
   PriceActionArmDto,
   SetPriceActionArmRequest,
+  FlattenAllReport,
 } from './trading.models';
 
 @Injectable({ providedIn: 'root' })
@@ -266,6 +268,16 @@ export class TradingService {
       this.http.post<StopBotsResult>(`${environment.apiBaseUrl}/trading/bots/stop-strategy`, {
         mode: this.ui.workspace(),
         strategyId,
+      }),
+    );
+  }
+
+  setWorkspaceStrategyNotActive(strategyId: string, isNotActive: boolean): Promise<SetBotsActiveResult> {
+    return firstValueFrom(
+      this.http.post<SetBotsActiveResult>(`${environment.apiBaseUrl}/trading/bots/not-active-strategy`, {
+        mode: this.ui.workspace(),
+        strategyId,
+        isNotActive,
       }),
     );
   }
@@ -527,6 +539,10 @@ export class TradingService {
 
   stopBot(botId: string): Promise<BotDto> {
     return firstValueFrom(this.http.post<BotDto>(`${environment.apiBaseUrl}/trading/bots/${botId}/stop`, {}));
+  }
+
+  flattenAll(): Promise<FlattenAllReport> {
+    return firstValueFrom(this.http.post<FlattenAllReport>(`${environment.apiBaseUrl}/trading/flatten-all`, {}));
   }
 
   emergencyStop(): Promise<void> {

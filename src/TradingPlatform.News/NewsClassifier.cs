@@ -206,7 +206,18 @@ public sealed class RuleNewsClassifier : INewsClassifier
 
 public sealed class SchemaNewsClassifier : INewsClassifier
 {
-    public NewsEvent Classify(NewsEvent clustered) => clustered;
+    private readonly RuleNewsClassifier _rules = new();
+
+    /// <summary>
+    /// No model client produces schema JSON yet, so this classifies with the rules instead of leaving every event
+    /// unscored. Model output goes through <see cref="TryApply"/> once a client exists.
+    /// </summary>
+    public NewsEvent Classify(NewsEvent clustered)
+    {
+        _rules.Classify(clustered);
+        clustered.Reason = "AI classification has no model client; " + clustered.Reason;
+        return clustered;
+    }
 
     public static bool TryApply(string json, NewsEvent clustered, out string error)
     {

@@ -7,11 +7,49 @@ public sealed class TradingOptions
     public const string SectionName = "Trading";
 
     public bool LiveTradingEnabled { get; set; }
+
+    /// <summary>Live, Shadow, or Testnet. See <see cref="TradingVenue"/>.</summary>
+    public string Venue { get; set; } = nameof(TradingVenueKind.Live);
+
+    /// <summary>Entry switch for a Shadow process. It never reaches Binance's signed API.</summary>
+    public bool ShadowTradingEnabled { get; set; }
+
+    /// <summary>Entry switch for a Testnet process. It is independent of <see cref="LiveTradingEnabled"/>.</summary>
+    public bool TestnetTradingEnabled { get; set; }
+
+    public TradingVenueKind VenueKind => TradingVenue.Parse(Venue);
+
+    /// <summary>
+    /// Whether new entries may be sent on this process's venue. Only <see cref="LiveTradingEnabled"/> opens real-money entries,
+    /// and only on the Live venue.
+    /// </summary>
+    public bool EntriesEnabled => VenueKind switch
+    {
+        TradingVenueKind.Shadow => ShadowTradingEnabled,
+        TradingVenueKind.Testnet => TestnetTradingEnabled,
+        _ => LiveTradingEnabled
+    };
+
     public bool KillSwitchEnabled { get; set; }
     public bool HostBotEngine { get; set; } = true;
     public int BotEngineIntervalSeconds { get; set; } = 15;
     public int KlineLimit { get; set; } = 120;
     public int ReconciliationMaxAgeSeconds { get; set; } = 90;
+
+    /// <summary>Entries are skipped when the book is wider than this. Zero turns the check off.</summary>
+    public decimal MaxEntrySpreadBps { get; set; } = 15m;
+
+    /// <summary>Entries are skipped when the signal bar's true range is this many times the recent median. Zero turns it off.</summary>
+    public decimal MaxEntryRangeShock { get; set; } = 5m;
+
+    /// <summary>How far back the equity peak for the drawdown halt is taken.</summary>
+    public int EquityPeakLookbackDays { get; set; } = 30;
+    /// <summary>Close a live position with a reduce-only market order when no stop can be placed or restored.</summary>
+    public bool FlattenOnProtectionFailure { get; set; } = true;
+    public int ProtectionRetryAttempts { get; set; } = 3;
+    public int ProtectionRetryDelayMs { get; set; } = 500;
+    /// <summary>Consecutive cycles an existing (adopted or restored) position may stay without a stop before it is flattened.</summary>
+    public int UnprotectedCyclesBeforeFlatten { get; set; } = 3;
     public int UniverseRefreshMinutes { get; set; } = 15;
     public string UniverseCachePath { get; set; } = "data/futures-universe.json";
     public ScannerOptions Scanner { get; set; } = new();

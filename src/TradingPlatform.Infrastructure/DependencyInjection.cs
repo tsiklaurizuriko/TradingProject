@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TradingPlatform.Application.Abstractions;
@@ -19,11 +20,15 @@ public static class DependencyInjection
             ?? "Host=localhost;Port=5432;Database=TradingProject;Username=admin;Password=admin";
 
         services.AddDbContext<TradingDbContext>(options =>
-            options.UseNpgsql(connectionString, npgsql =>
-            {
-                npgsql.MigrationsAssembly(typeof(TradingDbContext).Assembly.FullName);
-                npgsql.CommandTimeout(30);
-            }));
+            options
+                .UseNpgsql(connectionString, npgsql =>
+                {
+                    npgsql.MigrationsAssembly(typeof(TradingDbContext).Assembly.FullName);
+                    npgsql.CommandTimeout(30);
+                    npgsql.UseQuerySplittingBehavior(QuerySplittingBehavior.SingleQuery);
+                })
+                // Soft-deleted parents hide their children by design.
+                .ConfigureWarnings(warnings => warnings.Ignore(CoreEventId.PossibleIncorrectRequiredNavigationWithQueryFilterInteractionWarning)));
 
         services.Configure<JwtOptions>(configuration.GetSection("Jwt"));
         services.Configure<CredentialEncryptionOptions>(configuration.GetSection("Credentials"));
@@ -45,6 +50,9 @@ public static class DependencyInjection
         services.AddScoped<ITradingStore, TradingStore>();
         services.AddSingleton<IScalpingResearchQuery, ScalpingResearchQuery>();
         services.AddSingleton<IPriceActionResearchQuery, PriceActionResearchQuery>();
+        services.AddSingleton<IWorkerLease>(sp => new PostgresWorkerLease(
+            connectionString,
+            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PostgresWorkerLease>>()));
 
         return services;
     }

@@ -133,6 +133,8 @@ internal static class TradingModelConfiguration
             Money(b.Property(x => x.TakeProfitPercent));
             Money(b.Property(x => x.MaxLeverage));
             Money(b.Property(x => x.MaxDailyLossPercent));
+            Money(b.Property(x => x.MaxWeeklyLossPercent));
+            Money(b.Property(x => x.MaxDrawdownPercent));
             Money(b.Property(x => x.MaxPortfolioRiskPercent));
             Money(b.Property(x => x.MinimumLiquidationSafetyBufferPercent));
         });
@@ -162,7 +164,7 @@ internal static class TradingModelConfiguration
             Money(b.Property(x => x.Price));
             Money(b.Property(x => x.Quantity));
             Money(b.Property(x => x.Fee));
-            b.HasIndex(x => x.ExchangeTradeId);
+            b.HasIndex(x => x.ExchangeTradeId).IsUnique().HasFilter("\"ExchangeTradeId\" IS NOT NULL");
         });
         model.Entity<Position>(b =>
         {
@@ -220,6 +222,8 @@ internal static class TradingModelConfiguration
             Money(b.Property(x => x.PnL));
             Money(b.Property(x => x.PnLPercent));
             Money(b.Property(x => x.Fees));
+            b.Property(x => x.NetPnL).HasPrecision(DecimalConventions.PricePrecision, DecimalConventions.PriceScale);
+            b.Property(x => x.FundingPnL).HasPrecision(DecimalConventions.PricePrecision, DecimalConventions.PriceScale);
             b.HasIndex(x => new { x.BotId, x.ClosedAt });
         });
     }

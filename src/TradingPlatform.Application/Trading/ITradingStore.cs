@@ -70,6 +70,12 @@ public interface ITradingStore
     Task<int> CountOpenPositionsAsync(Guid botId, CancellationToken cancellationToken = default);
     Task<int> CountOrdersSinceForModeAsync(TradingMode mode, DateTimeOffset sinceUtc, CancellationToken cancellationToken = default);
     Task<decimal> SumClosedPnLSinceForModeAsync(TradingMode mode, DateTimeOffset sinceUtc, CancellationToken cancellationToken = default);
+
+    /// <summary>Appends an account equity point, at most one per <paramref name="minGap"/>. Saved by the caller.</summary>
+    Task RecordEquityPointAsync(Guid exchangeAccountId, TradingMode mode, decimal equity, DateTimeOffset at, TimeSpan minGap, CancellationToken cancellationToken = default);
+
+    /// <summary>Highest recorded equity since <paramref name="sinceUtc"/> and the newest point's time. Nulls when nothing is recorded.</summary>
+    Task<(decimal? Peak, DateTimeOffset? LastAt)> GetEquityPeakAsync(Guid exchangeAccountId, TradingMode mode, DateTimeOffset sinceUtc, CancellationToken cancellationToken = default);
     Task StopRunningBotsForModeAsync(TradingMode mode, string reason, CancellationToken cancellationToken = default);
     Task AddPositionAsync(Position position, CancellationToken cancellationToken = default);
     Task<bool> HasClientOrderAsync(string clientOrderId, CancellationToken cancellationToken = default);

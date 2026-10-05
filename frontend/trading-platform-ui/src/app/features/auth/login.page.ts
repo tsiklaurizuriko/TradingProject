@@ -17,7 +17,7 @@ import { AuthService } from '../../core/auth/auth.service';
           </div>
         </div>
         <h1 style="margin:0 0 8px;font-size:28px">Sign in</h1>
-        <p class="muted">Trader and admin access. Seeded local login: admin@localhost</p>
+        <p class="muted">Trader and admin access.</p>
         <form class="form" style="max-width:none;margin-top:20px" [formGroup]="form" (ngSubmit)="submit()">
           <label>Email <input type="email" formControlName="email" autocomplete="username" /></label>
           <label>Password <input type="password" formControlName="password" autocomplete="current-password" /></label>
@@ -38,7 +38,7 @@ export class LoginPage {
   readonly pending = signal(false);
   readonly form = this.fb.nonNullable.group({
     email: ['admin@localhost', [Validators.required, Validators.email]],
-    password: ['ChangeMe_Admin_123!', [Validators.required, Validators.minLength(8)]],
+    password: ['', [Validators.required, Validators.minLength(8)]],
   });
 
   async submit(): Promise<void> {
