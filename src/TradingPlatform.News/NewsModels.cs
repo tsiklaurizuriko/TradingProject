@@ -38,6 +38,17 @@ public enum NewsEventType
     Mining,
     NetworkActivity,
     WhaleActivity,
+    Exploit,
+    Tokenomics,
+    Governance,
+    MarketStructure,
+    Liquidation,
+    ProductLaunch,
+    Integration,
+    Staking,
+    ChainOutage,
+    BridgeIncident,
+    Financing,
     Other
 }
 
@@ -100,6 +111,11 @@ public sealed class AssetRelationship
     public string? ProviderAssetId { get; set; }
     public double Relevance { get; set; } = 1;
     public bool IsPrimary { get; set; }
+    public string Role { get; set; } = "PRIMARY";
+    public string AssetDirection { get; set; } = string.Empty;
+    public int Impact { get; set; }
+    public int Confidence { get; set; }
+    public string Reason { get; set; } = string.Empty;
 }
 
 public sealed record NewsAssetContext(string Symbol, string BaseAsset, string? ProviderAssetId = null);
@@ -113,6 +129,7 @@ public sealed class NewsArticleRef
     public DateTimeOffset PublishedAtUtc { get; set; }
     public string Title { get; set; } = string.Empty;
     public string Summary { get; set; } = string.Empty;
+    public string Content { get; set; } = string.Empty;
 }
 
 public sealed class NewsEvent
@@ -143,6 +160,19 @@ public sealed class NewsEvent
     public decimal? Surprise { get; set; }
     public bool? IsScheduled { get; set; }
     public string Reason { get; set; } = string.Empty;
+    public string AnalysisStatus { get; set; } = string.Empty;
+    public string AnalysisError { get; set; } = string.Empty;
+    public string VerificationStatus { get; set; } = string.Empty;
+    public int AlreadyPricedIn { get; set; }
+    public int SourceReliability { get; set; }
+    public string MarketMechanism { get; set; } = string.Empty;
+    public List<string> RiskFlags { get; set; } = [];
+    public string? AiProvider { get; set; }
+    public string? AiModel { get; set; }
+    public string? PromptVersion { get; set; }
+    public DateTimeOffset? ClassifiedAtUtc { get; set; }
+    public bool ShouldConsiderTrading { get; set; }
+    public bool UsedStrongModel { get; set; }
 }
 
 public sealed record NewsFeatureBar

@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -187,8 +189,40 @@ public sealed class NewsLiveWorker : BackgroundService
         var scoped = events
             .Where(item => item.MarketScope != MarketScope.Global || item.AffectedAssets.Count > 0)
             .ToList();
+        if (options.Ai.Enabled)
+        {
+            await AnalyzeNewsAsync(options, catalog, events, scope.ServiceProvider, database, now, cancellationToken);
+        }
+
+        var decisionTime = DateTimeOffset.UtcNow;
         var market = await LoadMarketAsync(options, scoped, cancellationToken);
-        var report = NewsLiveAnalyzer.Analyze(options, catalog, scoped, market, now);
+        IReadOnlyDictionary<string, NewsMarketFacts> facts = new Dictionary<string, NewsMarketFacts>(StringComparer.OrdinalIgnoreCase);
+        if (options.Ai.Enabled)
+        {
+            facts = await BuildFactsAsync(options, scope.ServiceProvider.GetRequiredService<IPublicMarketDataClient>(), market, events, decisionTime, cancellationToken);
+        }
+
+        var report = NewsLiveAnalyzer.Analyze(options, catalog, scoped, market, options.Ai.Enabled ? decisionTime : now);
+        if (options.Ai.Enabled)
+        {
+            foreach (var item in events)
+            {
+                if (report.Decisions.Any(row => (row.EventId ?? row.Record?.EventId) == item.EventId))
+                {
+                    continue;
+                }
+
+                report.Decisions.Add(NewsTradeDecisionEngine.Decide(
+                    item,
+                    new NewsAssetContext("UNKNOWN", string.Empty),
+                    decisionTime,
+                    new Dictionary<string, IReadOnlyList<MarketCandle>>(),
+                    NewsMarketFacts.Missing("UNKNOWN"),
+                    options,
+                    new NewsDecisionContext()));
+            }
+        }
+
         foreach (var item in events.Where(item => item.MarketScope == MarketScope.Global && item.AffectedAssets.Count == 0))
         {
             report.Errors.Add("Global event " + item.EventId + " was stored. It was not scored against every coin in this cycle.");
@@ -236,7 +270,11 @@ public sealed class NewsLiveWorker : BackgroundService
             session.Running ? await tradingStore.GetLossStreakForModeAsync(TradingMode.Live, cancellationToken) : (0, null),
             session.Running ? await tradingStore.SumClosedPnLSinceForModeAsync(TradingMode.Live, BotEngine.WeekStart(now), cancellationToken) + openLoss : 0m,
             drawdown);
-        await PersistSignalsAsync(database, events, report, session, profile, risk, connector, live, now, options, trading, reconciliation, cancellationToken);
+        await PersistSignalsAsync(database, events, report, session, profile, risk, connector, live, options.Ai.Enabled ? decisionTime : now, options, trading, reconciliation, market, facts, cancellationToken);
+        if (options.Ai.Enabled && connector is not null)
+        {
+            await CloseExpiredHorizonsAsync(database, connector, accountSnapshot, decisionTime, cancellationToken);
+        }
 
         await NewsLiveAnalyzer.WriteAsync(root, report, options.Strategy.Timeframes.Execution, cancellationToken);
         var candidates = report.Decisions.Count(item => item.Signal != NewsMarketSignals.NoTrade);
@@ -248,7 +286,7 @@ public sealed class NewsLiveWorker : BackgroundService
             candidates);
     }
 
-    private static async Task PersistSignalsAsync(
+    private async Task PersistSignalsAsync(
         NewsDatabase database,
         IReadOnlyList<NewsEvent> events,
         NewsLiveReport report,
@@ -261,6 +299,8 @@ public sealed class NewsLiveWorker : BackgroundService
         NewsOptions options,
         TradingOptions trading,
         ReconciliationState reconciliation,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<MarketCandle>>> marketBooks,
+        IReadOnlyDictionary<string, NewsMarketFacts> facts,
         CancellationToken cancellationToken)
     {
         var eventsById = events.ToDictionary(item => item.EventId, StringComparer.Ordinal);
@@ -274,9 +314,13 @@ public sealed class NewsLiveWorker : BackgroundService
             }
         }
         var approved = await database.ApprovedOpenCountAsync(cancellationToken);
-        foreach (var decision in report.Decisions)
+        var analyses = new Dictionary<string, Guid>(StringComparer.Ordinal);
+        var finals = new List<NewsMarketDecision>();
+        foreach (var initial in report.Decisions)
         {
-            if (!eventsById.TryGetValue(decision.Record?.EventId ?? "", out var source)
+            var decision = initial;
+            var eventId = decision.EventId ?? decision.Record?.EventId ?? "";
+            if (!eventsById.TryGetValue(eventId, out var source)
                 && !events.Any())
             {
                 continue;
@@ -290,19 +334,50 @@ public sealed class NewsLiveWorker : BackgroundService
                 continue;
             }
 
-            var stored = await database.AddEventAsync(new StoredNewsEvent { DedupKey = source.EventId }, cancellationToken);
+            var stored = await database.AddEventAsync(new StoredNewsEvent
+            {
+                DedupKey = source.EventId,
+                PrimaryAsset = source.PrimaryAsset,
+                MarketScope = source.MarketScope.ToString(),
+                Direction = source.Direction.ToString(),
+                Impact = source.ImpactScore,
+                Confidence = source.ConfidenceScore,
+                EventType = source.EventType.ToString(),
+                PublishedAtUtc = source.PublishedAtUtc,
+                ArticleIds = string.Join(',', source.OriginalArticles.Select(article => article.Id))
+            }, cancellationToken);
             if (await database.SignalExistsAsync(stored.Id, decision.Symbol, cancellationToken))
             {
+                LogNews(source, decision.Symbol, "NO_TRADE", NewsRejection.EventAlreadyTraded, "NewsTradeRejected");
                 continue;
             }
 
-            var direction = NewsTradeAdapter.Decision(decision.Signal);
-            var occupied = await database.SymbolOccupiedAsync(
+            var positionOpen = live.Account.OpenPositions.Any(p => string.Equals(p.Symbol, decision.Symbol, StringComparison.OrdinalIgnoreCase))
+                || live.Account.OpenOrders.Any(p => string.Equals(p.Symbol, decision.Symbol, StringComparison.OrdinalIgnoreCase));
+            var cooldown = await database.SymbolOccupiedAsync(
                 decision.Symbol,
-                direction,
+                NewsTradeAdapter.Decision(decision.Signal),
                 now.AddMinutes(-options.Strategy.SignalCooldownMinutes),
-                cancellationToken)
-                || live.Account.OpenPositions.Any(p => string.Equals(p.Symbol, decision.Symbol, StringComparison.OrdinalIgnoreCase));
+                cancellationToken);
+            if (options.Ai.Enabled)
+            {
+                marketBooks.TryGetValue(decision.Symbol, out var book);
+                facts.TryGetValue(decision.Symbol, out var fact);
+                decision = NewsTradeDecisionEngine.Decide(
+                    source,
+                    new NewsAssetContext(decision.Symbol, NewsAssetCatalog.BaseFromSymbol(decision.Symbol)),
+                    now,
+                    book ?? new Dictionary<string, IReadOnlyList<MarketCandle>>(StringComparer.OrdinalIgnoreCase),
+                    fact ?? NewsMarketFacts.Missing(decision.Symbol),
+                    options,
+                    new NewsDecisionContext(false, positionOpen, cooldown, false));
+                LogNews(source, decision.Symbol, NewsTradeAdapter.Decision(decision.Signal), decision.RejectionCode, decision.Signal == NewsMarketSignals.NoTrade ? "NewsTradeRejected" : "NewsDecisionCreated");
+            }
+
+            finals.Add(decision);
+            var proposed = NewsTradeAdapter.Decision(decision.Signal);
+            var direction = proposed;
+            var occupied = positionOpen || cooldown;
             var price = decision.Record?.ReferencePrice ?? 0m;
             DateTimeOffset? priceAt = null;
             if (session.Running && direction != "NO_TRADE")
@@ -409,11 +484,31 @@ public sealed class NewsLiveWorker : BackgroundService
                 approved++;
             }
 
+            var rejection = decision.RejectionCode;
+            if (options.Ai.Enabled && handoff.RiskDecision == "Rejected")
+            {
+                rejection = NewsRejection.FromRisk(handoff.RiskReason);
+                decision = decision with { RejectionCode = rejection, Signal = NewsMarketSignals.NoTrade };
+                LogNews(source, decision.Symbol, "NO_TRADE", rejection, "NewsTradeRejected");
+                direction = "NO_TRADE";
+            }
+            else if (options.Ai.Enabled && handoff.RiskDecision == "Approved" && direction is "LONG" or "SHORT")
+            {
+                LogNews(source, decision.Symbol, direction, null, "NewsTradeApproved");
+            }
+
             string? exchangeId = null;
+            DateTimeOffset? orderRequested = null;
+            DateTimeOffset? orderAccepted = null;
+            DateTimeOffset? orderFilled = null;
+            decimal fees = 0m;
+            decimal filledQuantity = handoff.Quantity;
             if (handoff.Request is not null && connector is not null && handoff.OrderDecision == "READY")
             {
                 var leverage = (int)Math.Max(1m, Math.Floor(handoff.Leverage));
                 await connector.PrepareSymbolRiskAsync(decision.Symbol, MarginMode.Isolated, leverage, cancellationToken);
+                orderRequested = DateTimeOffset.UtcNow;
+                LogNews(source, decision.Symbol, proposed, null, "OrderSubmitted");
                 var fill = await NewsTradeAdapter.SubmitAsync(
                     connector,
                     handoff.Request,
@@ -428,10 +523,22 @@ public sealed class NewsLiveWorker : BackgroundService
                         true,
                         false),
                     cancellationToken);
+                orderAccepted = DateTimeOffset.UtcNow;
                 exchangeId = fill?.ExchangeOrderId;
+                LogNews(source, decision.Symbol, proposed, exchangeId, fill is null ? "NewsTradeRejected" : "OrderAccepted");
                 if (fill is not null && fill.FilledQuantity > 0m)
                 {
-                    var closeSide = direction == "SHORT" ? OrderSide.Buy : OrderSide.Sell;
+                    filledQuantity = fill.FilledQuantity;
+                    fees = fill.FeeKnown ? fill.Fee : 0m;
+                    orderFilled = fill.ExchangeTimestamp ?? orderAccepted;
+                    if (NewsLatency.HasLookAhead(source.PublishedAtUtc, source.DetectedAtUtc, source.ClassifiedAtUtc ?? now, now, orderFilled))
+                    {
+                        orderFilled = orderAccepted;
+                    }
+
+                    LogNews(source, decision.Symbol, proposed, null, "OrderFilled");
+                    LogNews(source, decision.Symbol, proposed, null, "PositionOpened");
+                    var closeSide = proposed == "SHORT" ? OrderSide.Buy : OrderSide.Sell;
                     var stops = handoff.StopLossPrice > 0m
                         ? await connector.PlaceClosePositionStopsAsync(
                             decision.Symbol,
@@ -456,6 +563,11 @@ public sealed class NewsLiveWorker : BackgroundService
                                 ReduceOnly: true),
                             cancellationToken);
                         handoff = handoff with { RiskReason = $"Stop failed ({stops.StopError}). The fill was closed with a reduce-only order." };
+                        LogNews(source, decision.Symbol, proposed, stops.StopError, "PositionClosed");
+                    }
+                    else
+                    {
+                        LogNews(source, decision.Symbol, proposed, null, "PositionProtected");
                     }
                 }
 
@@ -463,6 +575,16 @@ public sealed class NewsLiveWorker : BackgroundService
             }
 
             var why = NewsStop.Explain(direction, decision.Reason, handoff.RiskReason, handoff.RiskDecision, handoff.OrderDecision, exchangeId is not null);
+            if (options.Ai.Enabled)
+            {
+                await SaveAiDecisionAsync(database, analyses, stored, source, decision, facts, proposed, direction, rejection, handoff, price, filledQuantity, fees, orderRequested, orderAccepted, orderFilled, exchangeId, now, cancellationToken);
+            }
+
+            if (options.Ai.Enabled && NewsRejection.IsRetryable(rejection))
+            {
+                continue;
+            }
+
             await database.AddSignalAsync(new NewsTradingSignal
             {
                 StoredNewsEventId = stored.Id,
@@ -495,6 +617,11 @@ public sealed class NewsLiveWorker : BackgroundService
                 BecameTrade = exchangeId is not null
             }, cancellationToken);
         }
+
+        if (options.Ai.Enabled)
+        {
+            report.Decisions = finals;
+        }
     }
 
     private async Task<Dictionary<string, IReadOnlyDictionary<string, IReadOnlyList<MarketCandle>>>> LoadMarketAsync(
@@ -514,8 +641,13 @@ public sealed class NewsLiveWorker : BackgroundService
             options.Strategy.Timeframes.Execution,
             options.Strategy.Timeframes.Flow,
             options.Strategy.Timeframes.Structure,
-            options.Strategy.Timeframes.Trend
-        }.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            options.Strategy.Timeframes.Trend,
+            options.Ai.Enabled ? "1m" : string.Empty
+        }.Where(frame => !string.IsNullOrWhiteSpace(frame)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (options.Ai.Enabled && symbols.Count > 0 && !symbols.Contains("BTCUSDT", StringComparer.OrdinalIgnoreCase))
+        {
+            symbols.Add("BTCUSDT");
+        }
         var result = new Dictionary<string, IReadOnlyDictionary<string, IReadOnlyList<MarketCandle>>>(StringComparer.OrdinalIgnoreCase);
         if (symbols.Count == 0)
         {
@@ -604,6 +736,385 @@ public sealed class NewsLiveWorker : BackgroundService
         {
         }
     }
+
+    private async Task AnalyzeNewsAsync(NewsOptions options, NewsAssetCatalog catalog, IReadOnlyList<NewsEvent> events, IServiceProvider services, NewsDatabase database, DateTimeOffset cycleStarted, CancellationToken cancellationToken)
+    {
+        var errors = options.Ai.Validate();
+        if (errors.Count > 0 || !options.Ai.HasKey())
+        {
+            var reason = errors.Count > 0 ? string.Join(" ", errors) : "News AI is enabled but News:Ai:ApiKey is empty.";
+            foreach (var item in events)
+            {
+                DeepNewsAnalyzer.MarkFailed(item, "Failed", reason, DateTimeOffset.UtcNow, options.Ai.Provider, options.Ai.FastModel, options.Ai.PromptVersion);
+                LogNews(item, item.PrimaryAsset ?? string.Empty, "NO_TRADE", reason, "NewsAiFailed");
+            }
+
+            return;
+        }
+
+        var analyzer = new DeepNewsAnalyzer(options, services.GetRequiredService<INewsLanguageModel>(), _logger);
+        var keys = events.Select(item => item.EventId).Where(key => !string.IsNullOrWhiteSpace(key)).Distinct(StringComparer.Ordinal).ToList();
+        var storedAt = await database.EventCreatedAtAsync(keys, cancellationToken);
+        var analyzed = await database.AnalyzedEventKeysAsync(keys, cancellationToken);
+        var clock = DateTimeOffset.UtcNow;
+        foreach (var item in events)
+        {
+            if (await database.HasFinalSignalAsync(item.EventId, cancellationToken))
+            {
+                LogNews(item, item.PrimaryAsset ?? string.Empty, "NO_TRADE", NewsRejection.EventAlreadyTraded, "NewsDeduplicated");
+                continue;
+            }
+
+            storedAt.TryGetValue(item.EventId, out var createdAt);
+            var knownAt = storedAt.ContainsKey(item.EventId) ? createdAt : (DateTimeOffset?)null;
+            if (!NewsAiGate.ShouldAnalyze(item.PublishedAtUtc, clock, options.Strategy.MaxNewsAgeMinutes, knownAt, cycleStarted, analyzed.Contains(item.EventId)))
+            {
+                var reason = analyzed.Contains(item.EventId)
+                    ? "This news was already analyzed. It was not sent to the model again."
+                    : "This news is already stored or too old. It was not sent to the model.";
+                item.AnalysisStatus = "Skipped";
+                item.AnalysisError = reason;
+                LogNews(item, item.PrimaryAsset ?? string.Empty, "NO_TRADE", NewsRejection.NewsTooOld, "NewsDeduplicated");
+                continue;
+            }
+
+            LogNews(item, item.PrimaryAsset ?? string.Empty, string.Empty, null, "NewsReceived");
+            try
+            {
+                await analyzer.AnalyzeAsync(item, catalog, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                DeepNewsAnalyzer.MarkFailed(item, "Failed", ex.Message, DateTimeOffset.UtcNow, options.Ai.Provider, options.Ai.FastModel, options.Ai.PromptVersion);
+                LogNews(item, item.PrimaryAsset ?? string.Empty, "NO_TRADE", ex.Message, "NewsAiFailed");
+            }
+        }
+    }
+
+    private async Task<IReadOnlyDictionary<string, NewsMarketFacts>> BuildFactsAsync(
+        NewsOptions options,
+        IPublicMarketDataClient market,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<MarketCandle>>> books,
+        IReadOnlyList<NewsEvent> events,
+        DateTimeOffset decisionTime,
+        CancellationToken cancellationToken)
+    {
+        var symbols = books.Keys.ToList();
+        var tickers = new Dictionary<string, FuturesBookTicker>(StringComparer.OrdinalIgnoreCase);
+        var funding = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+        var volume = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            foreach (var row in await market.GetBookTickersAsync(cancellationToken))
+            {
+                tickers[row.Symbol] = row;
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "News market book was unavailable.");
+        }
+
+        try
+        {
+            foreach (var row in await market.GetPremiumIndexAsync(cancellationToken))
+            {
+                funding[row.Symbol] = row.LastFundingRate;
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "News funding was unavailable.");
+        }
+
+        try
+        {
+            foreach (var row in await market.GetPaperUniverseAsync(cancellationToken))
+            {
+                volume[row.Symbol] = row.QuoteVolume;
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "News liquidity was unavailable.");
+        }
+
+        var oi = new ConcurrentDictionary<string, (decimal? Previous, decimal? Latest)>(StringComparer.OrdinalIgnoreCase);
+        await Parallel.ForEachAsync(symbols, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellationToken }, async (symbol, token) =>
+        {
+            try
+            {
+                oi[symbol] = await market.GetOpenInterestPairAsync(symbol, token);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogDebug(ex, "Open interest was unavailable for {Symbol}", symbol);
+            }
+        });
+
+        books.TryGetValue("BTCUSDT", out var btcBook);
+        var btc = NewsMarketFactsBuilder.FromCandles("BTCUSDT", btcBook, decisionTime, decisionTime, options);
+        var result = new Dictionary<string, NewsMarketFacts>(StringComparer.OrdinalIgnoreCase);
+        foreach (var symbol in symbols)
+        {
+            tickers.TryGetValue(symbol, out var book);
+            oi.TryGetValue(symbol, out var interest);
+            var extras = new NewsMarketExtras(
+                book?.Bid,
+                book?.Ask,
+                volume.TryGetValue(symbol, out var quote) ? quote : null,
+                interest.Latest,
+                interest.Previous,
+                funding.TryGetValue(symbol, out var rate) ? rate : null,
+                null,
+                true,
+                true,
+                true);
+            var detected = events
+                .Where(item => item.AffectedAssets.Any(asset => string.Equals(asset.Symbol, symbol, StringComparison.OrdinalIgnoreCase))
+                    || item.Assets.Any(asset => string.Equals(asset + "USDT", symbol, StringComparison.OrdinalIgnoreCase)))
+                .Select(item => item.DetectedAtUtc)
+                .DefaultIfEmpty(decisionTime)
+                .Min();
+            result[symbol] = NewsMarketFactsBuilder.FromCandles(symbol, books[symbol], decisionTime, detected, options, extras, btc);
+            _logger.LogInformation(
+                "{Stage} {EventId} {Symbol} {Decision} {Confidence} {Impact} {Latency} {Model} {Reason}",
+                "MarketContextCreated",
+                string.Empty,
+                symbol,
+                string.Empty,
+                0,
+                0,
+                0,
+                options.Ai.FastModel,
+                result[symbol].MissingRequired ? "missing" : "ready");
+        }
+
+        return result;
+    }
+
+    private async Task SaveAiDecisionAsync(
+        NewsDatabase database,
+        Dictionary<string, Guid> analyses,
+        StoredNewsEvent stored,
+        NewsEvent source,
+        NewsMarketDecision decision,
+        IReadOnlyDictionary<string, NewsMarketFacts> facts,
+        string proposed,
+        string direction,
+        string? rejection,
+        NewsRiskHandoff handoff,
+        decimal price,
+        decimal quantity,
+        decimal fees,
+        DateTimeOffset? orderRequested,
+        DateTimeOffset? orderAccepted,
+        DateTimeOffset? orderFilled,
+        string? exchangeId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        if (!analyses.TryGetValue(source.EventId, out var analysisId))
+        {
+            var classified = source.ClassifiedAtUtc ?? now;
+            var analysis = new NewsAnalysis
+            {
+                StoredNewsEventId = stored.Id,
+                EventDedupKey = source.EventId,
+                Provider = source.AiProvider ?? string.Empty,
+                Model = source.AiModel ?? string.Empty,
+                PromptVersion = source.PromptVersion ?? string.Empty,
+                Status = string.IsNullOrWhiteSpace(source.AnalysisStatus) ? "Failed" : source.AnalysisStatus,
+                EventType = source.EventType.ToString(),
+                VerificationStatus = source.VerificationStatus,
+                SourceReliability = source.SourceReliability,
+                OverallConfidence = (int)Math.Round(source.ConfidenceScore * 100),
+                Impact = (int)Math.Round(source.ImpactScore * 100),
+                Novelty = (int)Math.Round(source.NoveltyScore * 100),
+                AlreadyPricedIn = source.AlreadyPricedIn,
+                ExpectedHorizon = source.ExpectedHorizonMinutes + "m",
+                MarketMechanism = source.MarketMechanism,
+                AffectedAssetsJson = JsonSerializer.Serialize(source.AffectedAssets),
+                RiskFlagsJson = JsonSerializer.Serialize(source.RiskFlags),
+                ShouldConsiderTrading = source.ShouldConsiderTrading,
+                RawJson = source.Reason,
+                ArticleIds = string.Join(',', source.OriginalArticles.Select(article => article.Id)),
+                PublishedAtUtc = source.PublishedAtUtc,
+                DetectedAtUtc = source.DetectedAtUtc,
+                ClassifiedAtUtc = classified,
+                DetectionLatencyMs = NewsLatency.Milliseconds(source.PublishedAtUtc, source.DetectedAtUtc),
+                ClassificationLatencyMs = NewsLatency.Milliseconds(source.DetectedAtUtc, classified)
+            };
+            await database.AddAnalysisAsync(analysis, cancellationToken);
+            analysisId = analysis.Id;
+            analyses[source.EventId] = analysisId;
+        }
+
+        facts.TryGetValue(decision.Symbol, out var fact);
+        var row = new NewsTradingDecision
+        {
+            StoredNewsEventId = stored.Id,
+            NewsAnalysisId = analysisId,
+            EventDedupKey = source.EventId,
+            Symbol = decision.Symbol,
+            Decision = direction,
+            ProposedDirection = proposed,
+            RejectionReason = rejection,
+            Confidence = (int)Math.Round(source.ConfidenceScore * 100),
+            Impact = (int)Math.Round(source.ImpactScore * 100),
+            Novelty = (int)Math.Round(source.NoveltyScore * 100),
+            AlreadyPricedIn = source.AlreadyPricedIn,
+            ExpectedHorizon = source.ExpectedHorizonMinutes + "m",
+            MarketContextJson = JsonSerializer.Serialize(fact),
+            ArticleIds = string.Join(',', source.OriginalArticles.Select(article => article.Id)),
+            RiskDecision = handoff.RiskDecision,
+            RiskReason = handoff.RiskReason,
+            PublishedAtUtc = source.PublishedAtUtc,
+            DetectedAtUtc = source.DetectedAtUtc,
+            ClassifiedAtUtc = source.ClassifiedAtUtc,
+            DecisionAtUtc = now
+        };
+        await database.AddTradingDecisionAsync(row, cancellationToken);
+        await database.AddDecisionAuditAsync(new NewsDecisionAudit
+        {
+            EventDedupKey = source.EventId,
+            Symbol = decision.Symbol,
+            Decision = direction,
+            RejectionReason = rejection,
+            Provider = source.AiProvider ?? string.Empty,
+            Model = source.AiModel ?? string.Empty,
+            PromptVersion = source.PromptVersion ?? string.Empty,
+            DecisionAtUtc = now,
+            PayloadJson = JsonSerializer.Serialize(new
+            {
+                source.EventId,
+                articleIds = source.OriginalArticles.Select(article => article.Id).ToArray(),
+                source.PublishedAtUtc,
+                source.DetectedAtUtc,
+                source.ClassifiedAtUtc,
+                decisionAt = now,
+                orderRequested,
+                orderAccepted,
+                orderFilled,
+                source.AiProvider,
+                source.AiModel,
+                source.PromptVersion,
+                eventType = source.EventType.ToString(),
+                source.VerificationStatus,
+                source.AffectedAssets,
+                proposed,
+                direction,
+                source.ConfidenceScore,
+                source.ImpactScore,
+                source.NoveltyScore,
+                source.AlreadyPricedIn,
+                source.ExpectedHorizonMinutes,
+                market = fact,
+                rejection,
+                handoff.RiskDecision,
+                exchangeId,
+                entry = price,
+                quantity,
+                fees,
+                newsToFillLatencyMs = orderFilled is { } filled ? NewsLatency.Milliseconds(source.PublishedAtUtc, filled) : (long?)null
+            })
+        }, cancellationToken);
+
+        if (handoff.Request is null)
+        {
+            return;
+        }
+
+        await database.AddTradeExecutionAsync(new NewsTradeExecution
+        {
+            NewsTradingDecisionId = row.Id,
+            EventDedupKey = source.EventId,
+            Symbol = decision.Symbol,
+            Side = proposed,
+            ClientOrderId = handoff.Request.ClientOrderId,
+            ExchangeOrderId = exchangeId,
+            EntryPrice = price,
+            Quantity = quantity,
+            Fees = fees,
+            FundingRate = fact?.FundingRate,
+            StopLossPrice = handoff.StopLossPrice,
+            TakeProfitPrice = handoff.TakeProfitPrice,
+            RiskDecision = handoff.RiskDecision,
+            RiskReason = handoff.RiskReason,
+            ExpectedHorizonMinutes = source.ExpectedHorizonMinutes,
+            OrderRequestedAtUtc = orderRequested,
+            OrderAcceptedAtUtc = orderAccepted,
+            OrderFilledAtUtc = orderFilled,
+            NewsToFillLatencyMs = orderFilled is { } filledAt ? NewsLatency.Milliseconds(source.PublishedAtUtc, filledAt) : null,
+            Status = handoff.OrderDecision
+        }, cancellationToken);
+    }
+
+    private async Task CloseExpiredHorizonsAsync(
+        NewsDatabase database,
+        IExchangeConnector connector,
+        LiveAccountSnapshot account,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        foreach (var row in await database.ListHorizonExitsAsync(now, cancellationToken))
+        {
+            var position = account.OpenPositions.FirstOrDefault(item => string.Equals(item.Symbol, row.Symbol, StringComparison.OrdinalIgnoreCase));
+            if (position is null || position.Quantity <= 0m)
+            {
+                row.ClosedAtUtc = now;
+                row.ExitReason = "flat";
+                row.HoldingSeconds = row.OrderFilledAtUtc is { } filled ? (long)(now - filled).TotalSeconds : null;
+                continue;
+            }
+
+            var closeSide = row.Side == "SHORT" ? OrderSide.Buy : OrderSide.Sell;
+            var clientId = string.IsNullOrWhiteSpace(row.ClientOrderId) ? "news-hz" : row.ClientOrderId + "-hz";
+            try
+            {
+                await connector.PlaceOrderAsync(
+                    new PlaceOrderRequest(clientId, row.Symbol, closeSide, OrderType.Market, position.Quantity, null, TimeSpan.FromSeconds(5), ReduceOnly: true),
+                    cancellationToken);
+                row.ClosedAtUtc = now;
+                row.ExitReason = "horizon";
+                row.HoldingSeconds = row.OrderFilledAtUtc is { } filled ? (long)(now - filled).TotalSeconds : null;
+                _logger.LogInformation(
+                    "{Stage} {EventId} {Symbol} {Decision} {Confidence} {Impact} {Latency} {Model} {Reason}",
+                    "PositionClosed",
+                    row.EventDedupKey,
+                    row.Symbol,
+                    row.Side,
+                    0,
+                    0,
+                    row.HoldingSeconds ?? 0,
+                    string.Empty,
+                    "horizon");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "News horizon close failed for {Symbol}", row.Symbol);
+            }
+        }
+
+        await database.SaveAsync(cancellationToken);
+    }
+
+    private void LogNews(NewsEvent item, string symbol, string decision, string? reason, string stage) =>
+        _logger.LogInformation(
+            "{Stage} {EventId} {Symbol} {Decision} {Confidence} {Impact} {Latency} {Model} {Reason}",
+            stage,
+            item.EventId,
+            symbol,
+            decision,
+            item.ConfidenceScore,
+            item.ImpactScore,
+            item.ClassifiedAtUtc is { } classified ? NewsLatency.Milliseconds(item.DetectedAtUtc, classified) : 0,
+            item.AiModel ?? string.Empty,
+            reason ?? string.Empty);
 
     private static string FindRepo(string start)
     {

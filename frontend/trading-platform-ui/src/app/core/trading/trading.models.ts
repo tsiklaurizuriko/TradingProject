@@ -1216,6 +1216,21 @@ export interface NewsProviderHealthItem {
   rejected: number;
 }
 
+export interface NewsActivityItem {
+  at: string;
+  coin: string;
+  headline: string;
+  url: string | null;
+  source: string;
+  verdict: string;
+  orderState: string;
+  why: string;
+  orderLine: string | null;
+  confidence: number | null;
+  impact: number | null;
+  alreadyPricedIn: number | null;
+}
+
 export interface NewsDeskDto {
   enabled: boolean;
   running: boolean;
@@ -1235,7 +1250,9 @@ export interface NewsDeskDto {
   stopLoss: number | null;
   takeProfit: number | null;
   reason: string | null;
+  collectionStatus?: string | null;
   items?: NewsFeedItem[];
+  activity?: NewsActivityItem[];
   providers?: NewsProviderHealthItem[];
 }
 

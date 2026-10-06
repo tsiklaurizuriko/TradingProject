@@ -69,6 +69,10 @@ public sealed class TradingDbContext : DbContext, IUnitOfWork
     public DbSet<NewsTradingSignal> NewsTradingSignals => Set<NewsTradingSignal>();
     public DbSet<NewsSignalOutcome> NewsSignalOutcomes => Set<NewsSignalOutcome>();
     public DbSet<NewsTradingSession> NewsTradingSessions => Set<NewsTradingSession>();
+    public DbSet<NewsAnalysis> NewsAnalyses => Set<NewsAnalysis>();
+    public DbSet<NewsTradingDecision> NewsTradingDecisions => Set<NewsTradingDecision>();
+    public DbSet<NewsTradeExecution> NewsTradeExecutions => Set<NewsTradeExecution>();
+    public DbSet<NewsDecisionAudit> NewsDecisionAudits => Set<NewsDecisionAudit>();
 
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {

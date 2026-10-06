@@ -239,8 +239,8 @@ public sealed class NewsIngestionTests
     {
         var options = new NewsOptions { ProviderPollMinutes = new Dictionary<string, int> { ["gdelt"] = 1 } };
         NewsProviderCatalog.PollIntervalMinutes(options, "gdelt").Should().Be(5);
-        NewsProviderCatalog.PollIntervalMinutes(new NewsOptions(), "binance").Should().Be(5);
-        NewsProviderCatalog.PollIntervalMinutes(new NewsOptions(), "official-blogs").Should().Be(30);
+        NewsProviderCatalog.PollIntervalMinutes(new NewsOptions(), "binance").Should().Be(1);
+        NewsProviderCatalog.PollIntervalMinutes(new NewsOptions(), "official-blogs").Should().Be(5);
     }
 
     private static RawNewsItem Article(string provider, string publisher, string url, DateTimeOffset published) =>

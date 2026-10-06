@@ -158,6 +158,24 @@ public sealed class ApiSecurityTests
     }
 
     [Fact]
+    public void Stored_news_ai_key_is_applied_only_when_configuration_is_empty()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "secrets.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, """{"News:Ai:ApiKey":"stored-key"}""");
+        try
+        {
+            LocalSecrets.Resolve(Config(("Secrets:Path", path)))[LocalSecrets.NewsAiApiKey].Should().Be("stored-key");
+            LocalSecrets.Resolve(Config(("Secrets:Path", path), (LocalSecrets.NewsAiApiKey, "from-env")))
+                .Should().NotContainKey(LocalSecrets.NewsAiApiKey);
+        }
+        finally
+        {
+            Directory.Delete(Path.GetDirectoryName(path)!, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Configured_secrets_are_kept_when_live_is_on()
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "secrets.json");

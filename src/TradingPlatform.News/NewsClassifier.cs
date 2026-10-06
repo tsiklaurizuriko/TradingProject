@@ -9,10 +9,11 @@ public interface INewsClassifier
 
 public static class NewsText
 {
-    public static string Excerpt(string? value)
+    public static string Excerpt(string? value, int max = 2000)
     {
         var plain = StripHtml(value);
-        return plain.Length <= 2000 ? plain : plain[..2000];
+        var cap = max < 1 ? 1 : max;
+        return plain.Length <= cap ? plain : plain[..cap];
     }
 
     public static string Readable(NewsEvent item) =>

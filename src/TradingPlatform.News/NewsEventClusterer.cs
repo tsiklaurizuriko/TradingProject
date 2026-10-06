@@ -176,7 +176,8 @@ public static class NewsEventClusterer
                 SourceUrl = item.SourceUrl,
                 PublishedAtUtc = item.PublishedAtUtc,
                 Title = item.Title,
-                Summary = NewsText.Excerpt(item.Summary)
+                Summary = NewsText.Excerpt(item.Summary),
+                Content = NewsText.Excerpt(string.IsNullOrWhiteSpace(item.Content) ? item.Summary : item.Content, 6000)
             }).ToList()
         };
     }

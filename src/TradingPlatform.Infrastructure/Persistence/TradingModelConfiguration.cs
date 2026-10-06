@@ -399,5 +399,62 @@ internal static class TradingModelConfiguration
             b.Property(x => x.Mode).HasMaxLength(16).IsRequired();
             b.Property(x => x.LastStatus).HasMaxLength(500);
         });
+        model.Entity<NewsAnalysis>(b =>
+        {
+            b.ToTable("NewsAnalyses");
+            b.HasIndex(x => x.EventDedupKey);
+            b.Property(x => x.EventDedupKey).HasMaxLength(64).IsRequired();
+            b.Property(x => x.Provider).HasMaxLength(64).IsRequired();
+            b.Property(x => x.Model).HasMaxLength(128).IsRequired();
+            b.Property(x => x.PromptVersion).HasMaxLength(64).IsRequired();
+            b.Property(x => x.Status).HasMaxLength(32).IsRequired();
+            b.Property(x => x.EventType).HasMaxLength(64).IsRequired();
+            b.Property(x => x.VerificationStatus).HasMaxLength(64).IsRequired();
+            b.Property(x => x.ExpectedHorizon).HasMaxLength(32).IsRequired();
+        });
+        model.Entity<NewsTradingDecision>(b =>
+        {
+            b.ToTable("NewsTradingDecisions");
+            b.HasIndex(x => new { x.EventDedupKey, x.Symbol, x.DecisionAtUtc });
+            b.Property(x => x.EventDedupKey).HasMaxLength(64).IsRequired();
+            b.Property(x => x.Symbol).HasMaxLength(32).IsRequired();
+            b.Property(x => x.Decision).HasMaxLength(16).IsRequired();
+            b.Property(x => x.ProposedDirection).HasMaxLength(16);
+            b.Property(x => x.RejectionReason).HasMaxLength(64);
+            b.Property(x => x.ExpectedHorizon).HasMaxLength(32).IsRequired();
+            b.Property(x => x.RiskDecision).HasMaxLength(32).IsRequired();
+        });
+        model.Entity<NewsTradeExecution>(b =>
+        {
+            b.ToTable("NewsTradeExecutions");
+            b.HasIndex(x => x.ClientOrderId);
+            b.Property(x => x.EventDedupKey).HasMaxLength(64).IsRequired();
+            b.Property(x => x.Symbol).HasMaxLength(32).IsRequired();
+            b.Property(x => x.Side).HasMaxLength(16).IsRequired();
+            b.Property(x => x.ClientOrderId).HasMaxLength(64);
+            b.Property(x => x.ExchangeOrderId).HasMaxLength(64);
+            b.Property(x => x.RiskDecision).HasMaxLength(32).IsRequired();
+            b.Property(x => x.Status).HasMaxLength(32).IsRequired();
+            b.Property(x => x.ExitReason).HasMaxLength(64);
+            Money(b.Property(x => x.EntryPrice));
+            Money(b.Property(x => x.Quantity));
+            Money(b.Property(x => x.Fees));
+            Money(b.Property(x => x.StopLossPrice));
+            Money(b.Property(x => x.TakeProfitPrice));
+            b.Property(x => x.FundingRate).HasPrecision(DecimalConventions.PricePrecision, DecimalConventions.PriceScale);
+            b.Property(x => x.RealizedPnL).HasPrecision(DecimalConventions.PricePrecision, DecimalConventions.PriceScale);
+        });
+        model.Entity<NewsDecisionAudit>(b =>
+        {
+            b.ToTable("NewsDecisionAudits");
+            b.HasIndex(x => new { x.EventDedupKey, x.Symbol, x.DecisionAtUtc });
+            b.Property(x => x.EventDedupKey).HasMaxLength(64).IsRequired();
+            b.Property(x => x.Symbol).HasMaxLength(32).IsRequired();
+            b.Property(x => x.Decision).HasMaxLength(16).IsRequired();
+            b.Property(x => x.RejectionReason).HasMaxLength(64);
+            b.Property(x => x.Provider).HasMaxLength(64).IsRequired();
+            b.Property(x => x.Model).HasMaxLength(128).IsRequired();
+            b.Property(x => x.PromptVersion).HasMaxLength(64).IsRequired();
+        });
     }
 }

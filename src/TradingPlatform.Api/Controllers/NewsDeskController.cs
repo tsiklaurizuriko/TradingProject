@@ -51,7 +51,9 @@ public sealed class NewsDeskController : ControllerBase
             latest?.StopLossPrice,
             latest?.TakeProfitPrice,
             latest is null ? session.LastStatus : NewsStop.Explain(latest),
+            session.LastStatus,
             await store.RecentFeedAsync(30, _news.Strategy, DateTimeOffset.UtcNow, cancellationToken),
+            await store.RecentActivityAsync(40, cancellationToken),
             HealthRows(_news, await store.ProviderHealthAsync(cancellationToken), DateTimeOffset.UtcNow));
     }
 
@@ -171,5 +173,7 @@ public sealed record NewsTradingDeskDto(
     decimal? StopLoss,
     decimal? TakeProfit,
     string? Reason,
+    string? CollectionStatus,
     IReadOnlyList<NewsFeedRow> Items,
+    IReadOnlyList<NewsActivityRow> Activity,
     IReadOnlyList<NewsProviderHealthRow> Providers);

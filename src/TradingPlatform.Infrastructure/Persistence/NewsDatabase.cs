@@ -47,6 +47,38 @@ public sealed class NewsDatabase
     public Task<bool> SignalExistsAsync(Guid eventId, string symbol, CancellationToken cancellationToken) =>
         _db.NewsTradingSignals.AnyAsync(row => row.StoredNewsEventId == eventId && row.Symbol == symbol, cancellationToken);
 
+    public Task<bool> HasFinalSignalAsync(string dedupKey, CancellationToken cancellationToken) =>
+        _db.NewsTradingSignals.AnyAsync(row => row.StoredNewsEvent != null && row.StoredNewsEvent.DedupKey == dedupKey, cancellationToken);
+
+    public async Task<IReadOnlyDictionary<string, DateTimeOffset>> EventCreatedAtAsync(IReadOnlyCollection<string> dedupKeys, CancellationToken cancellationToken)
+    {
+        if (dedupKeys.Count == 0)
+        {
+            return new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
+        }
+
+        var rows = await _db.NewsEvents.AsNoTracking()
+            .Where(row => dedupKeys.Contains(row.DedupKey))
+            .Select(row => new { row.DedupKey, row.CreatedAt })
+            .ToListAsync(cancellationToken);
+        return rows.ToDictionary(row => row.DedupKey, row => row.CreatedAt, StringComparer.Ordinal);
+    }
+
+    public async Task<HashSet<string>> AnalyzedEventKeysAsync(IReadOnlyCollection<string> dedupKeys, CancellationToken cancellationToken)
+    {
+        if (dedupKeys.Count == 0)
+        {
+            return new HashSet<string>(StringComparer.Ordinal);
+        }
+
+        var rows = await _db.NewsAnalyses.AsNoTracking()
+            .Where(row => dedupKeys.Contains(row.EventDedupKey))
+            .Select(row => row.EventDedupKey)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+        return rows.ToHashSet(StringComparer.Ordinal);
+    }
+
     public async Task AddSignalAsync(NewsTradingSignal signal, CancellationToken cancellationToken)
     {
         if (await SignalExistsAsync(signal.StoredNewsEventId, signal.Symbol, cancellationToken))
@@ -274,6 +306,123 @@ public sealed class NewsDatabase
     public async Task<IReadOnlyList<NewsProviderHealth>> ProviderHealthAsync(CancellationToken cancellationToken) =>
         await _db.NewsProviderHealth.AsNoTracking().OrderBy(row => row.Provider).ToListAsync(cancellationToken);
 
+    public async Task<IReadOnlyList<NewsActivityRow>> RecentActivityAsync(int take, CancellationToken cancellationToken)
+    {
+        var decisions = await _db.NewsTradingDecisions.AsNoTracking()
+            .OrderByDescending(row => row.DecisionAtUtc)
+            .Take(take)
+            .ToListAsync(cancellationToken);
+        var signals = await _db.NewsTradingSignals.AsNoTracking()
+            .OrderByDescending(row => row.SignalTimeUtc)
+            .Take(take)
+            .ToListAsync(cancellationToken);
+        var eventIds = decisions
+            .Where(row => row.StoredNewsEventId.HasValue)
+            .Select(row => row.StoredNewsEventId!.Value)
+            .Concat(signals.Select(row => row.StoredNewsEventId))
+            .Distinct()
+            .ToList();
+        var events = eventIds.Count == 0
+            ? []
+            : await _db.NewsEvents.AsNoTracking().Where(row => eventIds.Contains(row.Id)).ToListAsync(cancellationToken);
+        var articles = eventIds.Count == 0
+            ? []
+            : await _db.NewsArticles.AsNoTracking()
+                .Where(row => row.StoredNewsEventId != null && eventIds.Contains(row.StoredNewsEventId.Value))
+                .ToListAsync(cancellationToken);
+        var keys = events.Select(row => row.DedupKey)
+            .Concat(decisions.Select(row => row.EventDedupKey))
+            .Where(key => !string.IsNullOrWhiteSpace(key))
+            .Distinct()
+            .ToList();
+        var executions = keys.Count == 0
+            ? []
+            : await _db.NewsTradeExecutions.AsNoTracking().Where(row => keys.Contains(row.EventDedupKey)).ToListAsync(cancellationToken);
+
+        var rows = new List<NewsActivityRow>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var decision in decisions)
+        {
+            var identity = (decision.StoredNewsEventId?.ToString() ?? decision.EventDedupKey) + "|" + decision.Symbol;
+            if (!seen.Add(identity))
+            {
+                continue;
+            }
+
+            var matched = events.FirstOrDefault(item => item.Id == decision.StoredNewsEventId);
+            var article = articles.Where(item => item.StoredNewsEventId == decision.StoredNewsEventId).OrderBy(item => item.PublishedAtUtc).FirstOrDefault();
+            var signal = signals.FirstOrDefault(item => item.StoredNewsEventId == decision.StoredNewsEventId && item.Symbol == decision.Symbol);
+            var execution = executions
+                .Where(item => item.EventDedupKey == decision.EventDedupKey && item.Symbol == decision.Symbol)
+                .OrderByDescending(item => item.OrderRequestedAtUtc)
+                .FirstOrDefault();
+            rows.Add(Describe(decision.DecisionAtUtc, decision.Symbol, decision.Decision, decision.RejectionReason, decision.RiskDecision, decision.Confidence, decision.Impact, decision.AlreadyPricedIn, article, matched, signal, execution));
+        }
+
+        foreach (var signal in signals)
+        {
+            var matched = events.FirstOrDefault(item => item.Id == signal.StoredNewsEventId);
+            var identity = signal.StoredNewsEventId + "|" + signal.Symbol;
+            if (!seen.Add(identity))
+            {
+                continue;
+            }
+
+            var article = articles.Where(item => item.StoredNewsEventId == signal.StoredNewsEventId).OrderBy(item => item.PublishedAtUtc).FirstOrDefault();
+            var execution = matched is null
+                ? null
+                : executions
+                    .Where(item => item.EventDedupKey == matched.DedupKey && item.Symbol == signal.Symbol)
+                    .OrderByDescending(item => item.OrderRequestedAtUtc)
+                    .FirstOrDefault();
+            rows.Add(Describe(signal.SignalTimeUtc, signal.Symbol, signal.Direction, null, signal.RiskDecision, NewsActivityCopy.Percent(signal.NewsConfidence), NewsActivityCopy.Percent(signal.NewsImpact), null, article, matched, signal, execution));
+        }
+
+        return rows.OrderByDescending(row => row.At).Take(take).ToList();
+    }
+
+    private static NewsActivityRow Describe(
+        DateTimeOffset at,
+        string symbol,
+        string verdict,
+        string? rejection,
+        string? riskDecision,
+        int? confidence,
+        int? impact,
+        int? alreadyPricedIn,
+        NewsArticle? article,
+        StoredNewsEvent? matched,
+        NewsTradingSignal? signal,
+        NewsTradeExecution? execution)
+    {
+        var side = verdict is "LONG" or "SHORT" ? verdict : "NO_TRADE";
+        var orderState = NewsActivityCopy.OrderState(
+            signal?.BecameTrade == true || execution?.OrderFilledAtUtc is not null,
+            execution?.ExchangeOrderId ?? signal?.ExchangeOrderId,
+            execution?.OrderFilledAtUtc,
+            execution?.ClosedAtUtc,
+            riskDecision ?? signal?.RiskDecision,
+            signal?.OrderDecision);
+        var entry = execution?.EntryPrice ?? signal?.EntryPrice ?? 0m;
+        var quantity = execution?.Quantity ?? signal?.Quantity ?? 0m;
+        var stop = execution?.StopLossPrice ?? signal?.StopLossPrice ?? 0m;
+        var target = execution?.TakeProfitPrice ?? signal?.TakeProfitPrice ?? 0m;
+        var headline = string.IsNullOrWhiteSpace(article?.Title) ? "No headline stored for this decision." : article!.Title;
+        return new NewsActivityRow(
+            at,
+            string.IsNullOrWhiteSpace(symbol) ? matched?.PrimaryAsset ?? "" : symbol,
+            headline,
+            string.IsNullOrWhiteSpace(article?.CanonicalUrl) ? null : article!.CanonicalUrl,
+            string.IsNullOrWhiteSpace(article?.Publisher) ? article?.Source ?? "" : article!.Publisher,
+            side,
+            orderState,
+            NewsActivityCopy.Why(side, rejection, signal?.Reason, orderState),
+            NewsActivityCopy.OrderLine(orderState, entry, quantity, stop, target, execution?.ExchangeOrderId ?? signal?.ExchangeOrderId),
+            confidence is > 0 ? confidence : null,
+            impact is > 0 ? impact : null,
+            alreadyPricedIn is > 0 ? alreadyPricedIn : null);
+    }
+
     public Task<IReadOnlyList<NewsFeedRow>> RecentFeedAsync(int take, CancellationToken cancellationToken) =>
         RecentFeedAsync(take, new NewsMarketStrategyOptions(), DateTimeOffset.UtcNow, cancellationToken);
 
@@ -365,6 +514,44 @@ public sealed class NewsDatabase
         }).ToList();
     }
 
+    public async Task AddAnalysisAsync(NewsAnalysis row, CancellationToken cancellationToken)
+    {
+        _db.NewsAnalyses.Add(row);
+        await _db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task AddTradingDecisionAsync(NewsTradingDecision row, CancellationToken cancellationToken)
+    {
+        _db.NewsTradingDecisions.Add(row);
+        await _db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task AddTradeExecutionAsync(NewsTradeExecution row, CancellationToken cancellationToken)
+    {
+        if (!string.IsNullOrWhiteSpace(row.ClientOrderId)
+            && await _db.NewsTradeExecutions.AnyAsync(item => item.ClientOrderId == row.ClientOrderId, cancellationToken))
+        {
+            return;
+        }
+
+        _db.NewsTradeExecutions.Add(row);
+        await _db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task AddDecisionAuditAsync(NewsDecisionAudit row, CancellationToken cancellationToken)
+    {
+        _db.NewsDecisionAudits.Add(row);
+        await _db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<NewsTradeExecution>> ListHorizonExitsAsync(DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var open = await _db.NewsTradeExecutions
+            .Where(row => row.ClosedAtUtc == null && row.OrderFilledAtUtc != null && row.ExpectedHorizonMinutes > 0)
+            .ToListAsync(cancellationToken);
+        return open.Where(row => row.OrderFilledAtUtc!.Value.AddMinutes(row.ExpectedHorizonMinutes) <= now).ToList();
+    }
+
     private static bool Richer(StoredNewsEvent existing, NewsEvent item)
     {
         var actionable = item.Direction is EventDirection.Bullish or EventDirection.Bearish;
@@ -394,6 +581,20 @@ public sealed class NewsDatabase
         return value[..keep] + "-" + hash;
     }
 }
+
+public sealed record NewsActivityRow(
+    DateTimeOffset At,
+    string Coin,
+    string Headline,
+    string? Url,
+    string Source,
+    string Verdict,
+    string OrderState,
+    string Why,
+    string? OrderLine,
+    int? Confidence,
+    int? Impact,
+    int? AlreadyPricedIn);
 
 public sealed record NewsFeedRow(
     DateTimeOffset PublishedAt,

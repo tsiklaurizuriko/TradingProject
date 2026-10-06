@@ -119,3 +119,97 @@ public sealed class NewsTradingSession : Entity
     public int UniverseCount { get; set; }
     public string? LastStatus { get; set; }
 }
+
+public sealed class NewsAnalysis : Entity
+{
+    public Guid? StoredNewsEventId { get; set; }
+    public string EventDedupKey { get; set; } = string.Empty;
+    public string Provider { get; set; } = string.Empty;
+    public string Model { get; set; } = string.Empty;
+    public string PromptVersion { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public string EventType { get; set; } = string.Empty;
+    public string VerificationStatus { get; set; } = string.Empty;
+    public int SourceReliability { get; set; }
+    public int OverallConfidence { get; set; }
+    public int Impact { get; set; }
+    public int Novelty { get; set; }
+    public int AlreadyPricedIn { get; set; }
+    public string ExpectedHorizon { get; set; } = string.Empty;
+    public string MarketMechanism { get; set; } = string.Empty;
+    public string AffectedAssetsJson { get; set; } = "[]";
+    public string RiskFlagsJson { get; set; } = "[]";
+    public bool ShouldConsiderTrading { get; set; }
+    public string RawJson { get; set; } = string.Empty;
+    public string ArticleIds { get; set; } = string.Empty;
+    public DateTimeOffset? PublishedAtUtc { get; set; }
+    public DateTimeOffset? DetectedAtUtc { get; set; }
+    public DateTimeOffset ClassifiedAtUtc { get; set; }
+    public long DetectionLatencyMs { get; set; }
+    public long ClassificationLatencyMs { get; set; }
+}
+
+public sealed class NewsTradingDecision : Entity
+{
+    public Guid? StoredNewsEventId { get; set; }
+    public Guid? NewsAnalysisId { get; set; }
+    public string EventDedupKey { get; set; } = string.Empty;
+    public string Symbol { get; set; } = string.Empty;
+    public string Decision { get; set; } = "NO_TRADE";
+    public string? ProposedDirection { get; set; }
+    public string? RejectionReason { get; set; }
+    public int Confidence { get; set; }
+    public int Impact { get; set; }
+    public int Novelty { get; set; }
+    public int AlreadyPricedIn { get; set; }
+    public string ExpectedHorizon { get; set; } = string.Empty;
+    public string MarketContextJson { get; set; } = "{}";
+    public string ArticleIds { get; set; } = string.Empty;
+    public string RiskDecision { get; set; } = "NotEvaluated";
+    public string? RiskReason { get; set; }
+    public DateTimeOffset PublishedAtUtc { get; set; }
+    public DateTimeOffset DetectedAtUtc { get; set; }
+    public DateTimeOffset? ClassifiedAtUtc { get; set; }
+    public DateTimeOffset DecisionAtUtc { get; set; }
+}
+
+public sealed class NewsTradeExecution : Entity
+{
+    public Guid? NewsTradingDecisionId { get; set; }
+    public string EventDedupKey { get; set; } = string.Empty;
+    public string Symbol { get; set; } = string.Empty;
+    public string Side { get; set; } = string.Empty;
+    public string? ClientOrderId { get; set; }
+    public string? ExchangeOrderId { get; set; }
+    public decimal EntryPrice { get; set; }
+    public decimal Quantity { get; set; }
+    public decimal Fees { get; set; }
+    public decimal? FundingRate { get; set; }
+    public decimal StopLossPrice { get; set; }
+    public decimal TakeProfitPrice { get; set; }
+    public string RiskDecision { get; set; } = string.Empty;
+    public string? RiskReason { get; set; }
+    public int ExpectedHorizonMinutes { get; set; }
+    public DateTimeOffset? OrderRequestedAtUtc { get; set; }
+    public DateTimeOffset? OrderAcceptedAtUtc { get; set; }
+    public DateTimeOffset? OrderFilledAtUtc { get; set; }
+    public DateTimeOffset? ClosedAtUtc { get; set; }
+    public string? ExitReason { get; set; }
+    public decimal? RealizedPnL { get; set; }
+    public long? HoldingSeconds { get; set; }
+    public long? NewsToFillLatencyMs { get; set; }
+    public string Status { get; set; } = string.Empty;
+}
+
+public sealed class NewsDecisionAudit : Entity
+{
+    public string EventDedupKey { get; set; } = string.Empty;
+    public string Symbol { get; set; } = string.Empty;
+    public string Decision { get; set; } = "NO_TRADE";
+    public string? RejectionReason { get; set; }
+    public string Provider { get; set; } = string.Empty;
+    public string Model { get; set; } = string.Empty;
+    public string PromptVersion { get; set; } = string.Empty;
+    public string PayloadJson { get; set; } = "{}";
+    public DateTimeOffset DecisionAtUtc { get; set; }
+}

@@ -53,6 +53,97 @@ public sealed class NewsOptions
     public List<NewsFeedOption> OfficialFeeds { get; set; } = [];
 
     public NewsMarketStrategyOptions Strategy { get; set; } = new();
+
+    public NewsAiOptions Ai { get; set; } = new();
+}
+
+public sealed class NewsAiOptions
+{
+    public bool Enabled { get; set; }
+
+    public string Provider { get; set; } = "openai-compatible";
+
+    public string BaseUrl { get; set; } = "https://api.openai.com/v1";
+
+    /// <summary>Set with News__Ai__ApiKey. An empty value never calls a model.</summary>
+    public string ApiKey { get; set; } = string.Empty;
+
+    public string FastModel { get; set; } = "gpt-4.1-mini";
+
+    /// <summary>When false, only <see cref="FastModel"/> is called. A second model is not used for important or failed events.</summary>
+    public bool UseStrongModel { get; set; }
+
+    public string StrongModel { get; set; } = "gpt-4.1";
+
+    public int TimeoutSeconds { get; set; } = 20;
+
+    public string PromptVersion { get; set; } = "news-deep-v1";
+
+    public int StrongImpactThreshold { get; set; } = 70;
+
+    public int MaxAlreadyPricedIn { get; set; } = 55;
+
+    public double MaxFavorableMovePercent { get; set; } = 3;
+
+    public double MinExpectedEdgePercent { get; set; } = 0.25;
+
+    public double MaxSpreadPercent { get; set; } = 0.08;
+
+    public decimal MinQuoteVolumeUsdt { get; set; } = 5_000_000m;
+
+    public int MinSourceReliability { get; set; } = 60;
+
+    public int MinSecondaryConfidence { get; set; } = 85;
+
+    public int MinSecondaryImpact { get; set; } = 80;
+
+    /// <summary>Matches <c>RiskEngine.DefaultTakerFeePercent</c>. Percent points, so 0.04 is 0.04%.</summary>
+    public double TakerFeePercent { get; set; } = 0.04;
+
+    /// <summary>Matches <c>RiskEngine.DefaultSlippagePercent</c>. Percent points.</summary>
+    public double SlippagePercent { get; set; } = 0.05;
+
+    public bool UseJsonResponseFormat { get; set; } = true;
+
+    public bool HasKey() => !string.IsNullOrWhiteSpace(ApiKey);
+
+    public IReadOnlyList<string> Validate()
+    {
+        var errors = new List<string>();
+        if (!Enabled)
+        {
+            return errors;
+        }
+
+        if (TimeoutSeconds is < 5 or > 120)
+        {
+            errors.Add("News AI timeout must be between 5 and 120 seconds.");
+        }
+
+        if (string.IsNullOrWhiteSpace(Provider) || string.IsNullOrWhiteSpace(FastModel) || string.IsNullOrWhiteSpace(PromptVersion) || (UseStrongModel && string.IsNullOrWhiteSpace(StrongModel)))
+        {
+            errors.Add("News AI provider, models, and prompt version are required when AI is enabled.");
+        }
+
+        if (!Uri.TryCreate(BaseUrl, UriKind.Absolute, out var uri) || uri.Scheme is not ("https" or "http"))
+        {
+            errors.Add("News AI base URL must be an absolute http(s) URL.");
+        }
+
+        if (StrongImpactThreshold is < 0 or > 100 || MaxAlreadyPricedIn is < 0 or > 100 || MinSourceReliability is < 0 or > 100
+            || MinSecondaryConfidence is < 0 or > 100 || MinSecondaryImpact is < 0 or > 100)
+        {
+            errors.Add("News AI scores must be between 0 and 100.");
+        }
+
+        if (MaxFavorableMovePercent <= 0 || MinExpectedEdgePercent < 0 || MaxSpreadPercent <= 0 || MinQuoteVolumeUsdt < 0
+            || TakerFeePercent < 0 || SlippagePercent < 0)
+        {
+            errors.Add("News AI cost and move thresholds must be zero or positive, and spread and move caps must be positive.");
+        }
+
+        return errors;
+    }
 }
 
 public sealed class NewsFeedOption

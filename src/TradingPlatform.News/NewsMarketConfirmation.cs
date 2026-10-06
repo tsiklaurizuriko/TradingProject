@@ -24,7 +24,9 @@ public sealed record NewsMarketDecision(
     double MarketScore,
     double FinalScore,
     StrategySignalDetail Detail,
-    LiveSignalRecord? Record);
+    LiveSignalRecord? Record,
+    string? RejectionCode = null,
+    string? EventId = null);
 
 public sealed class LiveSignalRecord
 {
@@ -152,7 +154,9 @@ public static class NewsMarketConfirmation
             marketScore,
             total,
             new StrategySignalDetail(bullish ? SignalType.Buy : SignalType.Sell, reason, decisionTime, Snapshot: Snapshot(newsScore, marketScore, total), Status: "RESEARCHING"),
-            record);
+            record,
+            null,
+            item.EventId);
     }
 
     private static void Take(double weight, double signed, string name, List<string> scores, ref double aligned, ref double opposed)
@@ -410,7 +414,9 @@ public static class NewsMarketConfirmation
             0,
             0,
             new StrategySignalDetail(SignalType.NoAction, reason, item.PublishedAtUtc, Status: "RESEARCHING"),
-            null);
+            null,
+            null,
+            item.EventId);
 }
 
 public sealed class NewsLiveReport

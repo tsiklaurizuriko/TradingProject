@@ -113,14 +113,14 @@ public static class NewsProviderCatalog
 
         var minutes = configured > 0 ? configured : provider.ToLowerInvariant() switch
         {
-            "gdelt" => 30,
-            "binance" => 5,
-            "official-blogs" => 30,
-            "rss" => 15,
-            "coingecko" => 10,
-            "coindesk" => 15,
-            "cryptopanic" => 20,
-            "fred" => 60,
+            "gdelt" => 5,
+            "binance" => 1,
+            "official-blogs" => 5,
+            "rss" => 5,
+            "coingecko" => 5,
+            "coindesk" => 5,
+            "cryptopanic" => 5,
+            "fred" => 5,
             _ => Math.Max(1, options.PollMinutes)
         };
         if (provider.Equals("gdelt", StringComparison.OrdinalIgnoreCase) && minutes < 5)

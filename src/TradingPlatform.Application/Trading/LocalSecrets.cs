@@ -14,6 +14,7 @@ public static class LocalSecrets
     public const string JwtKey = "Jwt:SigningKey";
     public const string EncryptionKey = "Credentials:EncryptionKey";
     public const string AdminPasswordKey = "Seed:AdminPassword";
+    public const string NewsAiApiKey = "News:Ai:ApiKey";
 
     public const string PlaceholderJwtKey = "CHANGE-ME-to-a-long-random-signing-key-32chars-min";
     public const string PlaceholderAdminPassword = "ChangeMe_Admin_123!";
@@ -23,6 +24,21 @@ public static class LocalSecrets
 
     /// <summary>Returns the values to layer over configuration. Empty when live trading is off or nothing is a placeholder.</summary>
     public static IReadOnlyDictionary<string, string?> Resolve(IConfiguration configuration)
+    {
+        var overlay = new Dictionary<string, string?>(ResolvePlaceholders(configuration), StringComparer.Ordinal);
+        if (string.IsNullOrWhiteSpace(configuration[NewsAiApiKey]))
+        {
+            var stored = ReadStored(PathFrom(configuration), NewsAiApiKey);
+            if (!string.IsNullOrWhiteSpace(stored))
+            {
+                overlay[NewsAiApiKey] = stored;
+            }
+        }
+
+        return overlay;
+    }
+
+    private static IReadOnlyDictionary<string, string?> ResolvePlaceholders(IConfiguration configuration)
     {
         if (!configuration.GetValue<bool>("Trading:LiveTradingEnabled"))
         {
@@ -83,6 +99,25 @@ public static class LocalSecrets
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
         {
             return new Dictionary<string, string?>();
+        }
+    }
+
+    private static string? ReadStored(string path, string key)
+    {
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            var stored = Read(file);
+            return stored.TryGetValue(key, out var value) ? value : null;
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
+        {
+            return null;
         }
     }
 
