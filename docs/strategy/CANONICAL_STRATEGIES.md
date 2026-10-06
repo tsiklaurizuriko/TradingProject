@@ -8,7 +8,7 @@ There is one runtime implementation per strategy. The old parallel `*_v2` ids ar
 
 | Canonical id | Default timeframe | Side | Notes |
 | --- | --- | --- | --- |
-| `impulse_catch` | 15m | LONG | Max impulse age 32 bars. |
+| `impulse_catch` | 15m | LONG | Pump ride. First bar +16–26% above the 24h low, volume 3–7×, 30-day trend from daily candles. 25% trail from the peak, 4-day cap. See `docs/PUMP_RIDE_LIVE.md`. |
 | `zigzag_fade` | 15m | LONG and SHORT | |
 | `triple_supertrend` | 1h | LONG and SHORT | |
 | `ts_momentum_28_5` | 1d | LONG | |

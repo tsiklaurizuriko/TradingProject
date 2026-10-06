@@ -757,7 +757,7 @@ public sealed class DatabaseSeeder
         (StrategyTemplateKeys.FlowZone, "Flow Zone",
             "All USD-M coins, 1h, both sides. Buy the upper quarter of the last 24 hours when taker buy is the majority and open interest rose. Sell the lower quarter when taker sell is the majority and open interest rose. Missing taker or open interest sends no order. The signal closes the position when that flow leaves the zone, but not while the move is still inside a 0.20% round-trip fee. The 4% stop and 15% take are only the rail if the bot is off. Not measured on the past. Not auto-started.", true),
         (StrategyTemplateKeys.ImpulseCatch, "Impulse Catch",
-            "All USD-M coins, 15m, long only. Buys the closed bar that first crosses +8% versus the close 16 bars earlier, when that bar closes higher in its top half and volume is at least 1.5× the prior 20-bar average. Exits when a closed bar falls 3% from the prior close. Book is risk 0.5%, stop 6%, take 20%, leverage 2x, 8 positions. Not measured on the past. Not auto-started.", true),
+            "All USD-M coins, 15m, long only. Rides big pumps (20–100%+). Buys the first closed bar that lifts price 16–26% above its 24h low, green with a close in its top half, with last-hour volume 3–7× the 7-day hourly mean and at least 3M USDT traded in 24h. The coin must already be up 20% in 30 days and not above its 30-day high. Exits on a close 25% under the peak high or after 4 days. Book is risk 0.5%, stop 12%, take 300%, leverage 2x, 8 positions. History 2024-10 to 2026-09: about 37% winners, +0.6% to +3% mean per trade, driven by a few large moves. Filters were picked after seeing every period. Not auto-started.", true),
         (StrategyTemplateKeys.SqueezeWatch, "Squeeze Watch",
             "1h, both sides. Price moved less than 3% over 24 hours, open interest rose at least 15%, and funding is at or below -0.10% — buy the crowded shorts. The same quiet price and open-interest rise with funding at or above +0.10% — sell the crowded longs. Missing funding or open interest sends no order. While open, exit when funding leaves that extreme or price moves 2% against the entry. Book is risk 0.5%, stop 4%, take 8%, leverage 2x, 3 positions. Not measured on the past.", false),
         (StrategyTemplateKeys.FlatRange, "Flat Range",
@@ -979,7 +979,7 @@ public sealed class DatabaseSeeder
         [StrategyTemplateKeys.BtcDailyMax10] = (2m, 8m, 30m, 1m, 1),
         [StrategyTemplateKeys.FlowZone] = (0.5m, 4m, 15m, 1m, 5),
         [StrategyTemplateKeys.SqueezeWatch] = (0.5m, 4m, 8m, 2m, 3),
-        [StrategyTemplateKeys.ImpulseCatch] = (0.5m, 6m, 20m, 2m, 8),
+        [StrategyTemplateKeys.ImpulseCatch] = (0.5m, 12m, 300m, 2m, 8),
         [StrategyTemplateKeys.FlatRange] = (0.5m, 2m, 4m, 3m, 5),
         [StrategyTemplateKeys.ObsCompressionBreakout] = (0.5m, 8m, 24m, 2m, 5),
         [StrategyTemplateKeys.ObsShockFade] = (0.5m, 8m, 24m, 2m, 5),
@@ -1031,8 +1031,7 @@ public sealed class DatabaseSeeder
         if (string.Equals(name, "30m EMA Cross", StringComparison.OrdinalIgnoreCase) && existing.TakeProfitPercent == 20m)
         {
             existing.TakeProfitPercent = template.TakeProfitPercent;
-        }
-    }
+        }    }
 
     private async Task EnsureOneActiveAsync(CancellationToken cancellationToken)
     {
@@ -1310,8 +1309,8 @@ public sealed class DatabaseSeeder
         new()
         {
             RiskPerTradePercent = 0.5m,
-            StopLossPercent = 6m,
-            TakeProfitPercent = 20m,
+            StopLossPercent = 12m,
+            TakeProfitPercent = 300m,
             MaxLeverage = 2m,
             MaxDailyLossPercent = 3m,
             MaxPortfolioRiskPercent = 4m,

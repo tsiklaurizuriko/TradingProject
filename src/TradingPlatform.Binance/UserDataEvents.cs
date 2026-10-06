@@ -68,7 +68,7 @@ public static class UserDataEvents
         {
             "ORDER_TRADE_UPDATE" when json.TryGetProperty("o", out var order) && order.ValueKind == JsonValueKind.Object =>
                 new UserDataEvent(UserDataEventKind.OrderUpdate, at, ReadOrder(order)),
-            "ALGO_UPDATE" => new UserDataEvent(UserDataEventKind.AlgoUpdate, at),
+            "ALGO_UPDATE" or "ALGO_ORDER_UPDATE" or "CONDITIONAL_ORDER_TRIGGER_REJECT" => new UserDataEvent(UserDataEventKind.AlgoUpdate, at),
             "ACCOUNT_UPDATE" => new UserDataEvent(UserDataEventKind.AccountUpdate, at, Positions: ReadPositions(json)),
             "MARGIN_CALL" => new UserDataEvent(UserDataEventKind.MarginCall, at),
             "listenKeyExpired" => new UserDataEvent(UserDataEventKind.ListenKeyExpired, at),

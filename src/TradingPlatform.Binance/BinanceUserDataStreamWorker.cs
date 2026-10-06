@@ -40,6 +40,16 @@ public sealed class BinanceUserDataStreamWorker : BackgroundService
         _socketBase = (configuration["Binance:FuturesWebSocketBaseUrl"] ?? "wss://fstream.binance.com").TrimEnd('/');
     }
 
+    /// <summary>
+    /// Since 2026-04-23 the listen key is a query parameter on <c>/private/ws</c> and the events must be named;
+    /// the old <c>/ws/{key}</c> form connects but delivers nothing.
+    /// </summary>
+    public const string Events =
+        "ORDER_TRADE_UPDATE/ACCOUNT_UPDATE/MARGIN_CALL/ALGO_ORDER_UPDATE/CONDITIONAL_ORDER_TRIGGER_REJECT/listenKeyExpired";
+
+    public static Uri StreamUri(string socketBase, string listenKey) =>
+        new($"{socketBase.TrimEnd('/')}/private/ws?listenKey={Uri.EscapeDataString(listenKey)}&events={Events}");
+
     public static TimeSpan Backoff(int failures) =>
         TimeSpan.FromSeconds(Math.Min(300, 5 * Math.Pow(2, Math.Clamp(failures - 1, 0, 6))));
 
@@ -131,7 +141,7 @@ public sealed class BinanceUserDataStreamWorker : BackgroundService
         Task? keepAlive = null;
         try
         {
-            await socket.ConnectAsync(new Uri($"{_socketBase}/ws/{listenKey}"), session.Token);
+            await socket.ConnectAsync(StreamUri(_socketBase, listenKey), session.Token);
             _events.SetStatus(true, "User-data stream connected.", DateTimeOffset.UtcNow);
             _events.Raise("stream connected", DateTimeOffset.UtcNow);
             _logger.LogInformation("Binance user-data stream connected.");

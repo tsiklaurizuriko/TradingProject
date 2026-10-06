@@ -46,6 +46,7 @@ public sealed class CrossSectionalUniverseWorker : BackgroundService
 
             try
             {
+                using var background = MarketDataPriority.Background();
                 var written = await RefreshAsync(flags, stoppingToken);
                 _logger.LogInformation("Cross-sectional 15m cache refreshed for {Count} coins. No orders were sent.", written);
             }

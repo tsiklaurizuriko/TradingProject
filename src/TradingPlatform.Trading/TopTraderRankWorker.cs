@@ -88,6 +88,7 @@ public sealed class TopTraderRankWorker : BackgroundService
             {
                 if (_book.Wanted(DateTimeOffset.UtcNow))
                 {
+                    using var background = MarketDataPriority.Background();
                     await TickAsync(DateTimeOffset.UtcNow, stoppingToken);
                 }
             }

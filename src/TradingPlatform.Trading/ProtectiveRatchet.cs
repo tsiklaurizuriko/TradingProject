@@ -179,12 +179,12 @@ public static class ProtectiveRatchet
     private static decimal CandidateStop(Policy policy, bool shortSide, decimal entry, decimal mark)
     {
         var breakeven = shortSide ? entry * (1m - FeeBuffer) : entry * (1m + FeeBuffer);
-        if (!policy.Trail)
+        if (policy.Trail <= 0m)
         {
             return breakeven;
         }
 
-        var trailed = shortSide ? mark * (1m + 0.08m) : mark * (1m - 0.08m);
+        var trailed = shortSide ? mark * (1m + policy.Trail) : mark * (1m - policy.Trail);
         return shortSide ? Math.Min(breakeven, trailed) : Math.Max(breakeven, trailed);
     }
 
@@ -203,12 +203,16 @@ public static class ProtectiveRatchet
 
     private static Policy? PolicyFor(string? templateKey) => StrategyTemplateKeys.Normalize(templateKey) switch
     {
-        StrategyTemplateKeys.ImpulseCatch => new Policy(0.10m, Trail: true),
-        StrategyTemplateKeys.FAdxSma => new Policy(0.03m, Trail: false),
-        StrategyTemplateKeys.TripleSupertrend => new Policy(0.10m, Trail: false),
-        StrategyTemplateKeys.FlowZone => new Policy(0.08m, Trail: false),
+        StrategyTemplateKeys.ImpulseCatch => new Policy(0.20m, Trail: 0.30m),
+        StrategyTemplateKeys.FAdxSma => new Policy(0.03m, Trail: 0m),
+        StrategyTemplateKeys.TripleSupertrend => new Policy(0.10m, Trail: 0m),
+        StrategyTemplateKeys.FlowZone => new Policy(0.08m, Trail: 0m),
         _ => null
     };
 
-    private readonly record struct Policy(decimal Arm, bool Trail);
+    /// <summary>
+    /// <paramref name="Trail"/> is the distance under the mark, 0 for breakeven only. Impulse Catch arms at +20%
+    /// and trails 30%: a tighter exchange trail stopped pump rides out in normal pullbacks (docs/PUMP_RIDE_LIVE.md).
+    /// </summary>
+    private readonly record struct Policy(decimal Arm, decimal Trail);
 }

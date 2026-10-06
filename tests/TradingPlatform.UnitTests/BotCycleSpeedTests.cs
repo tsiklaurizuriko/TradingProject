@@ -6,6 +6,7 @@ using TradingPlatform.Trading;
 
 namespace TradingPlatform.UnitTests;
 
+[Collection(BinanceWeightGateCollection.Name)]
 public sealed class BotCycleSpeedTests
 {
     [Fact]

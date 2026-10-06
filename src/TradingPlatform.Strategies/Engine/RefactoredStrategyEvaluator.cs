@@ -13,7 +13,7 @@ public static class RefactoredStrategyEvaluator
 {
     public static int MaxHoldBars(string? key) => StrategyTemplateKeys.CanonicalId(key) switch
     {
-        StrategyTemplateKeys.ImpulseCatch => 32,
+        StrategyTemplateKeys.ImpulseCatch => Pump.HoldBars,
         StrategyTemplateKeys.ClucMay72018 => 24,
         StrategyTemplateKeys.CombinedBinHCluc => 24,
         StrategyTemplateKeys.FlatRange => 48,
@@ -70,6 +70,32 @@ public static class RefactoredStrategyEvaluator
         };
     }
 
+    /// <summary>
+    /// Impulse Catch v3, pump ride. Research: docs/PUMP_RIDE_VARIANTS.md and docs/PUMP_RIDE_LIVE.md.
+    /// Enters the first closed 15m bar that lifts price 16-26% above its 24h low on 3-7x hourly volume,
+    /// only on a coin already up 20% in 30 days and not above its 30-day high. Rides with a 25% trail
+    /// below the peak high, 12% exchange stop, 4-day cap. No take profit, so the 20-100% moves stay open.
+    /// </summary>
+    public static class Pump
+    {
+        public const int RiseBars = 96;
+        public const decimal RiseMin = 0.16m;
+        public const decimal RiseMax = 0.26m;
+        public const int VolumeBars = 4;
+        public const int VolumeBaselineBars = 672;
+        public const decimal VolumeMin = 3m;
+        public const decimal VolumeMax = 7m;
+        public const decimal MinQuoteVolume24h = 3_000_000m;
+        public const int TrendDays = 30;
+        public const decimal TrendMin = 0.20m;
+        public const decimal Trail = 0.25m;
+        public const decimal StopPercent = 12m;
+        public const int HoldBars = 384;
+        public const int WarmupBars = VolumeBaselineBars + VolumeBars;
+        public const int HistoryBars = 700;
+        public const int DailyWarmupBars = TrendDays + 3;
+    }
+
     private static StrategySignalDetail Impulse(
         StrategyTemplateParams p,
         IReadOnlyList<MarketCandle> candles,
@@ -77,174 +103,141 @@ public static class RefactoredStrategyEvaluator
         StrategyContext context,
         CausalIndicatorCache cache)
     {
-        var window = Math.Max(8, p.EntryLookback);
-        var ready = Math.Max(window + 2, Math.Max(p.EmaFast + 2, p.RelativeVolumePeriod + 2));
-        if (i < ready)
-        {
-            return Detail(SignalType.NoAction, "Impulse warmup is incomplete.", candles, i);
-        }
-
-        var ema = cache.Ema(p.EmaFast);
-        var atr = cache.Atr(p.AtrPeriod);
-        if (ema[i] is not { } emaNow || atr[i] is not { } atrNow || atrNow <= 0m || candles[i].Close <= 0m)
-        {
-            return Detail(SignalType.NoAction, "Impulse indicators are not ready.", candles, i);
-        }
-
+        var bar = candles[i];
         if (context.HasOpenPosition)
         {
             if (!IsLong(context))
             {
-                return Detail(SignalType.Exit, "Impulse Catch v2 is long only.", candles, i);
+                return Detail(SignalType.Exit, "Impulse Catch is long only.", candles, i);
             }
 
-            var trail = candles[i].Close - (2.5m * atrNow);
-            if (ReachedR(context, candles[i].Close, 1m) && context.AverageEntryPrice is { } entry)
+            if (TimeExpired(context, bar, p))
             {
-                trail = Math.Max(trail, entry);
+                return Detail(SignalType.Exit, "Impulse Catch 4-day hold cap reached.", candles, i);
             }
 
-            return Detail(SignalType.Hold, "Impulse long is open. Trail is 2.5 ATR.", candles, i, stop: trail);
+            var entry = context.AverageEntryPrice is > 0m ? context.AverageEntryPrice.Value : bar.Close;
+            var peak = Math.Max(entry, bar.High);
+            var opened = context.PositionOpenedAt ?? bar.OpenTime;
+            for (var k = i - 1; k >= 0 && candles[k].CloseTime > opened; k--)
+            {
+                peak = Math.Max(peak, candles[k].High);
+            }
+
+            var floor = peak * (1m - Pump.Trail);
+            var hard = context.ProtectiveStopPrice ?? entry * (1m - (Pump.StopPercent / 100m));
+            var held = new Dictionary<string, decimal?> { ["peak"] = peak, ["trailFloor"] = floor };
+            if (bar.Close <= floor)
+            {
+                return Detail(SignalType.Exit, $"Impulse Catch close {bar.Close} fell 25% below the peak high {peak}.", candles, i, snapshot: held);
+            }
+
+            return Detail(SignalType.Hold, $"Impulse Catch ride is open. Peak {peak}, exit on a close at or below {floor}.", candles, i, stop: hard, snapshot: held);
         }
 
-        var maxAge = Math.Max(1, p.MaxImpulseAgeBars);
-        var oldest = Math.Max(ready, i - maxAge);
-        var impulseAt = FindImpulse(candles, atr, p, window, i - 1, oldest);
-        if (impulseAt == -2)
+        if (!string.Equals(p.Timeframe, "15m", StringComparison.OrdinalIgnoreCase))
+        {
+            return Detail(SignalType.NoAction, "Impulse Catch runs on 15m only.", candles, i);
+        }
+
+        if (i < Pump.WarmupBars)
+        {
+            return Detail(SignalType.NoAction, $"Impulse warmup is incomplete. Needs {Pump.WarmupBars} closed 15m bars.", candles, i);
+        }
+
+        var low = MinLow(candles, i, Pump.RiseBars);
+        var prevLow = MinLow(candles, i - 1, Pump.RiseBars);
+        if (low <= 0m || prevLow <= 0m || bar.Close <= 0m)
+        {
+            return Detail(SignalType.NoAction, "Impulse price data is not usable.", candles, i);
+        }
+
+        var rise = (bar.Close / low) - 1m;
+        var prevRise = (candles[i - 1].Close / prevLow) - 1m;
+        if (rise < Pump.RiseMin || prevRise >= Pump.RiseMin || rise > Pump.RiseMax)
+        {
+            return Detail(SignalType.NoAction, $"No first cross of +16% above the 24h low. rise24={rise:P1}.", candles, i, snapshot: new Dictionary<string, decimal?> { ["rise24"] = rise });
+        }
+
+        if (bar.Close <= bar.Open || (bar.High > bar.Low && (bar.Close - bar.Low) / (bar.High - bar.Low) < 0.5m))
+        {
+            return Detail(SignalType.NoAction, "Impulse bar is not green with a close in its upper half.", candles, i);
+        }
+
+        decimal hour = 0m, baseline = 0m, quote = 0m;
+        for (var k = i - Pump.VolumeBars + 1; k <= i; k++)
+        {
+            hour += candles[k].Volume;
+        }
+
+        for (var k = i - Pump.VolumeBars - Pump.VolumeBaselineBars + 1; k <= i - Pump.VolumeBars; k++)
+        {
+            baseline += candles[k].Volume;
+        }
+
+        for (var k = i - Pump.RiseBars + 1; k <= i; k++)
+        {
+            quote += candles[k].Volume * candles[k].Close;
+        }
+
+        var hourlyMean = baseline / Pump.VolumeBaselineBars * Pump.VolumeBars;
+        if (hourlyMean <= 0m || !StrategyExecutionRules.VolumeUsable(bar.Volume))
         {
             return Detail(SignalType.NoAction, "Impulse volume is missing or not usable. No order.", candles, i);
         }
 
-        if (impulseAt < 0)
+        var volRatio = hour / hourlyMean;
+        var snapshot = new Dictionary<string, decimal?> { ["rise24"] = rise, ["volRatio"] = volRatio, ["quote24"] = quote };
+        if (volRatio < Pump.VolumeMin || volRatio > Pump.VolumeMax)
         {
-            var staleFloor = Math.Max(ready, oldest - maxAge);
-            var stale = oldest > ready ? FindImpulse(candles, atr, p, window, oldest - 1, staleFloor) : -1;
-            if (stale >= 0)
-            {
-                return Detail(
-                    SignalType.NoAction,
-                    $"Impulse setup expired. impulse_index={stale} impulse_age={i - stale} max_age={maxAge} pullback=0 expired=1. No order.",
-                    candles,
-                    i,
-                    snapshot: ImpulseSnapshot(stale, i - stale, pullback: false, expired: true));
-            }
-
-            return Detail(SignalType.NoAction, "No confirmed impulse before this bar.", candles, i);
+            return Detail(SignalType.NoAction, $"Impulse hourly volume is {volRatio:0.0}x the 7-day mean. Needs 3x to 7x; above 7x is a climax.", candles, i, snapshot: snapshot);
         }
 
-        var age = i - impulseAt;
-        var touchedAt = -1;
-        decimal swing = decimal.MaxValue;
-        for (var k = impulseAt + 1; k < i; k++)
+        if (quote < Pump.MinQuoteVolume24h)
         {
-            swing = Math.Min(swing, candles[k].Low);
-            if (touchedAt < 0 && ema[k] is { } line && atr[k] is { } atrK && atrK > 0m && candles[k].Low <= line + (0.25m * atrK))
-            {
-                touchedAt = k;
-            }
-
-            if (touchedAt >= 0 && k > touchedAt && candles[k].Close < candles[touchedAt].Low)
-            {
-                return Detail(
-                    SignalType.NoAction,
-                    $"Impulse setup invalidated after the pullback. impulse_index={impulseAt} impulse_age={age} pullback=1 expired=0. Close broke the pullback low. No order.",
-                    candles,
-                    i,
-                    snapshot: ImpulseSnapshot(impulseAt, age, pullback: true, expired: false));
-            }
+            return Detail(SignalType.NoAction, $"Impulse 24h quote volume {quote:0} is below 3M USDT.", candles, i, snapshot: snapshot);
         }
 
-        var bar = candles[i];
-        if (touchedAt < 0 || emaNow <= 0m || bar.Close <= emaNow || bar.Close <= bar.Open)
+        var days = context.HigherTimeframeCache?.Candles;
+        var d = days is { Count: > 0 } ? AlphaIndicatorSeries.LastCompletedHigherTimeframe(days, bar.CloseTime) : -1;
+        if (days is null || d < Pump.TrendDays || bar.CloseTime - days[d].CloseTime > TimeSpan.FromDays(2) || days[d - Pump.TrendDays].Close <= 0m)
         {
-            return Detail(
-                SignalType.NoAction,
-                $"Impulse is waiting for a pullback after the impulse and a bullish reclaim of EMA. impulse_index={impulseAt} impulse_age={age} pullback={(touchedAt >= 0 ? 1 : 0)} expired=0.",
-                candles,
-                i,
-                snapshot: ImpulseSnapshot(impulseAt, age, touchedAt >= 0, expired: false));
+            return Detail(SignalType.NoAction, "DATA_UNAVAILABLE: Impulse needs 31 completed daily candles for the 30-day trend. No order.", candles, i, snapshot: snapshot);
         }
 
-        if (swing == decimal.MaxValue)
+        var ret30 = (bar.Close / days[d - Pump.TrendDays].Close) - 1m;
+        var high30 = 0m;
+        for (var k = d - Pump.TrendDays + 1; k <= d; k++)
         {
-            return Detail(SignalType.NoAction, "Impulse pullback low is missing.", candles, i, snapshot: ImpulseSnapshot(impulseAt, age, pullback: true, expired: false));
+            high30 = Math.Max(high30, days[k].High);
         }
 
-        var structural = swing - (0.3m * atrNow);
-        var capped = bar.Close - (p.StopAtrMultiplier * atrNow);
-        var stop = structural < bar.Close ? Math.Max(structural, capped) : capped;
-        if (stop >= bar.Close || bar.Close - stop <= 0m)
+        for (var k = i - 1; k >= 0 && candles[k].OpenTime >= days[d].CloseTime; k--)
         {
-            return Detail(SignalType.NoAction, "Impulse stop distance is not valid.", candles, i, snapshot: ImpulseSnapshot(impulseAt, age, pullback: true, expired: false));
+            high30 = Math.Max(high30, candles[k].High);
         }
 
+        snapshot["ret30d"] = ret30;
+        snapshot["high30d"] = high30;
+        if (ret30 < Pump.TrendMin)
+        {
+            return Detail(SignalType.NoAction, $"Impulse coin is up {ret30:P0} in 30 days. Needs +20%.", candles, i, snapshot: snapshot);
+        }
+
+        if (bar.Close > high30)
+        {
+            return Detail(SignalType.NoAction, "Impulse close is above the 30-day high. Fresh breakouts fade more often.", candles, i, snapshot: snapshot);
+        }
+
+        var stop = bar.Close * (1m - (Pump.StopPercent / 100m));
         return Detail(
             SignalType.Buy,
-            $"Impulse reclaim after a pullback to EMA. Long only. impulse_index={impulseAt} impulse_age={age} pullback=1 expired=0.",
+            $"Impulse Catch pump ride. rise24={rise:P1} vol={volRatio:0.0}x ret30d={ret30:P0}. Long, 12% stop, 25% trail from the peak, 4-day cap.",
             candles,
             i,
             stop: stop,
-            snapshot: ImpulseSnapshot(impulseAt, age, pullback: true, expired: false));
+            snapshot: snapshot);
     }
-
-    private static int FindImpulse(
-        IReadOnlyList<MarketCandle> candles,
-        IReadOnlyList<decimal?> atr,
-        StrategyTemplateParams p,
-        int window,
-        int from,
-        int oldest)
-    {
-        for (var k = from; k >= oldest; k--)
-        {
-            if (k - window < 0 || candles[k].Close <= 0m || candles[k - window].Close <= 0m || atr[k] is not { } atrK || atrK <= 0m)
-            {
-                continue;
-            }
-
-            var priorHigh = candles[k - window].Close;
-            for (var j = k - window; j < k; j++)
-            {
-                priorHigh = Math.Max(priorHigh, candles[j].Close);
-            }
-
-            if (candles[k].Close <= priorHigh)
-            {
-                continue;
-            }
-
-            var ret = (candles[k].Close - candles[k - window].Close) / candles[k - window].Close;
-            var atrPct = atrK / candles[k].Close;
-            if (ret <= 0m || ret < p.PriceDisplacementAtr * atrPct)
-            {
-                continue;
-            }
-
-            var volume = PriorMean(candles, k, p.RelativeVolumePeriod, c => c.Volume);
-            if (volume is not { } mean || mean <= 0m || !StrategyExecutionRules.VolumeUsable(candles[k].Volume))
-            {
-                return -2;
-            }
-
-            if (candles[k].Volume < mean * p.MinimumRelativeVolume)
-            {
-                continue;
-            }
-
-            return k;
-        }
-
-        return -1;
-    }
-
-    private static Dictionary<string, decimal?> ImpulseSnapshot(int index, int age, bool pullback, bool expired) =>
-        new()
-        {
-            ["impulseIndex"] = index,
-            ["impulseAge"] = age,
-            ["pullback"] = pullback ? 1m : 0m,
-            ["expired"] = expired ? 1m : 0m
-        };
 
     private static StrategySignalDetail ZigZag(
         StrategyTemplateParams p,

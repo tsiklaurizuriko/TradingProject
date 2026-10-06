@@ -9,30 +9,40 @@ namespace TradingPlatform.UnitTests;
 public sealed class ProtectiveRatchetTests
 {
     [Fact]
-    public void Impulse_keeps_the_original_stop_until_the_trade_is_up_ten_percent()
+    public void Impulse_keeps_the_original_stop_until_the_trade_is_up_twenty_percent()
     {
         var early = ProtectiveRatchet.TryAdvance(
-            StrategyTemplateKeys.ImpulseCatch, PositionSide.Long, 100m, 94m, 200m, 109m, 0.01m);
+            StrategyTemplateKeys.ImpulseCatch, PositionSide.Long, 100m, 88m, 400m, 119m, 0.01m);
         early.Should().BeNull();
     }
 
     [Fact]
-    public void Impulse_trails_eight_percent_under_price_and_keeps_the_twenty_percent_take()
+    public void Impulse_locks_breakeven_at_twenty_percent_and_keeps_the_take()
     {
         var decision = ProtectiveRatchet.TryAdvance(
-            StrategyTemplateKeys.ImpulseCatch, PositionSide.Long, 100m, 94m, 120m, 110m, 0.01m);
+            StrategyTemplateKeys.ImpulseCatch, PositionSide.Long, 100m, 88m, 400m, 120m, 0.01m);
 
         decision.Should().NotBeNull();
         decision!.Value.StopMoved.Should().BeTrue();
-        decision.Value.StopLoss.Should().Be(101.20m);
+        decision.Value.StopLoss.Should().Be(100.20m);
         decision.Value.TakeMoved.Should().BeFalse();
-        decision.Value.TakeProfit.Should().Be(120m);
+        decision.Value.TakeProfit.Should().Be(400m);
+    }
+
+    [Fact]
+    public void Impulse_trails_thirty_percent_under_price_on_a_big_move()
+    {
+        var decision = ProtectiveRatchet.TryAdvance(
+            StrategyTemplateKeys.ImpulseCatch, PositionSide.Long, 100m, 100.20m, 400m, 200m, 0.01m);
+
+        decision.Should().NotBeNull();
+        decision!.Value.StopLoss.Should().Be(140m);
     }
 
     [Fact]
     public void Impulse_does_not_step_the_stop_for_a_small_grind()
     {
-        ProtectiveRatchet.TryAdvance(StrategyTemplateKeys.ImpulseCatch, PositionSide.Long, 100m, 101.20m, 200m, 111m, 0.01m)
+        ProtectiveRatchet.TryAdvance(StrategyTemplateKeys.ImpulseCatch, PositionSide.Long, 100m, 140m, 400m, 201m, 0.01m)
             .Should().BeNull();
     }
 

@@ -96,6 +96,7 @@ internal static class AuditScorecard
         public required List<MarketCandle> Bars;
         public required CausalIndicatorCache Cache;
         public CausalIndicatorCache? Htf;
+        public CausalIndicatorCache? Daily;
         public required List<ReplayFundingSettlement> Settlements;
         public StrategyFuturesSeries? Futures;
         public required long[] OpenTicks;
@@ -480,6 +481,22 @@ internal static class AuditScorecard
         });
     }
 
+    private static List<MarketCandle> Daily(IReadOnlyList<MarketCandle> bars) =>
+        bars.GroupBy(b => new DateTimeOffset(b.OpenTime.UtcDateTime.Date, TimeSpan.Zero))
+            .Select(g => new MarketCandle
+            {
+                OpenTime = g.Key,
+                CloseTime = g.Key.AddDays(1).AddMilliseconds(-1),
+                Open = g.First().Open,
+                High = g.Max(b => b.High),
+                Low = g.Min(b => b.Low),
+                Close = g.Last().Close,
+                Volume = g.Sum(b => b.Volume),
+                IsClosed = true,
+                ExchangeTimestamp = g.Key.AddDays(1).AddMilliseconds(-1)
+            })
+            .ToList();
+
     private static Dataset? Prepare(Context ctx, string symbol, string tf)
     {
         var bars = KlineSeries.Normalize(LoadTf(ctx.CacheDir, symbol, tf), out var duplicates).ToList();
@@ -550,6 +567,7 @@ internal static class AuditScorecard
             Bars = bars,
             Cache = cache,
             Htf = htf,
+            Daily = new CausalIndicatorCache(Daily(bars)),
             Settlements = settlements,
             OpenTicks = bars.Select(b => b.OpenTime.UtcTicks).ToArray(),
             AtrPct = atr,
@@ -624,7 +642,9 @@ internal static class AuditScorecard
             ds.Cache,
             from,
             to,
-            StrategyMarketContext.NeedsHigherTimeframe(plan.Template) ? ds.Htf : null,
+            !StrategyMarketContext.NeedsHigherTimeframe(plan.Template) ? null
+                : StrategyMarketContext.HigherTimeframeFor(plan.Template) == Timeframe.OneDay ? ds.Daily
+                : ds.Htf,
             futures,
             ds.Settlements.Count > 0 ? ds.Settlements : null);
 

@@ -1283,6 +1283,7 @@ public sealed class BotEngine : IBotEngine
 
     private int? SpecialKlineLimit(Bot bot) =>
         TemplateKey(bot) is StrategyTemplateKeys.TsMomentum285 or StrategyTemplateKeys.BtcDailyMax10 ? 500
+        : StrategyTemplateKeys.CanonicalId(TemplateKey(bot)) == StrategyTemplateKeys.ImpulseCatch ? RefactoredStrategyEvaluator.Pump.HistoryBars
         : StrategyTemplateKeys.IsObservation(TemplateKey(bot)) ? ObservationStrategies.HistoryBars
         : null;
 

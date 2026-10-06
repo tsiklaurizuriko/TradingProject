@@ -10,13 +10,14 @@ namespace TradingPlatform.Binance;
 
 public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
 {
-    private readonly record struct KlineCacheKey(string Symbol, string Interval, int Limit);
+    private static readonly TimeSpan StreamBarWait = TimeSpan.FromSeconds(2.5);
+    private static readonly TimeSpan EmptyHold = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan BackgroundWait = TimeSpan.FromSeconds(30);
+
+    /// <summary>Weight background refresh jobs leave for bot cycles on top of <see cref="BinancePublicWeight.SignedReserve"/>.</summary>
+    private const int ForegroundReserve = 400;
 
     private static readonly SemaphoreSlim UniverseLock = new(1, 1);
-    private static readonly object KlineGate = new();
-    private static readonly Dictionary<KlineCacheKey, (IReadOnlyList<MarketCandle> Rows, DateTimeOffset Until)> KlineCache = new();
-    private static readonly object PriceGate = new();
-    private static readonly Dictionary<string, (decimal Price, DateTimeOffset Until)> PriceCache = new(StringComparer.OrdinalIgnoreCase);
     private static IReadOnlyList<RankedUsdtSpotSymbol>? CachedUniverse;
     private static DateTimeOffset CacheUntil;
     private static readonly object FundingGate = new();
@@ -27,53 +28,127 @@ public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
 
     private readonly HttpClient _futures;
     private readonly ILogger<BinancePublicMarketDataClient> _logger;
+    private readonly FuturesKlineStore _klines;
 
     public BinancePublicMarketDataClient(IHttpClientFactory httpFactory, ILogger<BinancePublicMarketDataClient> logger)
+        : this(httpFactory.CreateClient("binance-futures"), logger, FuturesKlineStore.Shared)
     {
-        _futures = httpFactory.CreateClient("binance-futures");
-        _logger = logger;
     }
 
+    internal BinancePublicMarketDataClient(HttpClient futures, ILogger<BinancePublicMarketDataClient> logger, FuturesKlineStore klines)
+    {
+        _futures = futures;
+        _logger = logger;
+        _klines = klines;
+    }
+
+    /// <summary>
+    /// Same rows as one REST call with this limit: the latest <c>limit - 1</c> closed bars.
+    /// Served from the shared store while current; otherwise only the missing tail is requested.
+    /// </summary>
     public async Task<IReadOnlyList<MarketCandle>> GetClosedKlinesAsync(
         string symbol,
         Timeframe timeframe,
         int limit,
         CancellationToken cancellationToken = default)
     {
-        var interval = timeframe.ToBinanceInterval();
-        var key = new KlineCacheKey(symbol.ToUpperInvariant(), interval, limit);
-        lock (KlineGate)
+        var id = symbol.ToUpperInvariant();
+        var need = limit - 1;
+        if (need <= 0 || limit > FuturesKlineStore.MaxRows)
         {
-            if (KlineCache.TryGetValue(key, out var hit) && DateTimeOffset.UtcNow < hit.Until)
-            {
-                return hit.Rows;
-            }
+            return await FetchLatestAsync(id, timeframe, limit, cancellationToken) ?? [];
         }
 
-        var url = $"fapi/v1/klines?symbol={key.Symbol}&interval={interval}&limit={limit}";
-        var payload = await GetJsonOrNullAsync(url, cancellationToken);
+        var store = _klines;
+        store.Demand(id, timeframe, need, DateTimeOffset.UtcNow);
+        if (store.TryLatest(id, timeframe, need, DateTimeOffset.UtcNow, out var hit))
+        {
+            return hit;
+        }
+
+        if (store.ExpectsStreamBar(id, timeframe, DateTimeOffset.UtcNow)
+            && await store.WaitForChangeAsync(id, timeframe, StreamBarWait, cancellationToken)
+            && store.TryLatest(id, timeframe, need, DateTimeOffset.UtcNow, out hit))
+        {
+            return hit;
+        }
+
+        var gate = store.FetchLock(id, timeframe);
+        await gate.WaitAsync(cancellationToken);
+
+        try
+        {
+            if (store.TryLatest(id, timeframe, need, DateTimeOffset.UtcNow, out hit))
+            {
+                return hit;
+            }
+
+            var cover = store.Cover(id, timeframe, DateTimeOffset.UtcNow);
+            if (cover.Count > 0
+                && cover.Missing is > 0 and <= FuturesKlineStore.MaxIncrementalBars
+                && (cover.Count + cover.Missing >= need || cover.FromListing))
+            {
+                var tail = await FetchLatestAsync(id, timeframe, cover.Missing + 2, cancellationToken);
+                if (tail is null)
+                {
+                    return [];
+                }
+
+                if (tail.Count > 0)
+                {
+                    store.Merge(id, timeframe, tail, tail[0].OpenTime, fromListing: false, DateTimeOffset.UtcNow);
+                }
+
+                if (store.TryLatest(id, timeframe, need, DateTimeOffset.UtcNow, out hit))
+                {
+                    return hit;
+                }
+            }
+
+            var candles = await FetchLatestAsync(id, timeframe, limit, cancellationToken);
+            if (candles is null)
+            {
+                return [];
+            }
+
+            if (candles.Count == 0)
+            {
+                store.MarkEmpty(id, timeframe, DateTimeOffset.UtcNow + EmptyHold);
+                return candles;
+            }
+
+            store.Merge(id, timeframe, candles, candles[0].OpenTime, fromListing: candles.Count < need, DateTimeOffset.UtcNow);
+            return candles.Count > need ? candles.GetRange(candles.Count - need, need) : candles;
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    /// <summary>One REST page of the latest bars, with the forming bar dropped. Null when the request was skipped or failed.</summary>
+    private async Task<List<MarketCandle>?> FetchLatestAsync(string symbol, Timeframe timeframe, int limit, CancellationToken cancellationToken)
+    {
+        var interval = timeframe.ToBinanceInterval();
+        var payload = await GetJsonOrNullAsync($"fapi/v1/klines?symbol={symbol}&interval={interval}&limit={limit}", cancellationToken);
         if (payload is null)
         {
-            return [];
+            return null;
         }
 
         var candles = ParseClosedKlines(payload.Value);
-        if (candles.Count > 0)
-        {
-            var until = candles[^1].CloseTime + timeframe.ToDuration();
-            if (until <= DateTimeOffset.UtcNow)
-            {
-                until = DateTimeOffset.UtcNow.AddSeconds(15);
-            }
-
-            lock (KlineGate)
-            {
-                KlineCache[key] = (candles, until);
-            }
-        }
-
         _logger.LogDebug("Loaded {Count} closed USD-M {Interval} candles for {Symbol}", candles.Count, interval, symbol);
         return candles;
+    }
+
+    /// <summary>One closed bar straight from REST, bypassing the store. Used to audit bars built from the stream.</summary>
+    internal async Task<MarketCandle?> FetchClosedBarAsync(string symbol, Timeframe timeframe, DateTimeOffset open, CancellationToken cancellationToken)
+    {
+        var ms = open.ToUnixTimeMilliseconds();
+        var payload = await GetJsonOrNullAsync(
+            $"fapi/v1/klines?symbol={symbol.ToUpperInvariant()}&interval={timeframe.ToBinanceInterval()}&startTime={ms}&endTime={ms}&limit=1",
+            cancellationToken);
+        return payload is null ? null : ParseClosedKlines(payload.Value).FirstOrDefault(row => row.OpenTime == open);
     }
 
     public async Task<IReadOnlyList<MarketCandle>> GetClosedKlinesRangeAsync(
@@ -85,6 +160,88 @@ public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
         CancellationToken cancellationToken = default)
     {
         var cap = Math.Clamp(limit, 50, 250_000);
+        var id = symbol.ToUpperInvariant();
+        var step = timeframe.ToDuration();
+        var now = DateTimeOffset.UtcNow;
+        var rowsBack = (now - start).Ticks / (double)step.Ticks + 2;
+        var live = end >= now - step - step && start < end && rowsBack <= FuturesKlineStore.MaxRows;
+        if (!live)
+        {
+            return await LoadRangeAsync(id, timeframe, start, end, cap, cancellationToken);
+        }
+
+        var store = _klines;
+        store.Demand(id, timeframe, (int)Math.Ceiling(rowsBack), now);
+        if (store.TryRange(id, timeframe, start, end, cap, now, out var hit))
+        {
+            return hit;
+        }
+
+        var gate = store.FetchLock(id, timeframe);
+        await gate.WaitAsync(cancellationToken);
+
+        try
+        {
+            now = DateTimeOffset.UtcNow;
+            if (store.TryRange(id, timeframe, start, end, cap, now, out hit))
+            {
+                return hit;
+            }
+
+            var cover = store.Cover(id, timeframe, now);
+            if (cover.Count > 0
+                && (cover.CoveredFrom <= start || cover.FromListing)
+                && cover.Missing is > 0 and <= FuturesKlineStore.MaxIncrementalBars)
+            {
+                var tail = await FetchLatestAsync(id, timeframe, cover.Missing + 2, cancellationToken);
+                if (tail is { Count: > 0 })
+                {
+                    store.Merge(id, timeframe, tail, tail[0].OpenTime, fromListing: false, DateTimeOffset.UtcNow);
+                }
+
+                if (store.TryRange(id, timeframe, start, end, cap, DateTimeOffset.UtcNow, out hit))
+                {
+                    return hit;
+                }
+            }
+
+            var load = await LoadRangePagesAsync(id, timeframe, start, end, cap, cancellationToken);
+            if (load.Complete && load.Rows.Count > 0)
+            {
+                store.Merge(id, timeframe, load.Rows, start, fromListing: load.Rows[0].OpenTime > start + step, DateTimeOffset.UtcNow);
+            }
+            else if (load.Complete)
+            {
+                store.MarkEmpty(id, timeframe, DateTimeOffset.UtcNow + EmptyHold);
+            }
+
+            return load.Rows;
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private async Task<IReadOnlyList<MarketCandle>> LoadRangeAsync(
+        string symbol,
+        Timeframe timeframe,
+        DateTimeOffset start,
+        DateTimeOffset end,
+        int cap,
+        CancellationToken cancellationToken) =>
+        (await LoadRangePagesAsync(symbol, timeframe, start, end, cap, cancellationToken)).Rows;
+
+    /// <summary>REST pages for [start, end]. Not complete when a page was skipped or failed.</summary>
+    private async Task<(IReadOnlyList<MarketCandle> Rows, bool Complete)> LoadRangePagesAsync(
+        string symbol,
+        Timeframe timeframe,
+        DateTimeOffset start,
+        DateTimeOffset end,
+        int cap,
+        CancellationToken cancellationToken)
+    {
+        var complete = true;
         var interval = timeframe.ToBinanceInterval();
         var candles = new List<MarketCandle>(Math.Min(cap, 1500));
         var cursor = start.ToUnixTimeMilliseconds();
@@ -99,6 +256,7 @@ public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
             var payload = await GetJsonOrNullAsync(url, cancellationToken);
             if (payload is null)
             {
+                complete = false;
                 break;
             }
 
@@ -134,7 +292,7 @@ public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
             quality.Duplicates,
             quality.MissingBars,
             quality.Gaps.Count);
-        return series;
+        return (series, complete);
     }
 
     public Task<IReadOnlyList<TimedValue>> GetOpenInterestHistoryAsync(
@@ -359,12 +517,9 @@ public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
     public async Task<decimal> GetLastPriceAsync(string symbol, CancellationToken cancellationToken = default)
     {
         var id = symbol.ToUpperInvariant();
-        lock (PriceGate)
+        if (FuturesPriceBook.TryGet(id, DateTimeOffset.UtcNow, out var cached))
         {
-            if (PriceCache.TryGetValue(id, out var hit) && DateTimeOffset.UtcNow < hit.Until)
-            {
-                return hit.Price;
-            }
+            return cached;
         }
 
         var url = $"fapi/v1/ticker/price?symbol={id}";
@@ -376,11 +531,7 @@ public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
         }
 
         var price = Dec(payload.Value.GetProperty("price"));
-        lock (PriceGate)
-        {
-            PriceCache[id] = (price, DateTimeOffset.UtcNow.AddSeconds(8));
-        }
-
+        FuturesPriceBook.Set(id, price, DateTimeOffset.UtcNow);
         return price;
     }
 
@@ -393,7 +544,7 @@ public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
         }
 
         var prices = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
-        var until = DateTimeOffset.UtcNow.AddSeconds(8);
+        var now = DateTimeOffset.UtcNow;
         foreach (var item in payload.Value.EnumerateArray())
         {
             var name = item.TryGetProperty("symbol", out var symbolEl) ? symbolEl.GetString() ?? "" : "";
@@ -409,10 +560,7 @@ public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
             }
 
             prices[name] = price;
-            lock (PriceGate)
-            {
-                PriceCache[name.ToUpperInvariant()] = (price, until);
-            }
+            FuturesPriceBook.Set(name, price, now);
         }
 
         return prices;
@@ -677,7 +825,13 @@ public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
     private async Task<JsonElement?> GetJsonOrNullAsync(string url, CancellationToken cancellationToken)
     {
         var weight = BinancePublicWeight.ForRequest(url);
-        if (!await BinancePublicWeightGate.TryAcquireAsync(weight, TimeSpan.FromMilliseconds(500), cancellationToken, BinancePublicWeight.SignedReserve))
+        var background = MarketDataPriority.IsBackground;
+        var acquired = await BinancePublicWeightGate.TryAcquireAsync(
+            weight,
+            background ? BackgroundWait : TimeSpan.FromMilliseconds(500),
+            cancellationToken,
+            BinancePublicWeight.SignedReserve + (background ? ForegroundReserve : 0));
+        if (!acquired)
         {
             ReportSkipped(url);
             return null;

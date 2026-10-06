@@ -25,8 +25,18 @@ public static class StrategyMarketContext
     public static readonly Timeframe HigherTimeframe = Timeframe.OneHour;
     public const int HigherTimeframeWarmupBars = 260;
 
+    /// <summary>Impulse Catch reads a 30-day trend from completed daily candles. Everything else reads 1h.</summary>
+    public static Timeframe HigherTimeframeFor(string? templateKey) =>
+        StrategyTemplateKeys.CanonicalId(templateKey) == StrategyTemplateKeys.ImpulseCatch ? Timeframe.OneDay : HigherTimeframe;
+
+    public static int HigherTimeframeWarmupFor(string? templateKey) =>
+        StrategyTemplateKeys.CanonicalId(templateKey) == StrategyTemplateKeys.ImpulseCatch
+            ? RefactoredStrategyEvaluator.Pump.DailyWarmupBars
+            : HigherTimeframeWarmupBars;
+
     public static bool NeedsHigherTimeframe(string? templateKey) =>
-        StrategyTemplateKeys.CanonicalId(templateKey) is StrategyTemplateKeys.BinHv45
+        StrategyTemplateKeys.CanonicalId(templateKey) is StrategyTemplateKeys.ImpulseCatch
+            or StrategyTemplateKeys.BinHv45
             or StrategyTemplateKeys.ClucMay72018
             or StrategyTemplateKeys.CombinedBinHCluc
             or StrategyTemplateKeys.FlowZone
@@ -64,9 +74,10 @@ public static class StrategyMarketContext
         IReadOnlyList<TimedValue>? funding = null;
         if (NeedsHigherTimeframe(templateKey))
         {
-            var start = first - HigherTimeframe.ToDuration() * HigherTimeframeWarmupBars;
-            var bars = (int)Math.Ceiling((last - start) / HigherTimeframe.ToDuration()) + 2;
-            htf = await market.GetClosedKlinesRangeAsync(symbol, HigherTimeframe, start, last, bars, cancellationToken);
+            var frame = HigherTimeframeFor(templateKey);
+            var start = first - frame.ToDuration() * HigherTimeframeWarmupFor(templateKey);
+            var bars = (int)Math.Ceiling((last - start) / frame.ToDuration()) + 2;
+            htf = await market.GetClosedKlinesRangeAsync(symbol, frame, start, last, bars, cancellationToken);
         }
 
         if (NeedsOpenInterest(templateKey))

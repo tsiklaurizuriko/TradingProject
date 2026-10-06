@@ -144,6 +144,26 @@ if (args.Any(a => string.Equals(a, "--extreme-move-signals", StringComparison.Or
     return await ExtremeMoveSignals.RunAsync(root, candleCacheDir);
 }
 
+if (args.Any(a => string.Equals(a, "--pump-ride-live", StringComparison.OrdinalIgnoreCase)))
+{
+    return PumpRideStudy.RunLive(root, candleCacheDir);
+}
+
+if (args.Any(a => string.Equals(a, "--pump-ride-variants", StringComparison.OrdinalIgnoreCase)))
+{
+    return PumpRideStudy.RunVariants(root, candleCacheDir);
+}
+
+if (args.Any(a => string.Equals(a, "--pump-ride-features", StringComparison.OrdinalIgnoreCase)))
+{
+    return PumpRideStudy.RunFeatures(root, candleCacheDir);
+}
+
+if (args.Any(a => string.Equals(a, "--pump-ride", StringComparison.OrdinalIgnoreCase)))
+{
+    return PumpRideStudy.Run(root, candleCacheDir);
+}
+
 if (args.Any(a => string.Equals(a, "--exhaustion-path", StringComparison.OrdinalIgnoreCase)))
 {
     return ExhaustionPathStudy.Run(root, candleCacheDir);

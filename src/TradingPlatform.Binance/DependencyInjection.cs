@@ -34,6 +34,11 @@ public static class DependencyInjection
             client.Timeout = TimeSpan.FromSeconds(timeout);
         });
         services.TryAddSingleton<IExchangeEventSignal, ExchangeEventSignal>();
+        if (configuration.GetValue("Binance:MarketStream:Enabled", false))
+        {
+            services.AddHostedService<BinanceMarketStreamWorker>();
+        }
+
         if (venue == TradingVenueKind.Shadow)
         {
             return services;
