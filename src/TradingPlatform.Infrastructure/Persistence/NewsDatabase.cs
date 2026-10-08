@@ -47,8 +47,50 @@ public sealed class NewsDatabase
     public Task<bool> SignalExistsAsync(Guid eventId, string symbol, CancellationToken cancellationToken) =>
         _db.NewsTradingSignals.AnyAsync(row => row.StoredNewsEventId == eventId && row.Symbol == symbol, cancellationToken);
 
-    public Task<bool> HasFinalSignalAsync(string dedupKey, CancellationToken cancellationToken) =>
-        _db.NewsTradingSignals.AnyAsync(row => row.StoredNewsEvent != null && row.StoredNewsEvent.DedupKey == dedupKey, cancellationToken);
+    public async Task<bool> HasFinalSignalAsync(string dedupKey, CancellationToken cancellationToken)
+    {
+        var completed = await _db.NewsAnalyses.AsNoTracking()
+            .AnyAsync(row => row.EventDedupKey == dedupKey && (row.Status == "Ok" || row.Status == "NoCoin"), cancellationToken);
+        if (!completed)
+        {
+            return false;
+        }
+
+        return await _db.NewsTradingSignals.AnyAsync(
+            row => row.StoredNewsEvent != null && row.StoredNewsEvent.DedupKey == dedupKey,
+            cancellationToken);
+    }
+
+    public Task<bool> HasCommittedSignalAsync(Guid eventId, string symbol, CancellationToken cancellationToken) =>
+        _db.NewsTradingSignals.AnyAsync(
+            row => row.StoredNewsEventId == eventId
+                && row.Symbol == symbol
+                && (row.BecameTrade || row.Direction == "LONG" || row.Direction == "SHORT" || row.ExchangeOrderId != null),
+            cancellationToken);
+
+    public async Task<IReadOnlyDictionary<string, string>> CompletedAnalysisRawAsync(IReadOnlyCollection<string> dedupKeys, CancellationToken cancellationToken)
+    {
+        if (dedupKeys.Count == 0)
+        {
+            return new Dictionary<string, string>(StringComparer.Ordinal);
+        }
+
+        var rows = await _db.NewsAnalyses.AsNoTracking()
+            .Where(row => dedupKeys.Contains(row.EventDedupKey) && row.Status == "Ok" && row.RawJson != "")
+            .OrderByDescending(row => row.ClassifiedAtUtc)
+            .Select(row => new { row.EventDedupKey, row.RawJson })
+            .ToListAsync(cancellationToken);
+        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var row in rows)
+        {
+            if (!map.ContainsKey(row.EventDedupKey))
+            {
+                map[row.EventDedupKey] = row.RawJson;
+            }
+        }
+
+        return map;
+    }
 
     public async Task<IReadOnlyDictionary<string, DateTimeOffset>> EventCreatedAtAsync(IReadOnlyCollection<string> dedupKeys, CancellationToken cancellationToken)
     {
@@ -72,7 +114,7 @@ public sealed class NewsDatabase
         }
 
         var rows = await _db.NewsAnalyses.AsNoTracking()
-            .Where(row => dedupKeys.Contains(row.EventDedupKey))
+            .Where(row => dedupKeys.Contains(row.EventDedupKey) && row.Status == "Ok")
             .Select(row => row.EventDedupKey)
             .Distinct()
             .ToListAsync(cancellationToken);
@@ -81,12 +123,47 @@ public sealed class NewsDatabase
 
     public async Task AddSignalAsync(NewsTradingSignal signal, CancellationToken cancellationToken)
     {
-        if (await SignalExistsAsync(signal.StoredNewsEventId, signal.Symbol, cancellationToken))
+        var existing = await _db.NewsTradingSignals.FirstOrDefaultAsync(
+            row => row.StoredNewsEventId == signal.StoredNewsEventId && row.Symbol == signal.Symbol,
+            cancellationToken);
+        if (existing is null)
+        {
+            _db.NewsTradingSignals.Add(signal);
+            await _db.SaveChangesAsync(cancellationToken);
+            return;
+        }
+
+        if (existing.BecameTrade || existing.Direction is "LONG" or "SHORT" || !string.IsNullOrWhiteSpace(existing.ExchangeOrderId))
         {
             return;
         }
 
-        _db.NewsTradingSignals.Add(signal);
+        existing.SignalTimeUtc = signal.SignalTimeUtc;
+        existing.Direction = signal.Direction;
+        existing.NewsScore = signal.NewsScore;
+        existing.MarketScore = signal.MarketScore;
+        existing.FinalScore = signal.FinalScore;
+        existing.NewsImpact = signal.NewsImpact;
+        existing.NewsConfidence = signal.NewsConfidence;
+        existing.Relevance = signal.Relevance;
+        existing.StrategyName = signal.StrategyName;
+        existing.Reason = signal.Reason;
+        existing.MarketDetail = signal.MarketDetail;
+        existing.RiskDecision = signal.RiskDecision;
+        existing.RiskReason = signal.RiskReason;
+        existing.EntryPrice = signal.EntryPrice;
+        existing.Quantity = signal.Quantity;
+        existing.Notional = signal.Notional;
+        existing.Leverage = signal.Leverage;
+        existing.Margin = signal.Margin;
+        existing.StopLossPrice = signal.StopLossPrice;
+        existing.TakeProfitPrice = signal.TakeProfitPrice;
+        existing.OrderClientId = signal.OrderClientId;
+        existing.OrderId = signal.OrderId;
+        existing.OrderDecision = signal.OrderDecision;
+        existing.ExchangeOrderId = signal.ExchangeOrderId;
+        existing.BecameTrade = signal.BecameTrade;
+        existing.UpdatedAt = DateTimeOffset.UtcNow;
         await _db.SaveChangesAsync(cancellationToken);
     }
 

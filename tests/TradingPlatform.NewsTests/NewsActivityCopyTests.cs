@@ -21,13 +21,13 @@ public sealed class NewsActivityCopyTests
     }
 
     [Fact]
-    public void Old_stored_news_is_not_sent_to_the_model()
+    public void Fresh_news_is_sent_even_when_it_was_stored_before_this_cycle()
     {
         var cycle = new DateTimeOffset(2026, 10, 6, 12, 0, 0, TimeSpan.Zero);
-        NewsAiGate.ShouldAnalyze(cycle.AddMinutes(-10), cycle, 60, cycle.AddMinutes(-30), cycle, alreadyAnalyzed: false).Should().BeFalse();
-        NewsAiGate.ShouldAnalyze(cycle.AddHours(-3), cycle, 60, cycle, cycle, alreadyAnalyzed: false).Should().BeFalse();
-        NewsAiGate.ShouldAnalyze(cycle.AddMinutes(-5), cycle, 60, cycle.AddSeconds(1), cycle, alreadyAnalyzed: false).Should().BeTrue();
-        NewsAiGate.ShouldAnalyze(cycle.AddMinutes(-5), cycle, 60, cycle.AddSeconds(1), cycle, alreadyAnalyzed: true).Should().BeFalse();
+        NewsAiGate.ShouldAnalyze(cycle.AddMinutes(-10), cycle, 60, alreadyAnalyzed: false).Should().BeTrue();
+        NewsAiGate.ShouldAnalyze(cycle.AddHours(-3), cycle, 60, alreadyAnalyzed: false).Should().BeFalse();
+        NewsAiGate.ShouldAnalyze(cycle.AddMinutes(-5), cycle, 60, alreadyAnalyzed: false).Should().BeTrue();
+        NewsAiGate.ShouldAnalyze(cycle.AddMinutes(-5), cycle, 60, alreadyAnalyzed: true).Should().BeFalse();
     }
 
     [Fact]

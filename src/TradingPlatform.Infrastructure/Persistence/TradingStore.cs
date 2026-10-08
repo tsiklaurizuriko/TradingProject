@@ -245,6 +245,20 @@ public sealed class TradingStore : ITradingStore
             ?? books.First();
     }
 
+    public async Task<RiskProfile> GetNewsRiskAsync(CancellationToken cancellationToken = default)
+    {
+        await SystemRiskCatalog.EnsureAsync(_db, cancellationToken);
+        var book = await _db.RiskProfiles.FirstOrDefaultAsync(
+            row => row.Name == NewsRiskBook.Name && row.DeletedAt == null,
+            cancellationToken);
+        if (book is null)
+        {
+            throw new DomainException(ErrorCodes.ValidationFailed, "The NEWS risk book is missing.");
+        }
+
+        return book;
+    }
+
     public Task<RiskProfile?> GetRiskProfileByIdAsync(Guid riskProfileId, CancellationToken cancellationToken = default) =>
         _db.RiskProfiles.FirstOrDefaultAsync(r => r.Id == riskProfileId, cancellationToken);
 

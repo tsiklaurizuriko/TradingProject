@@ -71,21 +71,21 @@ public static class RefactoredStrategyEvaluator
     }
 
     /// <summary>
-    /// Impulse Catch v3, pump ride. Research: docs/PUMP_RIDE_VARIANTS.md and docs/PUMP_RIDE_LIVE.md.
-    /// Enters the first closed 15m bar that lifts price 16-26% above its 24h low on 3-7x hourly volume,
-    /// only on a coin already up 20% in 30 days and not above its 30-day high. Rides with a 25% trail
-    /// below the peak high, 12% exchange stop, 4-day cap. No take profit, so the 20-100% moves stay open.
+    /// Impulse Catch, pump ride. The entry is only the first closed 15m bar whose close is at least 16%
+    /// above the 24h low, including a bar that jumps past 26% in one print. Later bars of that same cross
+    /// are not entries. Hourly volume above 7x the prior 7-day average, and a close above the prior 30-day
+    /// high, are skips. The coin must already be up 20% in 30 days, the bar must be green and close in its
+    /// upper half, and 24h turnover must be at least 3M USDT. Rides with a 25% trail below the peak high,
+    /// 12% exchange stop, 4-day cap. No take profit.
     /// </summary>
     public static class Pump
     {
         public const int RiseBars = 96;
         public const decimal RiseMin = 0.16m;
-        public const decimal RiseMax = 0.26m;
+        public const decimal MinQuoteVolume24h = 3_000_000m;
         public const int VolumeBars = 4;
         public const int VolumeBaselineBars = 672;
-        public const decimal VolumeMin = 3m;
-        public const decimal VolumeMax = 7m;
-        public const decimal MinQuoteVolume24h = 3_000_000m;
+        public const decimal VolumeClimax = 7m;
         public const int TrendDays = 30;
         public const decimal TrendMin = 0.20m;
         public const decimal Trail = 0.25m;
@@ -146,17 +146,20 @@ public static class RefactoredStrategyEvaluator
         }
 
         var low = MinLow(candles, i, Pump.RiseBars);
-        var prevLow = MinLow(candles, i - 1, Pump.RiseBars);
-        if (low <= 0m || prevLow <= 0m || bar.Close <= 0m)
+        if (low <= 0m || bar.Close <= 0m)
         {
             return Detail(SignalType.NoAction, "Impulse price data is not usable.", candles, i);
         }
 
         var rise = (bar.Close / low) - 1m;
-        var prevRise = (candles[i - 1].Close / prevLow) - 1m;
-        if (rise < Pump.RiseMin || prevRise >= Pump.RiseMin || rise > Pump.RiseMax)
+        if (rise < Pump.RiseMin || !FirstPumpCross(candles, i))
         {
-            return Detail(SignalType.NoAction, $"No first cross of +16% above the 24h low. rise24={rise:P1}.", candles, i, snapshot: new Dictionary<string, decimal?> { ["rise24"] = rise });
+            return Detail(
+                SignalType.NoAction,
+                $"No first cross of +16% above the 24h low. rise24={rise:P1}.",
+                candles,
+                i,
+                snapshot: new Dictionary<string, decimal?> { ["rise24"] = rise });
         }
 
         if (bar.Close <= bar.Open || (bar.High > bar.Low && (bar.Close - bar.Low) / (bar.High - bar.Low) < 0.5m))
@@ -164,35 +167,18 @@ public static class RefactoredStrategyEvaluator
             return Detail(SignalType.NoAction, "Impulse bar is not green with a close in its upper half.", candles, i);
         }
 
-        decimal hour = 0m, baseline = 0m, quote = 0m;
-        for (var k = i - Pump.VolumeBars + 1; k <= i; k++)
+        if (!StrategyExecutionRules.VolumeUsable(bar.Volume))
         {
-            hour += candles[k].Volume;
+            return Detail(SignalType.NoAction, "Impulse volume is missing or not usable. No order.", candles, i);
         }
 
-        for (var k = i - Pump.VolumeBars - Pump.VolumeBaselineBars + 1; k <= i - Pump.VolumeBars; k++)
-        {
-            baseline += candles[k].Volume;
-        }
-
+        decimal quote = 0m;
         for (var k = i - Pump.RiseBars + 1; k <= i; k++)
         {
             quote += candles[k].Volume * candles[k].Close;
         }
 
-        var hourlyMean = baseline / Pump.VolumeBaselineBars * Pump.VolumeBars;
-        if (hourlyMean <= 0m || !StrategyExecutionRules.VolumeUsable(bar.Volume))
-        {
-            return Detail(SignalType.NoAction, "Impulse volume is missing or not usable. No order.", candles, i);
-        }
-
-        var volRatio = hour / hourlyMean;
-        var snapshot = new Dictionary<string, decimal?> { ["rise24"] = rise, ["volRatio"] = volRatio, ["quote24"] = quote };
-        if (volRatio < Pump.VolumeMin || volRatio > Pump.VolumeMax)
-        {
-            return Detail(SignalType.NoAction, $"Impulse hourly volume is {volRatio:0.0}x the 7-day mean. Needs 3x to 7x; above 7x is a climax.", candles, i, snapshot: snapshot);
-        }
-
+        var snapshot = new Dictionary<string, decimal?> { ["rise24"] = rise, ["quote24"] = quote };
         if (quote < Pump.MinQuoteVolume24h)
         {
             return Detail(SignalType.NoAction, $"Impulse 24h quote volume {quote:0} is below 3M USDT.", candles, i, snapshot: snapshot);
@@ -206,37 +192,85 @@ public static class RefactoredStrategyEvaluator
         }
 
         var ret30 = (bar.Close / days[d - Pump.TrendDays].Close) - 1m;
-        var high30 = 0m;
-        for (var k = d - Pump.TrendDays + 1; k <= d; k++)
-        {
-            high30 = Math.Max(high30, days[k].High);
-        }
-
-        for (var k = i - 1; k >= 0 && candles[k].OpenTime >= days[d].CloseTime; k--)
-        {
-            high30 = Math.Max(high30, candles[k].High);
-        }
-
         snapshot["ret30d"] = ret30;
-        snapshot["high30d"] = high30;
         if (ret30 < Pump.TrendMin)
         {
             return Detail(SignalType.NoAction, $"Impulse coin is up {ret30:P0} in 30 days. Needs +20%.", candles, i, snapshot: snapshot);
         }
 
-        if (bar.Close > high30)
+        var volRatio = HourlyVolumeRatio(candles, i);
+        snapshot["volRatio"] = volRatio;
+        if (volRatio > Pump.VolumeClimax)
         {
-            return Detail(SignalType.NoAction, "Impulse close is above the 30-day high. Fresh breakouts fade more often.", candles, i, snapshot: snapshot);
+            return Detail(SignalType.NoAction, $"Impulse hourly volume is {volRatio:0.00}x the 7-day average. Climax above 7x is skipped.", candles, i, snapshot: snapshot);
+        }
+
+        var priorHigh = PriorThirtyDayHigh(candles, days, d, i);
+        snapshot["priorHigh30"] = priorHigh;
+        if (priorHigh > 0m && bar.Close > priorHigh)
+        {
+            return Detail(SignalType.NoAction, $"Impulse close {bar.Close} is above the prior 30-day high {priorHigh}. Fresh breakout is skipped.", candles, i, snapshot: snapshot);
         }
 
         var stop = bar.Close * (1m - (Pump.StopPercent / 100m));
         return Detail(
             SignalType.Buy,
-            $"Impulse Catch pump ride. rise24={rise:P1} vol={volRatio:0.0}x ret30d={ret30:P0}. Long, 12% stop, 25% trail from the peak, 4-day cap.",
+            $"Impulse Catch pump ride. rise24={rise:P1} ret30d={ret30:P0} vol={volRatio:0.00}x. Long, 12% stop, 25% trail from the peak, 4-day cap.",
             candles,
             i,
             stop: stop,
             snapshot: snapshot);
+    }
+
+    /// <summary>True only when the previous closed bar was still under +16% above its own 24h low.</summary>
+    private static bool FirstPumpCross(IReadOnlyList<MarketCandle> candles, int i)
+    {
+        if (i <= 0)
+        {
+            return true;
+        }
+
+        var prevLow = MinLow(candles, i - 1, Pump.RiseBars);
+        var prevClose = candles[i - 1].Close;
+        return prevLow <= 0m || prevClose <= 0m || (prevClose / prevLow) - 1m < Pump.RiseMin;
+    }
+
+    /// <summary>Last 4 closed bars versus the mean of the prior 672 bars, scaled to 4 bars. Matches the pump-ride study.</summary>
+    private static decimal HourlyVolumeRatio(IReadOnlyList<MarketCandle> candles, int i)
+    {
+        decimal hour = 0m;
+        for (var k = i - Pump.VolumeBars + 1; k <= i; k++)
+        {
+            hour += candles[k].Volume;
+        }
+
+        decimal baseline = 0m;
+        var start = i - Pump.VolumeBars + 1 - Pump.VolumeBaselineBars;
+        for (var k = start; k < start + Pump.VolumeBaselineBars; k++)
+        {
+            baseline += candles[k].Volume;
+        }
+
+        var mean = baseline / Pump.VolumeBaselineBars * Pump.VolumeBars;
+        return mean > 0m ? hour / mean : 0m;
+    }
+
+    /// <summary>Highest daily high of the last 30 completed days, plus 15m highs since that daily close, excluding the signal bar.</summary>
+    private static decimal PriorThirtyDayHigh(IReadOnlyList<MarketCandle> candles, IReadOnlyList<MarketCandle> days, int d, int i)
+    {
+        var high = 0m;
+        for (var k = d - (Pump.TrendDays - 1); k <= d; k++)
+        {
+            high = Math.Max(high, days[k].High);
+        }
+
+        var dailyClose = days[d].CloseTime;
+        for (var k = i - 1; k >= 0 && candles[k].OpenTime > dailyClose; k--)
+        {
+            high = Math.Max(high, candles[k].High);
+        }
+
+        return high;
     }
 
     private static StrategySignalDetail ZigZag(

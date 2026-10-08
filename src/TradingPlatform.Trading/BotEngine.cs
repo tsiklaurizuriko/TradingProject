@@ -2058,11 +2058,15 @@ public sealed class BotEngine : IBotEngine
 
         var ticker = await BookTickerAsync(bot.Symbol, cancellationToken);
         var spreadBps = EntryMarketGuard.SpreadBps(ticker?.Bid, ticker?.Ask);
+        // Impulse Catch and Shock Fade enter on the expansion bar. A 5x range is that signal, so the shared shock cap does not apply.
+        var rangeShockLimit = StrategyTemplateKeys.SkipsEntryRangeShock(definition.Template)
+            ? 0m
+            : _options.MaxEntryRangeShock;
         var marketBlock = EntryMarketGuard.Reject(
             spreadBps,
             EntryMarketGuard.RangeShock(candles.Select(bar => new EntryBar(bar.High, bar.Low, bar.Close)).ToList()),
             _options.MaxEntrySpreadBps,
-            _options.MaxEntryRangeShock,
+            rangeShockLimit,
             requireBook: bot.Mode == TradingMode.Live);
         if (marketBlock is not null)
         {
@@ -2086,6 +2090,20 @@ public sealed class BotEngine : IBotEngine
         }
 
         snapshot = snapshot with { Sizing = sizingHints };
+        var takerFeePercent = sizingHints.TakerFeePercent > 0m
+            ? sizingHints.TakerFeePercent
+            : RiskEngine.DefaultTakerFeePercent;
+        var costBlock = EntryMarketGuard.RejectRoundTrip(
+            profile.TakeProfitPercent,
+            takerFeePercent,
+            spreadBps,
+            RiskEngine.DefaultSlippagePercent * 2m);
+        if (costBlock is not null)
+        {
+            bot.LastError = nearMiss ? $"{NearMissGate.RejectLabel(costBlock)} {costBlock}" : costBlock;
+            return;
+        }
+
         var risk = _risk.Evaluate(signalType, profile, snapshot, now);
         if (risk.Decision != RiskDecision.Approved)
         {

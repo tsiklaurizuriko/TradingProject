@@ -19,6 +19,7 @@ public sealed class NewsAssetCatalog
     [
         ("BITCOIN", "BTC"),
         ("ETHEREUM", "ETH"),
+        ("ETHER", "ETH"),
         ("SOLANA", "SOL"),
         ("RIPPLE", "XRP"),
         ("DOGECOIN", "DOGE"),
@@ -185,6 +186,9 @@ public sealed class NewsAssetCatalog
         item.PrimaryAsset = links.FirstOrDefault(link => link.IsPrimary)?.BaseAsset;
         item.MarketScope = links.Count > 1 ? MarketScope.MultiAsset : MarketScope.Asset;
     }
+
+    public static bool NamesListedCoin(NewsEvent item) =>
+        item.AffectedAssets.Any(asset => !string.IsNullOrWhiteSpace(asset.Symbol));
 
     public static double Relevance(NewsEvent item, string baseAsset)
     {

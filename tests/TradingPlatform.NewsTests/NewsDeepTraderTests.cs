@@ -47,7 +47,7 @@ public sealed class NewsDeepTraderTests
         item.PublishedAtUtc.Should().Be(Start);
         item.ClassifiedAtUtc.Should().Be(clock);
         item.AiModel.Should().Be("fast");
-        item.PromptVersion.Should().Be("news-deep-v1");
+        item.PromptVersion.Should().Be("news-deep-v2");
         item.AnalysisStatus.Should().Be("Ok");
         item.PrimaryAsset.Should().Be("SOL");
     }
@@ -137,7 +137,10 @@ public sealed class NewsDeepTraderTests
         options.Ai.StrongModel = options.Ai.FastModel;
         await new DeepNewsAnalyzer(options, model).AnalyzeAsync(item, Catalog(), CancellationToken.None);
         item.AnalysisStatus.Should().Be("Invalid");
-        Decide(item).RejectionCode.Should().Be(NewsRejection.InvalidAiResponse);
+        item.Reason.Should().Contain("signal");
+        var decision = Decide(item);
+        decision.RejectionCode.Should().Be(NewsRejection.InvalidAiResponse);
+        NewsRejection.IsRetryable(decision.RejectionCode).Should().BeTrue();
     }
 
     [Fact]
@@ -175,6 +178,28 @@ public sealed class NewsDeepTraderTests
         broken.Should().Contain("JSON");
         NewsAnalysisParser.ParseHorizon("1h").Should().Be(60);
         NewsAnalysisParser.ParseHorizon("4h").Should().Be(240);
+        NewsAnalysisParser.ParseHorizon("1-4 hours").Should().Be(240);
+        NewsAnalysisParser.ParseHorizon("within 24 hours").Should().Be(1440);
+        NewsAnalysisParser.ParseHorizon("about 2 hours").Should().Be(120);
+        NewsAnalysisParser.ParseHorizon("15-30 minutes").Should().Be(30);
+        NewsAnalysisParser.ParseHorizon("intraday").Should().Be(240);
+        NewsAnalysisParser.ParseHorizon("30m").Should().Be(30);
+        NewsAnalysisParser.ParseHorizon("no idea").Should().Be(0);
+    }
+
+    [Fact]
+    public void News_that_names_no_listed_coin_is_not_a_model_failure()
+    {
+        var item = EventArticle();
+        item.AnalysisStatus = "NoCoin";
+        item.AnalysisError = "This news is not about a Binance coin. It was not sent to the model.";
+        var decision = Decide(item);
+        decision.Signal.Should().Be(NewsMarketSignals.NoTrade);
+        decision.RejectionCode.Should().Be(NewsRejection.UnknownAsset);
+        decision.Reason.Should().Contain("not about a Binance coin");
+        NewsRejection.IsRetryable(decision.RejectionCode).Should().BeFalse();
+        NewsActivityCopy.Why("NO_TRADE", decision.RejectionCode, null, "NotSent")
+            .Should().Be("This news is not about a Binance coin. No order was sent.");
     }
 
     [Fact]
@@ -304,7 +329,8 @@ public sealed class NewsDeepTraderTests
     {
         var item = EventArticle();
         var (system, user) = NewsAnalysisPrompt.Build(item, AiOptions(), ["SOLUSDT", "BTCUSDT"]);
-        system.Should().Contain("news-deep-v1");
+        system.Should().Contain("news-deep-v2");
+        system.Should().Contain("30m");
         system.Should().Contain("shouldConsiderTrading");
         user.Should().Contain("Solana ETF approved");
         user.Should().Contain("SOLUSDT");
@@ -423,7 +449,7 @@ public sealed class NewsDeepTraderTests
     private static NewsOptions AiOptions() => new()
     {
         Enabled = true,
-        Ai = new NewsAiOptions { Enabled = true, ApiKey = "test-key", PromptVersion = "news-deep-v1" }
+        Ai = new NewsAiOptions { Enabled = true, ApiKey = "test-key", PromptVersion = "news-deep-v2" }
     };
 
     private static NewsEvent EventArticle() =>

@@ -422,6 +422,7 @@ public static class NewsMarketConfirmation
 public sealed class NewsLiveReport
 {
     public bool Enabled { get; set; }
+    public bool SessionRunning { get; set; }
     public int UniverseCount { get; set; }
     public int Events { get; set; }
     public List<string> Errors { get; set; } = [];
@@ -502,7 +503,7 @@ public static class NewsLiveAnalyzer
 
         await File.WriteAllTextAsync(path, JsonSerializer.Serialize(records, new JsonSerializerOptions { WriteIndented = true }), cancellationToken);
         var text = new StringBuilder();
-        text.AppendLine("LIVE=OFF");
+        text.AppendLine(report.SessionRunning ? "LIVE=ON" : "LIVE=OFF");
         text.AppendLine("Universe=" + report.UniverseCount);
         text.AppendLine("Events=" + report.Events);
         text.AppendLine("Decisions=" + report.Decisions.Count);

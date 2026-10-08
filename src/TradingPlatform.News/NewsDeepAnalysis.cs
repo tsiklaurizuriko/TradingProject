@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace TradingPlatform.News;
 
@@ -29,7 +30,7 @@ public static class NewsRejection
     public const string LowImpact = "LOW_IMPACT";
 
     public static bool IsRetryable(string? code) =>
-        code is AiAnalysisFailed or InsufficientMarketData or StaleMarketData;
+        code is AiAnalysisFailed or InvalidAiResponse or InsufficientMarketData or StaleMarketData;
 
     public static string FromRisk(string? reason)
     {
@@ -160,14 +161,15 @@ public sealed record NewsDeepAnalysis
     public string RawJson { get; init; } = string.Empty;
     public bool UsedStrongModel { get; init; }
 
-    public static NewsDeepAnalysis Failed(string status, string error, string provider, string model, string promptVersion) =>
+    public static NewsDeepAnalysis Failed(string status, string error, string provider, string model, string promptVersion, string? rawJson = null) =>
         new()
         {
             Status = status,
             Error = error,
             Provider = provider,
             Model = model,
-            PromptVersion = promptVersion
+            PromptVersion = promptVersion,
+            RawJson = rawJson ?? string.Empty
         };
 }
 
@@ -191,8 +193,9 @@ public static class NewsAnalysisPrompt
         system.AppendLine("Scores are integers from 0 to 100. alreadyPricedIn is high when the article says the move has already happened.");
         system.AppendLine("Return one JSON object and nothing else, with this shape:");
         system.AppendLine("""
-            {"eventType":"","verificationStatus":"","sourceReliability":0,"overallConfidence":0,"impact":0,"novelty":0,"alreadyPricedIn":0,"expectedHorizon":"","marketMechanism":"","affectedAssets":[{"symbol":"","role":"PRIMARY|SECONDARY|MARKET_WIDE","direction":"LONG|SHORT|NEUTRAL|UNCERTAIN","impact":0,"confidence":0,"reason":""}],"riskFlags":[],"shouldConsiderTrading":false}
+            {"eventType":"","verificationStatus":"","sourceReliability":0,"overallConfidence":0,"impact":0,"novelty":0,"alreadyPricedIn":0,"expectedHorizon":"4h","marketMechanism":"","affectedAssets":[{"symbol":"","role":"PRIMARY|SECONDARY|MARKET_WIDE","direction":"LONG|SHORT|NEUTRAL|UNCERTAIN","impact":0,"confidence":0,"reason":""}],"riskFlags":[],"shouldConsiderTrading":false}
             """);
+        system.AppendLine("expectedHorizon is how long the effect should still matter. Write a duration such as 30m, 4h, or 2d.");
         system.AppendLine("eventType is one of: listing, delisting, hack, exploit, security incident, regulatory, etf, institutional adoption, partnership, acquisition, protocol upgrade, mainnet, token unlock, tokenomics, governance, funding, financing, exchange announcement, legal, macro, market structure, liquidation, bankruptcy, product launch, major integration, staking, chain outage, bridge incident, stablecoin event, other.");
         system.AppendLine("verificationStatus is confirmed, official, verified, rumor, speculative, or unverified.");
         system.AppendLine("Prefer official sources, Binance announcements, regulators, and project foundations over aggregators and social posts.");
@@ -310,10 +313,17 @@ public static class NewsAnalysisParser
                 parsedType = NewsEventType.Other;
             }
 
-            var minutes = ParseHorizon(horizon.GetString() ?? string.Empty);
+            var horizonText = horizon.GetString() ?? string.Empty;
+            var minutes = ParseHorizon(horizonText);
             if (minutes <= 0)
             {
-                error = "Classifier horizon was not recognized.";
+                var shown = horizonText.Replace('\r', ' ').Replace('\n', ' ').Trim();
+                if (shown.Length > 80)
+                {
+                    shown = shown[..80];
+                }
+
+                error = "Classifier horizon was not recognized: \"" + shown + "\".";
                 return false;
             }
 
@@ -427,47 +437,110 @@ public static class NewsAnalysisParser
         return allowed.FirstOrDefault(symbol => string.Equals(symbol, withQuote, StringComparison.OrdinalIgnoreCase)) ?? string.Empty;
     }
 
+    private static readonly Regex HorizonDuration = new(
+        @"(?<a>\d+(?:\.\d+)?)(?:\s*-\s*(?<b>\d+(?:\.\d+)?))?\s*(?<unit>weeks|week|minutes|minute|mins|min|hours|hour|hrs|hr|days|day|m|h|d|w)\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
     public static int ParseHorizon(string text)
     {
-        var value = text.Trim().ToLowerInvariant();
-        if (value is "minutes" or "minute")
-        {
-            return 30;
-        }
-
-        if (value is "hours" or "hour")
-        {
-            return 240;
-        }
-
-        if (value is "days" or "day")
-        {
-            return 1440;
-        }
-
-        var digits = new string(value.TakeWhile(ch => char.IsDigit(ch) || ch == '.').ToArray());
-        if (!double.TryParse(digits, NumberStyles.Float, CultureInfo.InvariantCulture, out var count) || count <= 0)
+        var value = text.Trim().ToLowerInvariant().Trim('"', '\'', '`');
+        if (value.Length == 0)
         {
             return 0;
         }
 
-        var unit = value[digits.Length..].Trim();
-        if (unit is "m" or "min" or "mins" or "minute" or "minutes")
+        var bare = value switch
         {
-            return (int)Math.Round(count);
+            "minute" or "minutes" or "immediate" or "now" => 30,
+            "hour" or "hours" or "intraday" or "session" => 240,
+            "day" or "days" or "today" => 1440,
+            "week" or "weeks" => 10080,
+            _ => 0
+        };
+        if (bare > 0)
+        {
+            return bare;
         }
 
-        if (unit is "h" or "hr" or "hrs" or "hour" or "hours")
+        var match = HorizonDuration.Match(value);
+        if (match.Success
+            && double.TryParse(match.Groups[match.Groups["b"].Success ? "b" : "a"].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var count))
         {
-            return (int)Math.Round(count * 60);
+            var minutes = UnitMinutes(match.Groups["unit"].Value, count);
+            if (minutes > 0)
+            {
+                return minutes;
+            }
         }
 
-        if (unit is "d" or "day" or "days")
+        if (value.Contains("intraday", StringComparison.Ordinal)
+            || value.Contains("same day", StringComparison.Ordinal)
+            || value.Contains("same-day", StringComparison.Ordinal)
+            || value.Contains("short-term", StringComparison.Ordinal)
+            || value.Contains("short term", StringComparison.Ordinal)
+            || value.Contains("near-term", StringComparison.Ordinal)
+            || value.Contains("near term", StringComparison.Ordinal)
+            || value.Contains("few hours", StringComparison.Ordinal)
+            || value.Contains("several hours", StringComparison.Ordinal))
         {
-            return (int)Math.Round(count * 1440);
+            return 240;
+        }
+
+        if (value.Contains("long-term", StringComparison.Ordinal)
+            || value.Contains("long term", StringComparison.Ordinal)
+            || value.Contains("week", StringComparison.Ordinal))
+        {
+            return 10080;
+        }
+
+        if (value.Contains("medium-term", StringComparison.Ordinal)
+            || value.Contains("medium term", StringComparison.Ordinal)
+            || value.Contains("few days", StringComparison.Ordinal)
+            || value.Contains("several days", StringComparison.Ordinal)
+            || value.Contains("today", StringComparison.Ordinal))
+        {
+            return 1440;
+        }
+
+        if (value.Contains("minute", StringComparison.Ordinal))
+        {
+            return 30;
+        }
+
+        if (value.Contains("hour", StringComparison.Ordinal))
+        {
+            return 240;
+        }
+
+        if (value.Contains("day", StringComparison.Ordinal))
+        {
+            return 1440;
         }
 
         return 0;
+    }
+
+    private static int UnitMinutes(string unit, double count)
+    {
+        if (count <= 0)
+        {
+            return 0;
+        }
+
+        var minutes = unit.ToLowerInvariant() switch
+        {
+            "m" or "min" or "mins" or "minute" or "minutes" => count,
+            "h" or "hr" or "hrs" or "hour" or "hours" => count * 60d,
+            "d" or "day" or "days" => count * 1440d,
+            "w" or "week" or "weeks" => count * 10080d,
+            _ => 0d
+        };
+        if (minutes is <= 0 or > 100000)
+        {
+            return 0;
+        }
+
+        return (int)Math.Round(minutes);
     }
 
     private static bool Score(JsonElement root, string name, out int value)

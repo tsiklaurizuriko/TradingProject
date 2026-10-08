@@ -79,6 +79,47 @@ public static class EntryMarketGuard
     public static decimal SlippagePercent(decimal? spreadBps, decimal floorPercent) =>
         spreadBps is { } spread ? Math.Max(floorPercent, spread / 2m / 100m) : floorPercent;
 
+    /// <summary>
+    /// Planned take profit must be at least this many times the market round trip.
+    /// Matches <c>StrategyExecutionRules.MinGrossToCostMultiple</c>.
+    /// </summary>
+    public const decimal MinTakeProfitMultiple = 3m;
+
+    /// <summary>
+    /// Percent of notional paid to enter and exit with market orders: the taker fee on each side,
+    /// plus the full spread (buy the ask, sell the bid). A missing book uses <paramref name="unknownSpreadPercent"/>
+    /// instead of a zero spread. Leverage does not change this figure; the target and the cost are both fractions of notional.
+    /// </summary>
+    public static decimal RoundTripCostPercent(decimal takerFeePercent, decimal? spreadBps, decimal unknownSpreadPercent)
+    {
+        var fee = takerFeePercent > 0m ? takerFeePercent : 0m;
+        var spread = spreadBps is { } bps
+            ? (bps > 0m ? bps / 100m : 0m)
+            : Math.Max(0m, unknownSpreadPercent);
+        return fee * 2m + spread;
+    }
+
+    /// <summary>Null when the planned take profit covers the market round trip. Otherwise the entry must be skipped.</summary>
+    public static string? RejectRoundTrip(
+        decimal takeProfitPercent,
+        decimal takerFeePercent,
+        decimal? spreadBps,
+        decimal unknownSpreadPercent)
+    {
+        if (takeProfitPercent <= 0m)
+        {
+            return "Take profit is missing. Entry skipped.";
+        }
+
+        var cost = RoundTripCostPercent(takerFeePercent, spreadBps, unknownSpreadPercent);
+        if (cost <= 0m || takeProfitPercent + 0.0000001m >= cost * MinTakeProfitMultiple)
+        {
+            return null;
+        }
+
+        return $"Take profit {takeProfitPercent:0.00}% does not cover {MinTakeProfitMultiple:0.#}× the round-trip cost of {cost:0.00}% (taker fee both sides and the spread). Entry skipped.";
+    }
+
     private static decimal TrueRange(EntryBar bar, decimal previousClose) =>
         Math.Max(bar.High - bar.Low, Math.Max(Math.Abs(bar.High - previousClose), Math.Abs(bar.Low - previousClose)));
 }

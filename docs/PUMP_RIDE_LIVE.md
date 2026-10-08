@@ -1,7 +1,8 @@
 # Pump ride, live definition
 
-30-day return = 15m close / close of the completed UTC day 30 days before the last completed day. 30-day high = highest high of the last 30 completed days and of today's earlier 15m bars.
-Trigger as in the variants file; filters trend30 + noClimax + notFresh. Exchange stop 12%, trail 25% below the peak high on closed bars, 4-day cap.
+Live entry is only the first closed 15m bar at least 16% above the 24h low, including a bar that jumps past 26% in one print. Later bars of that same cross are not entries. The bar is green and closes in its upper half, 24h turnover is at least 3M USDT, and the coin is already up 20% over 30 days. Hourly volume above 7x the prior 7-day average, and a close above the prior 30-day high, are skips. A wide entry bar is still an entry: the shared 5x range-shock cap does not apply. Exchange stop 12%, trail 25% below the peak high on closed bars, 4-day cap. No 26% rise cap.
+
+The tables below measured that book with the rise also capped at 26%. Live entry leaves the cap off. A replay of the uncapped live book on the same cache (510 coins, through 2026-09-30): all trades mean +1.04%, PF 1.17; OOS mean +0.88%, PF 1.13. Thirty slots compounded to 2.04x with a 43% max drawdown. The 26% cap was slightly worse on both.
 
 ## Exchange stop ratchet
 

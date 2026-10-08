@@ -212,6 +212,20 @@ public sealed class NewsIntelligenceTests
     }
 
     [Fact]
+    public void A_listed_coin_can_be_named_outside_the_title()
+    {
+        var catalog = SampleCatalog();
+        var ether = Story("ether", "A buyer steps back", "Ether purchases are stopping.", "");
+        var body = Story("body", "A treasury note", "The filing has no ticker.", "The firm holds Bitcoin.");
+        var general = Story("general", "OpenAI delays its IPO", "The company cited safety work.", "");
+        var events = new NewsPipeline(new NewsOptions(), catalog: catalog).Build([ether, body, general]);
+
+        events.Single(item => item.OriginalArticles[0].Id == "ether").PrimaryAsset.Should().Be("ETH");
+        events.Single(item => item.OriginalArticles[0].Id == "body").PrimaryAsset.Should().Be("BTC");
+        NewsAssetCatalog.NamesListedCoin(events.Single(item => item.OriginalArticles[0].Id == "general")).Should().BeFalse();
+    }
+
+    [Fact]
     public void Empty_catalog_does_not_assume_bitcoin()
     {
         var item = Event("n", Retrieved, EventDirection.Bullish);
@@ -256,6 +270,20 @@ public sealed class NewsIntelligenceTests
             SourceQualityScore = 0.8,
             TimestampPrecision = TimestampPrecision.Instant,
             OriginalArticles = [new NewsArticleRef { Id = id, Source = "CoinDesk", SourceUrl = "https://www.coindesk.com/" + id, PublishedAtUtc = published, Title = "Bitcoin" }]
+        };
+
+    private static RawNewsItem Story(string id, string title, string summary, string content) =>
+        new()
+        {
+            Id = id,
+            Provider = "rss",
+            Source = "CoinDesk",
+            SourceUrl = "https://www.coindesk.com/" + id,
+            PublishedAtUtc = Retrieved,
+            RetrievedAtUtc = Retrieved,
+            Title = title,
+            Summary = summary,
+            Content = content
         };
 
     private static RawNewsItem Article(string source, string url, DateTimeOffset published, string title) =>

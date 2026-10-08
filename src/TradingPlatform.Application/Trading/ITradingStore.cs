@@ -46,6 +46,9 @@ public interface ITradingStore
     Task<Strategy?> GetStrategyAsync(Guid strategyId, CancellationToken cancellationToken = default);
     Task AddStrategyAsync(Strategy strategy, CancellationToken cancellationToken = default);
     Task<RiskProfile> GetConservativeRiskAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>The news-only book. It is never the active book used by other strategies.</summary>
+    Task<RiskProfile> GetNewsRiskAsync(CancellationToken cancellationToken = default);
     Task<RiskProfile?> GetRiskProfileByIdAsync(Guid riskProfileId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<RiskProfile>> ListRiskProfilesAsync(CancellationToken cancellationToken = default);
     Task AddRiskProfileAsync(RiskProfile risk, CancellationToken cancellationToken = default);

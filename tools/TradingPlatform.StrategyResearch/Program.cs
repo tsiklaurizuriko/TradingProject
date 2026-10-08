@@ -144,6 +144,11 @@ if (args.Any(a => string.Equals(a, "--extreme-move-signals", StringComparison.Or
     return await ExtremeMoveSignals.RunAsync(root, candleCacheDir);
 }
 
+if (args.Any(a => string.Equals(a, "--impulse-now", StringComparison.OrdinalIgnoreCase)))
+{
+    return ImpulseNowReplay.Run(candleCacheDir);
+}
+
 if (args.Any(a => string.Equals(a, "--pump-ride-live", StringComparison.OrdinalIgnoreCase)))
 {
     return PumpRideStudy.RunLive(root, candleCacheDir);

@@ -77,7 +77,7 @@ public sealed class NewsAiOptions
 
     public int TimeoutSeconds { get; set; } = 20;
 
-    public string PromptVersion { get; set; } = "news-deep-v1";
+    public string PromptVersion { get; set; } = "news-deep-v2";
 
     public int StrongImpactThreshold { get; set; } = 70;
 

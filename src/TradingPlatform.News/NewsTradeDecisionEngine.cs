@@ -18,6 +18,13 @@ public static class NewsTradeDecisionEngine
     {
         context ??= new NewsDecisionContext();
         var symbol = string.IsNullOrWhiteSpace(asset.Symbol) ? "UNKNOWN" : asset.Symbol;
+        if (string.Equals(item.AnalysisStatus, "NoCoin", StringComparison.OrdinalIgnoreCase))
+        {
+            return Stop(item, symbol, NewsRejection.UnknownAsset, string.IsNullOrWhiteSpace(item.AnalysisError)
+                ? "This news is not about a Binance coin. It was not sent to the model."
+                : item.AnalysisError);
+        }
+
         if (options.Ai.Enabled && string.Equals(item.AnalysisStatus, "Skipped", StringComparison.OrdinalIgnoreCase))
         {
             return Stop(item, symbol, NewsRejection.NewsTooOld, string.IsNullOrWhiteSpace(item.AnalysisError)

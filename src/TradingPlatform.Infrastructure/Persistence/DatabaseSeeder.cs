@@ -209,6 +209,7 @@ public sealed class DatabaseSeeder
     private async Task SeedTradingDefaultsAsync(CancellationToken cancellationToken)
     {
         await UpsertSystemRiskAsync("LOW", ["Low Risk", "Conservative"], LowBook(), cancellationToken);
+        await UpsertSystemRiskAsync(NewsRiskBook.Name, [], NewsRiskBook.Create(), cancellationToken);
         await UpsertSystemRiskAsync("MEDIUM", ["Medium Risk", "Moderate"], MediumBook(), cancellationToken);
         await UpsertSystemRiskAsync("HIGH", ["High Risk", "Aggressive"], HighBook(), cancellationToken);
         await UpsertSystemRiskAsync("BTC 15m Vol Spike", ["FITTED-VOL-SPIKE", "vol_spike_ema_trend"], FittedVolSpikeBook(), cancellationToken);
@@ -757,7 +758,7 @@ public sealed class DatabaseSeeder
         (StrategyTemplateKeys.FlowZone, "Flow Zone",
             "All USD-M coins, 1h, both sides. Buy the upper quarter of the last 24 hours when taker buy is the majority and open interest rose. Sell the lower quarter when taker sell is the majority and open interest rose. Missing taker or open interest sends no order. The signal closes the position when that flow leaves the zone, but not while the move is still inside a 0.20% round-trip fee. The 4% stop and 15% take are only the rail if the bot is off. Not measured on the past. Not auto-started.", true),
         (StrategyTemplateKeys.ImpulseCatch, "Impulse Catch",
-            "All USD-M coins, 15m, long only. Rides big pumps (20–100%+). Buys the first closed bar that lifts price 16–26% above its 24h low, green with a close in its top half, with last-hour volume 3–7× the 7-day hourly mean and at least 3M USDT traded in 24h. The coin must already be up 20% in 30 days and not above its 30-day high. Exits on a close 25% under the peak high or after 4 days. Book is risk 0.5%, stop 12%, take 300%, leverage 2x, 8 positions. History 2024-10 to 2026-09: about 37% winners, +0.6% to +3% mean per trade, driven by a few large moves. Filters were picked after seeing every period. Not auto-started.", true),
+            "All USD-M coins, 15m, long only. Catches the big move. Buys the first closed bar that closes at least 16% above its 24h low, including a bar that jumps well past that level. The bar is green and closes in its top half, and at least 3M USDT traded in 24h. The coin must already be up 20% in 30 days. A volume climax and a new 30-day high do not block the entry. Exits on a close 25% under the peak high or after 4 days. Book is risk 0.5%, stop 12%, take 300%, leverage 2x, 8 positions. The 2024-10 to 2026-09 result (about 37% winners, +0.6% to +3% mean) measured the older book that skipped a close above 26%, volume above 7×, and a fresh 30-day high. Those numbers do not describe this entry. Not auto-started.", true),
         (StrategyTemplateKeys.SqueezeWatch, "Squeeze Watch",
             "1h, both sides. Price moved less than 3% over 24 hours, open interest rose at least 15%, and funding is at or below -0.10% — buy the crowded shorts. The same quiet price and open-interest rise with funding at or above +0.10% — sell the crowded longs. Missing funding or open interest sends no order. While open, exit when funding leaves that extreme or price moves 2% against the entry. Book is risk 0.5%, stop 4%, take 8%, leverage 2x, 3 positions. Not measured on the past.", false),
         (StrategyTemplateKeys.FlatRange, "Flat Range",
@@ -957,6 +958,10 @@ public sealed class DatabaseSeeder
             strategy.RiskProfile.TakeProfitPercent = book.Take;
             strategy.RiskProfile.MaxLeverage = book.Leverage;
             strategy.RiskProfile.MaxSimultaneousPositions = book.Positions;
+            if (StrategyTemplateKeys.Normalize(strategy.TemplateKey) == StrategyTemplateKeys.ImpulseCatch)
+            {
+                strategy.RiskProfile.MaxPortfolioRiskPercent = 15m;
+            }
         }
 
         await _db.SaveChangesAsync(cancellationToken);
@@ -979,7 +984,7 @@ public sealed class DatabaseSeeder
         [StrategyTemplateKeys.BtcDailyMax10] = (2m, 8m, 30m, 1m, 1),
         [StrategyTemplateKeys.FlowZone] = (0.5m, 4m, 15m, 1m, 5),
         [StrategyTemplateKeys.SqueezeWatch] = (0.5m, 4m, 8m, 2m, 3),
-        [StrategyTemplateKeys.ImpulseCatch] = (0.5m, 12m, 300m, 2m, 8),
+        [StrategyTemplateKeys.ImpulseCatch] = (0.5m, 12m, 300m, 2m, 30),
         [StrategyTemplateKeys.FlatRange] = (0.5m, 2m, 4m, 3m, 5),
         [StrategyTemplateKeys.ObsCompressionBreakout] = (0.5m, 8m, 24m, 2m, 5),
         [StrategyTemplateKeys.ObsShockFade] = (0.5m, 8m, 24m, 2m, 5),
@@ -1313,8 +1318,8 @@ public sealed class DatabaseSeeder
             TakeProfitPercent = 300m,
             MaxLeverage = 2m,
             MaxDailyLossPercent = 3m,
-            MaxPortfolioRiskPercent = 4m,
-            MaxSimultaneousPositions = 8,
+            MaxPortfolioRiskPercent = 15m,
+            MaxSimultaneousPositions = 30,
             MaxConsecutiveLosses = 5,
             CooldownMinutes = 30,
             MinimumLiquidationSafetyBufferPercent = 1m,

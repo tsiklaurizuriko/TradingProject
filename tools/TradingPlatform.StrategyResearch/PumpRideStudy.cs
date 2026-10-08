@@ -295,8 +295,8 @@ internal static class PumpRideStudy
     }
 
     /// <summary>
-    /// The live definition: 30-day return and 30-day high from completed UTC daily bars plus today's 15m bars,
-    /// exactly as the bot computes them. Reported under several costs.
+    /// Historical measurement of the older book (26% rise cap, volume 3–7×, no fresh 30-day high).
+    /// The live entry no longer uses those filters. Reported under several costs.
     /// </summary>
     public static int RunLive(string root, string cacheDir)
     {
@@ -305,8 +305,9 @@ internal static class PumpRideStudy
         var sb = new StringBuilder();
         sb.AppendLine("# Pump ride, live definition");
         sb.AppendLine();
-        sb.AppendLine("30-day return = 15m close / close of the completed UTC day 30 days before the last completed day. 30-day high = highest high of the last 30 completed days and of today's earlier 15m bars.");
-        sb.AppendLine("Trigger as in the variants file; filters trend30 + noClimax + notFresh. Exchange stop 12%, trail 25% below the peak high on closed bars, 4-day cap.");
+        sb.AppendLine("Live entry is the first closed 15m bar at least 16% above the 24h low, including a bar that jumps past that level. The bar is green and closes in its upper half, 24h turnover is at least 3M USDT, and the coin is already up 20% over 30 days. A volume climax and a new 30-day high are entries. Exchange stop 12%, trail 25% below the peak high on closed bars, 4-day cap.");
+        sb.AppendLine();
+        sb.AppendLine("The tables below measured the older book (trend30 + noClimax + notFresh, rise capped at 26%). They do not describe the live entry.");
         sb.AppendLine();
         var combo = new Combo(0.16, 3, 0, 0.10, 0.12, 0.25);
         var books = new List<(string Symbol, Book Book, Features F, List<DayBar> Days)>();

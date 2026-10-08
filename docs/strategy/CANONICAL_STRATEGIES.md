@@ -8,7 +8,7 @@ There is one runtime implementation per strategy. The old parallel `*_v2` ids ar
 
 | Canonical id | Default timeframe | Side | Notes |
 | --- | --- | --- | --- |
-| `impulse_catch` | 15m | LONG | Pump ride. First bar +16–26% above the 24h low, volume 3–7×, 30-day trend from daily candles. 25% trail from the peak, 4-day cap. See `docs/PUMP_RIDE_LIVE.md`. |
+| `impulse_catch` | 15m | LONG | Pump ride. Only the first close at least +16% above the 24h low, including a bar that jumps past 26%. 30-day trend from daily candles. Skips hourly volume above 7x the 7-day average and a close above the prior 30-day high. A wide entry bar is still an entry. 25% trail from the peak, 4-day cap. |
 | `zigzag_fade` | 15m | LONG and SHORT | |
 | `triple_supertrend` | 1h | LONG and SHORT | |
 | `ts_momentum_28_5` | 1d | LONG | |

@@ -35,6 +35,11 @@ public sealed class RefactoredStrategyTests
             StrategyTemplateKeys.CanonicalId(alias.Key).Should().Be(alias.Value);
         }
 
+        StrategyTemplateKeys.SkipsEntryRangeShock(StrategyTemplateKeys.ImpulseCatch).Should().BeTrue();
+        StrategyTemplateKeys.SkipsEntryRangeShock(StrategyTemplateKeys.ImpulseCatchV2).Should().BeTrue();
+        StrategyTemplateKeys.SkipsEntryRangeShock(StrategyTemplateKeys.ObsShockFade).Should().BeTrue();
+        StrategyTemplateKeys.SkipsEntryRangeShock(StrategyTemplateKeys.ObsCompressionBreakout).Should().BeFalse();
+        StrategyTemplateKeys.SkipsEntryRangeShock(StrategyTemplateKeys.ObsTopTraderContrarian).Should().BeFalse();
         StrategyTemplateKeys.DirectionsFor(StrategyTemplateKeys.ImpulseCatch).Should().Equal("LONG");
         StrategyTemplateKeys.DirectionsFor(StrategyTemplateKeys.TsMomentum285).Should().Equal("LONG");
         StrategyTemplateKeys.TimeframesFor(StrategyTemplateKeys.BtcEma20Ema50Long).Should().Equal("30m");

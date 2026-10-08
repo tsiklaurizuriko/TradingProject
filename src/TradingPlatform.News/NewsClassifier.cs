@@ -17,7 +17,7 @@ public static class NewsText
     }
 
     public static string Readable(NewsEvent item) =>
-        StripHtml(string.Join('\n', item.OriginalArticles.Select(article => article.Title + "\n" + article.Summary)));
+        StripHtml(string.Join('\n', item.OriginalArticles.Select(article => article.Title + "\n" + article.Summary + "\n" + article.Content)));
 
     public static string StripHtml(string? value)
     {

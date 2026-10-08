@@ -182,16 +182,40 @@ public sealed class NewsLiveWorker : BackgroundService
             .GroupBy(item => item.EventId, StringComparer.Ordinal)
             .Select(group => group.First())
             .ToList();
+        if (options.Ai.Enabled && events.Count > 0)
+        {
+            var fresh = new List<NewsEvent>(events.Count);
+            var alreadyDecided = 0;
+            foreach (var item in events)
+            {
+                if (await database.HasFinalSignalAsync(item.EventId, cancellationToken))
+                {
+                    alreadyDecided++;
+                    continue;
+                }
+
+                fresh.Add(item);
+            }
+
+            if (alreadyDecided > 0)
+            {
+                _logger.LogInformation(
+                    "NewsDeduplicated {Count} events already have a decision and were not analyzed again.",
+                    alreadyDecided);
+            }
+
+            events = fresh;
+        }
         var session = await database.GetOrCreateSessionAsync(cancellationToken);
         var trading = scope.ServiceProvider.GetRequiredService<IOptions<TradingOptions>>().Value;
         var risk = scope.ServiceProvider.GetRequiredService<IRiskEngine>();
-        var profile = await scope.ServiceProvider.GetRequiredService<ITradingStore>().GetConservativeRiskAsync(cancellationToken);
+        var profile = await scope.ServiceProvider.GetRequiredService<ITradingStore>().GetNewsRiskAsync(cancellationToken);
         var scoped = events
             .Where(item => item.MarketScope != MarketScope.Global || item.AffectedAssets.Count > 0)
             .ToList();
         if (options.Ai.Enabled)
         {
-            await AnalyzeNewsAsync(options, catalog, events, scope.ServiceProvider, database, now, cancellationToken);
+            await AnalyzeNewsAsync(options, catalog, events, scope.ServiceProvider, database, cancellationToken);
         }
 
         var decisionTime = DateTimeOffset.UtcNow;
@@ -276,6 +300,7 @@ public sealed class NewsLiveWorker : BackgroundService
             await CloseExpiredHorizonsAsync(database, connector, accountSnapshot, decisionTime, cancellationToken);
         }
 
+        report.SessionRunning = session.Running;
         await NewsLiveAnalyzer.WriteAsync(root, report, options.Strategy.Timeframes.Execution, cancellationToken);
         var candidates = report.Decisions.Count(item => item.Signal != NewsMarketSignals.NoTrade);
         _pending.Clear();
@@ -346,7 +371,7 @@ public sealed class NewsLiveWorker : BackgroundService
                 PublishedAtUtc = source.PublishedAtUtc,
                 ArticleIds = string.Join(',', source.OriginalArticles.Select(article => article.Id))
             }, cancellationToken);
-            if (await database.SignalExistsAsync(stored.Id, decision.Symbol, cancellationToken))
+            if (await database.HasCommittedSignalAsync(stored.Id, decision.Symbol, cancellationToken))
             {
                 LogNews(source, decision.Symbol, "NO_TRADE", NewsRejection.EventAlreadyTraded, "NewsTradeRejected");
                 continue;
@@ -737,7 +762,14 @@ public sealed class NewsLiveWorker : BackgroundService
         }
     }
 
-    private async Task AnalyzeNewsAsync(NewsOptions options, NewsAssetCatalog catalog, IReadOnlyList<NewsEvent> events, IServiceProvider services, NewsDatabase database, DateTimeOffset cycleStarted, CancellationToken cancellationToken)
+    private static void MarkNotACoin(NewsEvent item)
+    {
+        item.AnalysisStatus = "NoCoin";
+        item.AnalysisError = "This news is not about a Binance coin. It was not sent to the model.";
+        item.ShouldConsiderTrading = false;
+    }
+
+    private async Task AnalyzeNewsAsync(NewsOptions options, NewsAssetCatalog catalog, IReadOnlyList<NewsEvent> events, IServiceProvider services, NewsDatabase database, CancellationToken cancellationToken)
     {
         var errors = options.Ai.Validate();
         if (errors.Count > 0 || !options.Ai.HasKey())
@@ -745,6 +777,13 @@ public sealed class NewsLiveWorker : BackgroundService
             var reason = errors.Count > 0 ? string.Join(" ", errors) : "News AI is enabled but News:Ai:ApiKey is empty.";
             foreach (var item in events)
             {
+                if (!NewsAssetCatalog.NamesListedCoin(item))
+                {
+                    MarkNotACoin(item);
+                    LogNews(item, string.Empty, "NO_TRADE", NewsRejection.UnknownAsset, "NewsNotACoin");
+                    continue;
+                }
+
                 DeepNewsAnalyzer.MarkFailed(item, "Failed", reason, DateTimeOffset.UtcNow, options.Ai.Provider, options.Ai.FastModel, options.Ai.PromptVersion);
                 LogNews(item, item.PrimaryAsset ?? string.Empty, "NO_TRADE", reason, "NewsAiFailed");
             }
@@ -754,27 +793,33 @@ public sealed class NewsLiveWorker : BackgroundService
 
         var analyzer = new DeepNewsAnalyzer(options, services.GetRequiredService<INewsLanguageModel>(), _logger);
         var keys = events.Select(item => item.EventId).Where(key => !string.IsNullOrWhiteSpace(key)).Distinct(StringComparer.Ordinal).ToList();
-        var storedAt = await database.EventCreatedAtAsync(keys, cancellationToken);
-        var analyzed = await database.AnalyzedEventKeysAsync(keys, cancellationToken);
+        var completed = await database.CompletedAnalysisRawAsync(keys, cancellationToken);
         var clock = DateTimeOffset.UtcNow;
         foreach (var item in events)
         {
             if (await database.HasFinalSignalAsync(item.EventId, cancellationToken))
             {
-                LogNews(item, item.PrimaryAsset ?? string.Empty, "NO_TRADE", NewsRejection.EventAlreadyTraded, "NewsDeduplicated");
                 continue;
             }
 
-            storedAt.TryGetValue(item.EventId, out var createdAt);
-            var knownAt = storedAt.ContainsKey(item.EventId) ? createdAt : (DateTimeOffset?)null;
-            if (!NewsAiGate.ShouldAnalyze(item.PublishedAtUtc, clock, options.Strategy.MaxNewsAgeMinutes, knownAt, cycleStarted, analyzed.Contains(item.EventId)))
+            if (!NewsAssetCatalog.NamesListedCoin(item))
             {
-                var reason = analyzed.Contains(item.EventId)
-                    ? "This news was already analyzed. It was not sent to the model again."
-                    : "This news is already stored or too old. It was not sent to the model.";
+                MarkNotACoin(item);
+                LogNews(item, string.Empty, "NO_TRADE", NewsRejection.UnknownAsset, "NewsNotACoin");
+                continue;
+            }
+
+            if (!NewsAiGate.ShouldAnalyze(item.PublishedAtUtc, clock, options.Strategy.MaxNewsAgeMinutes, alreadyAnalyzed: false))
+            {
                 item.AnalysisStatus = "Skipped";
-                item.AnalysisError = reason;
+                item.AnalysisError = "The story is outside the age limit. It was not sent to the model.";
                 LogNews(item, item.PrimaryAsset ?? string.Empty, "NO_TRADE", NewsRejection.NewsTooOld, "NewsDeduplicated");
+                continue;
+            }
+
+            if (completed.TryGetValue(item.EventId, out var raw)
+                && DeepNewsAnalyzer.TryRestore(item, raw, catalog, item.ClassifiedAtUtc ?? clock, options))
+            {
                 continue;
             }
 

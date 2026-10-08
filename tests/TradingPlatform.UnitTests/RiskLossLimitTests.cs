@@ -48,6 +48,12 @@ public sealed class RiskLossLimitTests
         EntryMarketGuard.RangeShock([new EntryBar(1m, 1m, 1m), new EntryBar(2m, 1m, 2m)]).Should().BeNull();
     }
 
+    [Fact]
+    public void A_zero_range_cap_lets_the_expansion_bar_through()
+    {
+        EntryMarketGuard.Reject(10m, 6m, maxSpreadBps: 15m, maxRangeShock: 0m, requireBook: true).Should().BeNull();
+    }
+
     [Theory]
     [InlineData(null, null, true, "unknown")]
     [InlineData(null, null, false, null)]
@@ -71,6 +77,38 @@ public sealed class RiskLossLimitTests
         {
             reason.Should().Contain(expected);
         }
+    }
+
+    [Theory]
+    [InlineData(1.0, 0.04, 2.0, null)]
+    [InlineData(0.20, 0.05, 10.0, "Entry skipped")]
+    [InlineData(0.40, 0.04, null, "Entry skipped")]
+    [InlineData(1.0, 0.04, null, null)]
+    [InlineData(0.0, 0.04, 2.0, "missing")]
+    public void Round_trip_gate_skips_a_target_inside_fees_and_spread(double take, double fee, double? spreadBps, string? expected)
+    {
+        var reason = EntryMarketGuard.RejectRoundTrip(
+            (decimal)take,
+            (decimal)fee,
+            spreadBps is { } bps ? (decimal)bps : null,
+            unknownSpreadPercent: 0.10m);
+
+        if (expected is null)
+        {
+            reason.Should().BeNull();
+        }
+        else
+        {
+            reason.Should().Contain(expected);
+        }
+    }
+
+    [Fact]
+    public void Round_trip_cost_is_two_taker_fees_plus_the_full_spread()
+    {
+        EntryMarketGuard.RoundTripCostPercent(0.04m, 2m, 0.10m).Should().Be(0.10m);
+        EntryMarketGuard.RoundTripCostPercent(0.05m, null, 0.10m).Should().Be(0.20m);
+        EntryMarketGuard.RoundTripCostPercent(0.04m, 0m, 0.10m).Should().Be(0.08m);
     }
 
     [Fact]

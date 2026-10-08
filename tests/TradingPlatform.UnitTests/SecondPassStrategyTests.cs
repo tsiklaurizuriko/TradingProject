@@ -19,8 +19,18 @@ public sealed class SecondPassStrategyTests
         signal.Signal.Should().Be(SignalType.Buy, "reason {0}", signal.Reason);
         signal.SuggestedStop.Should().Be(117m * 0.88m);
         signal.SuggestedTakeProfit.Should().BeNull();
-        signal.Snapshot!["volRatio"].Should().Be(5m);
+        signal.Snapshot!["rise24"]!.Value.Should().BeGreaterThan(0.16m);
         signal.Snapshot["ret30d"]!.Value.Should().BeApproximately(0.3m, 0.001m);
+    }
+
+    [Fact]
+    public void Impulse_buys_a_bar_that_jumps_past_the_old_26_percent_band()
+    {
+        var candles = PumpSeries(signalClose: 140m);
+        var signal = PumpEval(candles, Context(candles, Days(close: 90m, high: 160m)));
+        signal.Signal.Should().Be(SignalType.Buy, "reason {0}", signal.Reason);
+        signal.SuggestedStop.Should().Be(140m * 0.88m);
+        signal.Snapshot!["rise24"]!.Value.Should().BeGreaterThan(0.26m);
     }
 
     [Fact]
@@ -47,14 +57,14 @@ public sealed class SecondPassStrategyTests
         var candles = PumpSeries(signalVolume: 400_000m);
         var signal = PumpEval(candles, Context(candles, Days(close: 90m, high: 130m)));
         signal.Signal.Should().Be(SignalType.NoAction);
-        signal.Reason.Should().Contain("climax");
+        signal.Reason.Should().Contain("Climax");
     }
 
     [Fact]
-    public void Impulse_does_not_buy_when_the_previous_bar_already_crossed()
+    public void Impulse_does_not_buy_a_later_bar_of_the_same_cross()
     {
         var candles = PumpSeries();
-        candles[^2] = PumpBar(candles.Count - 2, open: 100m, close: 116.5m, high: 117m, low: 100m, volume: 10_000m);
+        candles.Add(PumpBar(candles.Count, open: 116m, close: 117.5m, high: 118m, low: 116m, volume: 170_000m));
         var signal = PumpEval(candles, Context(candles, Days(close: 90m, high: 130m)));
         signal.Signal.Should().Be(SignalType.NoAction);
         signal.Reason.Should().Contain("first cross");
@@ -72,7 +82,7 @@ public sealed class SecondPassStrategyTests
     [Fact]
     public void Impulse_short_history_does_not_trade()
     {
-        var signal = PumpEval(Flat(100, 100m), Context(Flat(100, 100m)));
+        var signal = PumpEval(Flat(40, 100m), Context(Flat(40, 100m)));
         signal.Signal.Should().Be(SignalType.NoAction);
         signal.Reason.Should().Contain("warmup");
     }
@@ -133,13 +143,13 @@ public sealed class SecondPassStrategyTests
             PositionOpenedAt = opened
         };
 
-    /// <summary>720 flat 15m bars, the last one lifts price 17% above the 24h low on 5x hourly volume.</summary>
-    private static List<MarketCandle> PumpSeries(decimal signalVolume = 170_000m)
+    /// <summary>720 flat 15m bars. The last one is the first close at least 16% above the 24h low.</summary>
+    private static List<MarketCandle> PumpSeries(decimal signalVolume = 170_000m, decimal signalClose = 117m)
     {
         var candles = Enumerable.Range(0, 719)
             .Select(i => PumpBar(i, open: 100m, close: 100m, high: 100.4m, low: 99.6m, volume: 10_000m))
             .ToList();
-        candles.Add(PumpBar(719, open: 101m, close: 117m, high: 118m, low: 100m, volume: signalVolume));
+        candles.Add(PumpBar(719, open: 101m, close: signalClose, high: Math.Max(118m, signalClose), low: 100m, volume: signalVolume));
         return candles;
     }
 

@@ -55,7 +55,7 @@ public sealed class DeepNewsAnalyzer
 
         if (fast.Status != "Ok")
         {
-            MarkFailed(item, fast.Status, fast.Error, classified, fast.Provider, fast.Model, _options.Ai.PromptVersion);
+            MarkFailed(item, fast.Status, fast.Error, classified, fast.Provider, fast.Model, _options.Ai.PromptVersion, fast.RawJson);
             Log(fast.Status == "Invalid" ? "NewsAiFailed" : "NewsAiFailed", item, fast.Model, fast.Error);
             return fast;
         }
@@ -71,7 +71,7 @@ public sealed class DeepNewsAnalyzer
         return fast;
     }
 
-    public static void MarkFailed(NewsEvent item, string status, string error, DateTimeOffset classifiedAt, string? provider = null, string? model = null, string? promptVersion = null)
+    public static void MarkFailed(NewsEvent item, string status, string error, DateTimeOffset classifiedAt, string? provider = null, string? model = null, string? promptVersion = null, string? raw = null)
     {
         item.AnalysisStatus = status;
         item.AnalysisError = error;
@@ -88,7 +88,26 @@ public sealed class DeepNewsAnalyzer
         item.AiProvider = provider;
         item.AiModel = model;
         item.PromptVersion = promptVersion;
-        item.Reason = error;
+        item.Reason = string.IsNullOrWhiteSpace(raw) ? error : raw.Length <= 8000 ? raw : raw[..8000];
+    }
+
+    public static bool TryRestore(NewsEvent item, string rawJson, NewsAssetCatalog catalog, DateTimeOffset classifiedAt, NewsOptions? options = null)
+    {
+        var allowed = catalog.Identities.Select(identity => identity.Symbol).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (!NewsAnalysisParser.TryParse(rawJson, allowed, out var analysis, out _))
+        {
+            return false;
+        }
+
+        Apply(item, analysis, catalog, classifiedAt);
+        if (options is not null)
+        {
+            item.AiProvider = string.IsNullOrWhiteSpace(item.AiProvider) ? options.Ai.Provider : item.AiProvider;
+            item.AiModel = string.IsNullOrWhiteSpace(item.AiModel) ? options.Ai.FastModel : item.AiModel;
+            item.PromptVersion = string.IsNullOrWhiteSpace(item.PromptVersion) ? options.Ai.PromptVersion : item.PromptVersion;
+        }
+
+        return item.AnalysisStatus == "Ok";
     }
 
     private async Task<NewsDeepAnalysis> CompleteAsync(string model, string system, string user, IReadOnlyList<string> allowed, CancellationToken cancellationToken)
@@ -117,7 +136,7 @@ public sealed class DeepNewsAnalyzer
 
         if (!NewsAnalysisParser.TryParse(completion.Content, allowed, out var analysis, out var error))
         {
-            return NewsDeepAnalysis.Failed("Invalid", error, completion.Provider, completion.Model, _options.Ai.PromptVersion);
+            return NewsDeepAnalysis.Failed("Invalid", error, completion.Provider, completion.Model, _options.Ai.PromptVersion, completion.Content);
         }
 
         return new NewsDeepAnalysis
@@ -161,7 +180,7 @@ public sealed class DeepNewsAnalyzer
         return primary is null || primary.Direction is "UNCERTAIN" or "NEUTRAL";
     }
 
-    private void Apply(NewsEvent item, NewsDeepAnalysis analysis, NewsAssetCatalog catalog, DateTimeOffset classifiedAt)
+    private static void Apply(NewsEvent item, NewsDeepAnalysis analysis, NewsAssetCatalog catalog, DateTimeOffset classifiedAt)
     {
         var links = new List<AssetRelationship>();
         foreach (var asset in analysis.AffectedAssets)
@@ -234,7 +253,7 @@ public sealed class DeepNewsAnalyzer
         item.AiModel = analysis.Model;
         item.PromptVersion = analysis.PromptVersion;
         item.UsedStrongModel = analysis.UsedStrongModel;
-        item.Reason = analysis.MarketMechanism;
+        item.Reason = string.IsNullOrWhiteSpace(analysis.RawJson) ? analysis.MarketMechanism : analysis.RawJson;
     }
 
     private static EventDirection DirectionOf(string? direction) => direction switch

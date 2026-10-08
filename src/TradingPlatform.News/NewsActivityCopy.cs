@@ -1,21 +1,16 @@
 namespace TradingPlatform.News;
 
-/// <summary>The model is paid per call. Only a news item first stored in this cycle, and still inside the age limit, is sent.</summary>
+/// <summary>The model is paid per call. A story still inside the age limit is sent until an analysis succeeds. An earlier ingest tick does not count as analysis.</summary>
 public static class NewsAiGate
 {
-    public static bool ShouldAnalyze(DateTimeOffset publishedAt, DateTimeOffset now, int maxAgeMinutes, DateTimeOffset? storedAt, DateTimeOffset cycleStarted, bool alreadyAnalyzed)
+    public static bool ShouldAnalyze(DateTimeOffset publishedAt, DateTimeOffset now, int maxAgeMinutes, bool alreadyAnalyzed)
     {
         if (alreadyAnalyzed)
         {
             return false;
         }
 
-        if (maxAgeMinutes > 0 && (now - publishedAt).TotalMinutes > maxAgeMinutes)
-        {
-            return false;
-        }
-
-        return storedAt is null || storedAt.Value >= cycleStarted;
+        return maxAgeMinutes <= 0 || (now - publishedAt).TotalMinutes <= maxAgeMinutes;
     }
 }
 
@@ -115,7 +110,7 @@ public static class NewsActivityCopy
         NewsRejection.RiskLimit => "The risk engine blocked the order. Nothing was sent.",
         NewsRejection.ExistingPosition => "This coin already has an open position. No new order was sent.",
         NewsRejection.Cooldown => "This coin is in a cooldown. No order was sent.",
-        NewsRejection.UnknownAsset => "No Binance coin could be matched. No order was sent.",
+        NewsRejection.UnknownAsset => "This news is not about a Binance coin. No order was sent.",
         NewsRejection.AiAnalysisFailed => "The model did not finish the analysis. No order was sent.",
         NewsRejection.InvalidAiResponse => "The model reply was not usable. No order was sent.",
         NewsRejection.NoClearDirection => "The direction is not clear. No order was sent.",
