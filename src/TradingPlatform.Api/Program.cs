@@ -84,6 +84,10 @@ try
         app.Configuration.GetValue<bool>("Trading:KillSwitchEnabled"),
         app.Configuration.GetValue("Trading:HostBotEngine", true),
         app.Environment.EnvironmentName);
+    Log.Information(
+        "Production-new strategies: LiveEnabled={LiveEnabled} PaperEnabled={PaperEnabled}. Default is off. INSUFFICIENT_EVIDENCE until a historical out-of-sample report says otherwise.",
+        app.Configuration.GetValue<bool>("Trading:ProductionNew:LiveEnabled"),
+        app.Configuration.GetValue<bool>("Trading:ProductionNew:PaperEnabled"));
 
     app.Run();
 }

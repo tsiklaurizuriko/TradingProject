@@ -124,6 +124,12 @@ public static class StrategyTemplateKeys
     public const string EmaRsiTrendV2 = "ema_rsi_trend_v2";
     public const string EmaRsiTrendV2Thirty = "ema_rsi_trend_v2_30m";
     public const string BollingerReversionV2 = "bollinger_reversion_v2";
+    public const string TrendFollowingNew = "trend-following-new";
+    public const string BreakoutVolumeNew = "breakout-volume-new";
+    public const string MarketRegimeNew = "market-regime-new";
+    public const string MomentumRelativeStrengthNew = "momentum-relative-strength-new";
+    public const string MeanReversionRsiBollingerNew = "mean-reversion-rsi-bollinger-new";
+    public const string FundingBasisNew = "funding-basis-new";
 
     public static readonly string[] Frozen =
     [
@@ -257,6 +263,20 @@ public static class StrategyTemplateKeys
     /// <summary>Phase 2 alpha configurations closest to break-even. Not validated; forward observation at small size only.</summary>
     public static readonly string[] Observation = [ObsCompressionBreakout, ObsShockFade, ObsTopTraderContrarian];
 
+    /// <summary>
+    /// Six research strategies. External ids end in -new. Live and paper entries stay off until configuration says otherwise.
+    /// None of these ids is a profitability claim.
+    /// </summary>
+    public static readonly string[] ProductionNew =
+    [
+        TrendFollowingNew,
+        BreakoutVolumeNew,
+        MarketRegimeNew,
+        MomentumRelativeStrengthNew,
+        MeanReversionRsiBollingerNew,
+        FundingBasisNew
+    ];
+
     public static readonly string[] Flow = [FlowZone, ImpulseCatch];
 
     public static readonly string[] Positioning = [SqueezeWatch];
@@ -306,7 +326,7 @@ public static class StrategyTemplateKeys
 
     public static readonly string[] Refactored = [];
 
-    public static readonly string[] All = [.. Frozen, .. Research, .. NearMiss, .. CrossSectionalReversal, .. Range, .. Flow, .. Positioning, .. Imported, .. Observation];
+    public static readonly string[] All = [.. Frozen, .. Research, .. NearMiss, .. CrossSectionalReversal, .. Range, .. Flow, .. Positioning, .. Imported, .. Observation, .. ProductionNew];
 
     /// <summary>
     /// Operator catalog: PAPER or weak guidance only. Avoid/blocked templates stay in the engine
@@ -444,6 +464,11 @@ public static class StrategyTemplateKeys
             return ["1h"];
         }
 
+        if (IsProductionNew(template))
+        {
+            return SupportedTimeframes;
+        }
+
         return SupportedTimeframes;
     }
 
@@ -557,6 +582,9 @@ public static class StrategyTemplateKeys
     public static bool IsObservation(string? key) =>
         Observation.Contains(Normalize(key), StringComparer.Ordinal);
 
+    public static bool IsProductionNew(string? key) =>
+        ProductionNew.Contains(KeyText(key), StringComparer.OrdinalIgnoreCase);
+
     /// <summary>
     /// The entry is the expansion bar. The shared range-shock cap would reject the signal it is built to take.
     /// </summary>
@@ -590,7 +618,8 @@ public static class StrategyTemplateKeys
         FundingPriceMomentum or FundingExtremeMomentumExhaustion => ["OHLCV", "Funding"],
         BasisMeanReversion or ScalpBasis => ["OHLCV", "MarkPrice", "IndexPrice", "Basis"],
         CryptoPairsArb => ["OHLCV", "CausalPairUniverse"],
-        XsRelativeStrength or CrossSectionalReversalReturn15m or CrossSectionalReversalReturn1h => ["OHLCV", "CrossSectionUniverse"],
+        XsRelativeStrength or CrossSectionalReversalReturn15m or CrossSectionalReversalReturn1h or MomentumRelativeStrengthNew => ["OHLCV", "CrossSectionUniverse"],
+        FundingBasisNew => ["OHLCV", "Funding", "MarkPrice", "IndexPrice", "Basis"],
         MtfTrendStructure or ScalpMtf => ["OHLCV", "CompletedHtf"],
         ObsTopTraderContrarian => ["OHLCV", "TopTraderPositionRatio", "CrossSectionUniverse"],
         _ => ["OHLCV"]
@@ -620,6 +649,11 @@ public static class StrategyTemplateKeys
         var near when IsNearMiss(near) => "NEAR_MISS",
         var csr when IsCrossSectionalReversal(csr) => "CROSS_SECTIONAL_REVERSAL",
         ObsCompressionBreakout or ObsShockFade or ObsTopTraderContrarian => "OBSERVATION",
+        TrendFollowingNew or BreakoutVolumeNew => "BREAKOUT / TREND",
+        MarketRegimeNew => "ROUTER",
+        MomentumRelativeStrengthNew => "TREND",
+        MeanReversionRsiBollingerNew => "MEAN REVERSION",
+        FundingBasisNew => "FUTURES / FLOW",
         _ => "TREND"
     };
 
@@ -713,7 +747,23 @@ public sealed record StrategyTemplateParams(
     bool UseFuturesFilter = true,
     decimal PriceDisplacementAtr = 1.5m,
     decimal OiExtremePercentile = 0.90m,
-    int MaxImpulseAgeBars = 32);
+    int MaxImpulseAgeBars = 32,
+    bool EmaSlopeFilter = false,
+    bool AtrTrailEnabled = false,
+    bool OppositeTrendExit = true,
+    bool EmaTrendBreakExit = false,
+    int MaxHoldBars = 0,
+    decimal TakeProfitR = 0m,
+    bool ReentryConfirmation = true,
+    bool RangeInvalidationExit = true,
+    bool RequireBenchmark = false,
+    bool HedgedMode = false,
+    int TopRankCount = 5,
+    int BottomRankCount = 5,
+    decimal BasisZEntry = 2m,
+    decimal FundingZEntry = 1.5m,
+    decimal MomentumWeight24h = 0.5m,
+    decimal MomentumWeight7d = 0.5m);
 
 public static class StrategyTemplates
 {
@@ -987,6 +1037,7 @@ public static class StrategyTemplates
                 VolumeFilterEnabled = false,
                 Quality = new StrategyQualityParams()
             },
+            var production when StrategyTemplateKeys.IsProductionNew(production) => ProductionNewDefaults.Apply(core),
             _ => core
         };
     }
@@ -1301,7 +1352,23 @@ public static class StrategyTemplates
                 "useFuturesFilter": {{(p.UseFuturesFilter ? "true" : "false")}},
                 "priceDisplacementAtr": {{Invariant(p.PriceDisplacementAtr)}},
                 "oiExtremePercentile": {{Invariant(p.OiExtremePercentile)}},
-                "maxImpulseAgeBars": {{p.MaxImpulseAgeBars}}
+                "maxImpulseAgeBars": {{p.MaxImpulseAgeBars}},
+                "emaSlopeFilter": {{(p.EmaSlopeFilter ? "true" : "false")}},
+                "atrTrailEnabled": {{(p.AtrTrailEnabled ? "true" : "false")}},
+                "oppositeTrendExit": {{(p.OppositeTrendExit ? "true" : "false")}},
+                "emaTrendBreakExit": {{(p.EmaTrendBreakExit ? "true" : "false")}},
+                "maxHoldBars": {{p.MaxHoldBars}},
+                "takeProfitR": {{Invariant(p.TakeProfitR)}},
+                "reentryConfirmation": {{(p.ReentryConfirmation ? "true" : "false")}},
+                "rangeInvalidationExit": {{(p.RangeInvalidationExit ? "true" : "false")}},
+                "requireBenchmark": {{(p.RequireBenchmark ? "true" : "false")}},
+                "hedgedMode": {{(p.HedgedMode ? "true" : "false")}},
+                "topRankCount": {{p.TopRankCount}},
+                "bottomRankCount": {{p.BottomRankCount}},
+                "basisZEntry": {{Invariant(p.BasisZEntry)}},
+                "fundingZEntry": {{Invariant(p.FundingZEntry)}},
+                "momentumWeight24h": {{Invariant(p.MomentumWeight24h)}},
+                "momentumWeight7d": {{Invariant(p.MomentumWeight7d)}}
               },
               "quality": {
                 "requireVolume": {{(q.RequireVolume ? "true" : "false")}},
@@ -1389,7 +1456,23 @@ public static class StrategyTemplates
                 p.TryGetProperty("useFuturesFilter", out var uff) && uff.ValueKind == JsonValueKind.False ? false : true,
                 Dec(p, "priceDisplacementAtr") ?? 1.5m,
                 Dec(p, "oiExtremePercentile") ?? 0.90m,
-                Int(p, "maxImpulseAgeBars") ?? 32);
+                Int(p, "maxImpulseAgeBars") ?? 32,
+                Bool(p, "emaSlopeFilter"),
+                Bool(p, "atrTrailEnabled"),
+                !p.TryGetProperty("oppositeTrendExit", out _) || Bool(p, "oppositeTrendExit"),
+                Bool(p, "emaTrendBreakExit"),
+                Int(p, "maxHoldBars") ?? 0,
+                Dec(p, "takeProfitR") ?? 0m,
+                !p.TryGetProperty("reentryConfirmation", out _) || Bool(p, "reentryConfirmation"),
+                !p.TryGetProperty("rangeInvalidationExit", out _) || Bool(p, "rangeInvalidationExit"),
+                Bool(p, "requireBenchmark"),
+                Bool(p, "hedgedMode"),
+                Int(p, "topRankCount") ?? 5,
+                Int(p, "bottomRankCount") ?? 5,
+                Dec(p, "basisZEntry") ?? 2m,
+                Dec(p, "fundingZEntry") ?? 1.5m,
+                Dec(p, "momentumWeight24h") ?? 0.5m,
+                Dec(p, "momentumWeight7d") ?? 0.5m);
         }
         catch (JsonException)
         {
@@ -1402,6 +1485,12 @@ public static class StrategyTemplates
         StrategyTemplateKeys.MacdTrend => "MACD Trend",
         StrategyTemplateKeys.RsiPullback => "RSI Pullback",
         StrategyTemplateKeys.BollingerReversion => "Bollinger Reversion",
+        StrategyTemplateKeys.TrendFollowingNew => "Trend Following-new",
+        StrategyTemplateKeys.BreakoutVolumeNew => "Breakout Volume-new",
+        StrategyTemplateKeys.MarketRegimeNew => "Market Regime-new",
+        StrategyTemplateKeys.MomentumRelativeStrengthNew => "Momentum Relative Strength-new",
+        StrategyTemplateKeys.MeanReversionRsiBollingerNew => "Mean Reversion RSI Bollinger-new",
+        StrategyTemplateKeys.FundingBasisNew => "Funding Basis-new",
         StrategyTemplateKeys.DonchianBreakout => "Donchian Breakout",
         StrategyTemplateKeys.TurtleTsm => "Turtle Time-Series Momentum",
         StrategyTemplateKeys.VwapPullbackTrend => "VWAP Pullback Trend",
@@ -1645,6 +1734,7 @@ public static class StrategyTemplates
             "1000 closed 1h klines. Quote volume is base volume × close. Universe: median daily volume ≥ $5M over the prior 30 days.",
         StrategyTemplateKeys.ObsTopTraderContrarian =>
             "1h klines plus GET /futures/data/topLongShortPositionRatio (1h, ~30 days) for every coin with median daily volume ≥ $5M. Missing ratio = coin not ranked.",
+        var production when StrategyTemplateKeys.IsProductionNew(production) => ProductionNewDefaults.Datasets(production),
         _ => "Closed kline candles only."
     };
 
@@ -1673,6 +1763,7 @@ public static class StrategyTemplates
         var near when StrategyTemplateKeys.IsNearMiss(near) => StrategyValidationStatuses.NearMiss,
         var csr when StrategyTemplateKeys.IsCrossSectionalReversal(csr) => StrategyValidationStatuses.Researching,
         var observation when StrategyTemplateKeys.IsObservation(observation) => StrategyValidationStatuses.Researching,
+        var production when StrategyTemplateKeys.IsProductionNew(production) => StrategyValidationStatuses.InsufficientEvidence,
         var key when StrategyTemplateKeys.IsResearch(key) => "RESEARCHING",
         _ => "VALIDATION_PENDING"
     };

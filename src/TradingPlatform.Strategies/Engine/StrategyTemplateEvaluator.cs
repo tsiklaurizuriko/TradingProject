@@ -46,6 +46,7 @@ internal static class StrategyTemplateEvaluator
             && !StrategyTemplateKeys.IsObservation(parsed.TemplateKey)
             && !StrategyTemplateKeys.IsImported(parsed.TemplateKey)
             && !StrategyTemplateKeys.IsRefactored(parsed.TemplateKey)
+            && !StrategyTemplateKeys.IsProductionNew(parsed.TemplateKey)
             && !PassesQuality(parsed.Quality, candles, i, cache))
         {
             reason = "Quality filter skipped this bar (volume or ATR%).";
@@ -127,7 +128,24 @@ internal static class StrategyTemplateEvaluator
             p?.SwingLength ?? 3,
             p?.UseFuturesFilter ?? true,
             (p?.PriceDisplacementAtr ?? 0m) > 0m ? p!.PriceDisplacementAtr : 1.5m,
-            p?.OiExtremePercentile is > 0m and <= 1m ? p.OiExtremePercentile : 0.90m);
+            p?.OiExtremePercentile is > 0m and <= 1m ? p.OiExtremePercentile : 0.90m,
+            p is null ? 32 : p.MaxImpulseAgeBars,
+            p?.EmaSlopeFilter ?? false,
+            p?.AtrTrailEnabled ?? false,
+            p?.OppositeTrendExit ?? true,
+            p?.EmaTrendBreakExit ?? false,
+            p?.MaxHoldBars ?? 0,
+            p?.TakeProfitR ?? 0m,
+            p?.ReentryConfirmation ?? true,
+            p?.RangeInvalidationExit ?? true,
+            p?.RequireBenchmark ?? false,
+            p?.HedgedMode ?? false,
+            p?.TopRankCount is > 0 ? p.TopRankCount : 5,
+            p?.BottomRankCount is > 0 ? p.BottomRankCount : 5,
+            p?.BasisZEntry is > 0m ? p.BasisZEntry : 2m,
+            p?.FundingZEntry is > 0m ? p.FundingZEntry : 1.5m,
+            p?.MomentumWeight24h is >= 0m ? p.MomentumWeight24h : 0.5m,
+            p?.MomentumWeight7d is >= 0m ? p.MomentumWeight7d : 0.5m);
     }
 
     public static SignalType EvaluateAt(
@@ -170,6 +188,7 @@ internal static class StrategyTemplateEvaluator
             && !StrategyTemplateKeys.IsObservation(parsed.TemplateKey)
             && !StrategyTemplateKeys.IsImported(parsed.TemplateKey)
             && !StrategyTemplateKeys.IsRefactored(parsed.TemplateKey)
+            && !StrategyTemplateKeys.IsProductionNew(parsed.TemplateKey)
             && !PassesQuality(parsed.Quality, candles, index, cache))
         {
             return new StrategySignalDetail(SignalType.NoAction, "Quality filter skipped this bar (volume or ATR%).");
@@ -205,6 +224,11 @@ internal static class StrategyTemplateEvaluator
                 SignalType.NoAction,
                 $"Obsolete strategy id '{StrategyTemplateKeys.Normalize(p.TemplateKey)}'. Canonical id is '{StrategyTemplateKeys.CanonicalId(p.TemplateKey)}'. The retired implementation is not executed.",
                 candles[i].CloseTime);
+        }
+
+        if (StrategyTemplateKeys.IsProductionNew(p.TemplateKey))
+        {
+            return ProductionNewEvaluator.Evaluate(p, candles, i, context, cache);
         }
 
         return StrategyTemplateKeys.IsObservation(p.TemplateKey)

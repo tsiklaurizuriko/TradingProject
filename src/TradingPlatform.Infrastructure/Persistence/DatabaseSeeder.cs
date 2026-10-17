@@ -291,10 +291,66 @@ public sealed class DatabaseSeeder
         }
 
         await SeedRefactoredResearchAsync(existing, admin, cancellationToken);
+        await SeedProductionNewAsync(existing, admin, cancellationToken);
         await AlignBotTimeframesAsync(cancellationToken);
         await RetireHiddenStrategiesAsync(existing, cancellationToken);
         await AttachStrategyRiskAsync(cancellationToken);
         await ApplyPublishedRiskAsync(cancellationToken);
+    }
+
+    private async Task SeedProductionNewAsync(List<Strategy> existing, User admin, CancellationToken cancellationToken)
+    {
+        foreach (var key in StrategyTemplateKeys.ProductionNew)
+        {
+            if (StrategyTemplateKeys.ContainsTemplate(existing.Select(strategy => strategy.TemplateKey), key))
+            {
+                continue;
+            }
+
+            var parameters = StrategyTemplates.DefaultsFor(key, qualityOn: false) with { Timeframe = "1h" };
+            var strategy = new Strategy
+            {
+                UserId = admin.Id,
+                User = admin,
+                Name = StrategyTemplates.DisplayName(key),
+                Description = $"{key} is not validated. INSUFFICIENT_EVIDENCE. Live and paper entries stay off until Trading:ProductionNew is explicitly enabled. Seeding does not send orders.",
+                AppliesToAllSymbols = true,
+                TemplateKey = key,
+                AllowedSide = StrategySides.Both,
+                IsEnabled = false,
+                IsArchived = false,
+                ValidationStatus = StrategyValidationStatuses.InsufficientEvidence
+            };
+            strategy.Versions.Add(new StrategyVersion
+            {
+                Strategy = strategy,
+                VersionNumber = 1,
+                DefinitionJson = StrategyTemplates.Build(strategy.Name, 1, parameters),
+                Symbol = "BTCUSDT",
+                Timeframe = Timeframe.OneHour
+            });
+            var risk = new RiskProfile
+            {
+                Name = strategy.Name,
+                RiskPerTradePercent = 0.35m,
+                StopLossPercent = 2m,
+                TakeProfitPercent = 300m,
+                MaxLeverage = 2m,
+                MaxDailyLossPercent = 2m,
+                MaxPortfolioRiskPercent = 1.5m,
+                MaxSimultaneousPositions = 3,
+                MaxConsecutiveLosses = 5,
+                CooldownMinutes = 30,
+                MinimumLiquidationSafetyBufferPercent = 1m,
+                AllowLive = false,
+                IsSystem = true,
+                IsActive = false
+            };
+            strategy.RiskProfile = risk;
+            _db.Strategies.Add(strategy);
+            existing.Add(strategy);
+            await _db.SaveChangesAsync(cancellationToken);
+        }
     }
 
     private async Task SeedRefactoredResearchAsync(List<Strategy> existing, User admin, CancellationToken cancellationToken)
@@ -359,6 +415,11 @@ public sealed class DatabaseSeeder
             {
                 strategy.IsEnabled = false;
                 strategy.IsArchived = true;
+                continue;
+            }
+
+            if (StrategyTemplateKeys.IsProductionNew(key))
+            {
                 continue;
             }
 
@@ -962,6 +1023,12 @@ public sealed class DatabaseSeeder
             {
                 strategy.RiskProfile.MaxPortfolioRiskPercent = 15m;
             }
+
+            if (StrategyTemplateKeys.IsProductionNew(strategy.TemplateKey))
+            {
+                strategy.RiskProfile.MaxDailyLossPercent = 2m;
+                strategy.RiskProfile.MaxPortfolioRiskPercent = 1.5m;
+            }
         }
 
         await _db.SaveChangesAsync(cancellationToken);
@@ -998,6 +1065,12 @@ public sealed class DatabaseSeeder
         [StrategyTemplateKeys.Hlhb] = (0.5m, 8m, 62m, 1m, 5),
         [StrategyTemplateKeys.FAdxSma] = (0.5m, 5m, 5m, 3m, 5),
         [StrategyTemplateKeys.TripleSupertrend] = (0.5m, 8m, 10m, 1m, 5),
+        [StrategyTemplateKeys.TrendFollowingNew] = (0.35m, 2m, 300m, 2m, 3),
+        [StrategyTemplateKeys.BreakoutVolumeNew] = (0.35m, 2m, 300m, 2m, 3),
+        [StrategyTemplateKeys.MarketRegimeNew] = (0.35m, 2m, 300m, 2m, 3),
+        [StrategyTemplateKeys.MomentumRelativeStrengthNew] = (0.35m, 2m, 300m, 2m, 3),
+        [StrategyTemplateKeys.MeanReversionRsiBollingerNew] = (0.35m, 2m, 300m, 2m, 3),
+        [StrategyTemplateKeys.FundingBasisNew] = (0.35m, 2m, 300m, 2m, 3),
     };
 
     private static string? AliasRiskName(string? templateKey) => StrategyTemplateKeys.Normalize(templateKey) switch

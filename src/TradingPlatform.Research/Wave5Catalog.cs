@@ -20,6 +20,7 @@ public static class Wave5Catalog
         {
             if (StrategyTemplateKeys.IsFrozen(key)
                 || StrategyTemplateKeys.IsHistoricallyFitted(key)
+                || StrategyTemplateKeys.IsProductionNew(key)
                 || string.Equals(key, StrategyTemplateKeys.RegimeStrategyRouter, StringComparison.OrdinalIgnoreCase))
             {
                 continue;

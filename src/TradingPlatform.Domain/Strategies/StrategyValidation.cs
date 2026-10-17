@@ -4,6 +4,7 @@ public static class StrategyValidationStatuses
 {
     public const string ValidationPending = "VALIDATION_PENDING";
     public const string InsufficientData = "INSUFFICIENT_DATA";
+    public const string InsufficientEvidence = "INSUFFICIENT_EVIDENCE";
     public const string ImplementationError = "IMPLEMENTATION_ERROR";
     public const string Unstable = "UNSTABLE";
     public const string OosDegradation = "OOS_DEGRADATION";

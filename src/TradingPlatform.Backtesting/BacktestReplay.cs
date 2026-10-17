@@ -30,7 +30,8 @@ public sealed record ReplaySettings(
     decimal TickSize = 0m,
     bool PreserveNullTake = false,
     int ExecutionDelayBars = 0,
-    decimal BreakEvenAtR = 0m);
+    decimal BreakEvenAtR = 0m,
+    bool KeepSuggestedTarget = false);
 
 public sealed record ReplayTrade(
     DateTimeOffset OpenedAt,
@@ -113,7 +114,10 @@ public sealed class BacktestReplay
         int? evaluateToExclusive = null,
         CausalIndicatorCache? higherTimeframeCache = null,
         StrategyFuturesSeries? futures = null,
-        IReadOnlyList<ReplayFundingSettlement>? fundingSettlements = null)
+        IReadOnlyList<ReplayFundingSettlement>? fundingSettlements = null,
+        string? symbol = null,
+        IReadOnlyDictionary<string, IReadOnlyList<MarketCandle>>? peerCandles = null,
+        IReadOnlyDictionary<DateTimeOffset, IReadOnlyList<MomentumScore>>? momentumScorebook = null)
     {
         IReadOnlyList<MarketCandle> ordered;
         if (indicatorCache is not null)
@@ -232,7 +236,7 @@ public sealed class BacktestReplay
                     }
                     else if (settings.HonorSuggestedStops && pendingStop is not null)
                     {
-                        if (!TryStructuralStops(entrySide, fill, pendingStop, pendingTake, settings.TickSize, settings.PreserveNullTake, out posStop, out posTake, out stopPctOverride))
+                        if (!TryStructuralStops(entrySide, fill, pendingStop, pendingTake, settings.TickSize, settings.PreserveNullTake, settings.KeepSuggestedTarget, out posStop, out posTake, out stopPctOverride))
                         {
                             pendingEntry = null;
                             pendingStop = null;
@@ -413,7 +417,10 @@ public sealed class BacktestReplay
                     FundingRate = futures?.FundingRate,
                     MarkPrice = futures?.MarkPrice,
                     IndexPrice = futures?.IndexPrice,
-                    NormalizedBasis = futures?.NormalizedBasis
+                    NormalizedBasis = futures?.NormalizedBasis,
+                    Symbol = symbol ?? definition.Symbol,
+                    PeerCandles = peerCandles,
+                    MomentumScorebook = momentumScorebook
                 };
                 detail = _engine.EvaluateDetailAt(definition, evalContext, cache, i);
                 signal = detail.Signal;
@@ -696,6 +703,7 @@ public sealed class BacktestReplay
         decimal? suggestedTake,
         decimal tickSize,
         bool preserveNullTake,
+        bool keepSuggestedTarget,
         out decimal? stop,
         out decimal? take,
         out decimal? stopPercent)
@@ -723,7 +731,19 @@ public sealed class BacktestReplay
             if (suggestedTake is { } tp)
             {
                 var roundedTake = StrategyExecutionRules.RoundTarget(side, tp, tickSize);
-                take = roundedTake >= fill + dist ? roundedTake : fill + dist * 2m;
+                if (keepSuggestedTarget)
+                {
+                    if (roundedTake <= fill)
+                    {
+                        return false;
+                    }
+
+                    take = roundedTake;
+                }
+                else
+                {
+                    take = roundedTake >= fill + dist ? roundedTake : fill + dist * 2m;
+                }
             }
             else if (!preserveNullTake)
             {
@@ -744,7 +764,19 @@ public sealed class BacktestReplay
         if (suggestedTake is { } shortTp)
         {
             var roundedTake = StrategyExecutionRules.RoundTarget(side, shortTp, tickSize);
-            take = roundedTake <= fill - shortDist ? roundedTake : fill - shortDist * 2m;
+            if (keepSuggestedTarget)
+            {
+                if (roundedTake >= fill)
+                {
+                    return false;
+                }
+
+                take = roundedTake;
+            }
+            else
+            {
+                take = roundedTake <= fill - shortDist ? roundedTake : fill - shortDist * 2m;
+            }
         }
         else if (!preserveNullTake)
         {

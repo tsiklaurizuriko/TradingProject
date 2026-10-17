@@ -44,6 +44,12 @@ public sealed record RiskSizingHints
 
     /// <summary>Bracket maintenance amount ("cum") in USDT.</summary>
     public decimal MaintenanceAmount { get; init; }
+
+    /// <summary>When true, quantity includes fees, slippage, and <see cref="FundingLossPerUnit"/> in the loss budget.</summary>
+    public bool CostAware { get; init; }
+
+    /// <summary>Conservative funding loss in quote currency for one unit of quantity over the expected hold. Never negative.</summary>
+    public decimal FundingLossPerUnit { get; init; }
 }
 
 public sealed record RiskPlan
@@ -165,10 +171,37 @@ public sealed class RiskEngine : IRiskEngine
             sizingStop = sizing.SizingStopLossPercent;
         }
 
-        var quantity = PortfolioRisk.QuantityFromRiskUsdt(riskAmount, price, sizingStop);
+        decimal quantity;
         var raisedToMinimum = false;
+        if (sizing is { CostAware: true })
+        {
+            var solved = CostAwareQuantity.Solve(
+                available,
+                profile.RiskPerTradePercent / 100m,
+                price,
+                sizingStop / 100m,
+                feePercent / 100m,
+                slipPercent / 100m,
+                Math.Max(0m, sizing.FundingLossPerUnit),
+                sizing.StepSize,
+                sizing.MinQuantity,
+                sizing.MinNotional,
+                sizing.QuantityPrecision);
+            if (solved is not { } sized)
+            {
+                return Denied("Risk cannot be estimated inside the exchange step, minimum, and cost-aware loss budget.");
+            }
+
+            quantity = sized;
+        }
+        else
+        {
+            quantity = PortfolioRisk.QuantityFromRiskUsdt(riskAmount, price, sizingStop);
+        }
+
         var portfolioCap = profile.MaxPortfolioRiskPercent > 0m ? profile.MaxPortfolioRiskPercent : 4m;
-        if (sizing is { StepSize: > 0m } || sizing is { MinQuantity: > 0m } || sizing is { MinNotional: > 0m } || sizing is { QuantityPrecision: >= 0 })
+        if (sizing is not { CostAware: true }
+            && (sizing is { StepSize: > 0m } || sizing is { MinQuantity: > 0m } || sizing is { MinNotional: > 0m } || sizing is { QuantityPrecision: >= 0 }))
         {
             var precision = sizing?.QuantityPrecision
                 ?? PortfolioRisk.EffectiveQuantityPrecision(0, sizing?.StepSize ?? 0m);

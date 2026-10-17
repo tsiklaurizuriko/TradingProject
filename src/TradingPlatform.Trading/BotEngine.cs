@@ -1285,6 +1285,8 @@ public sealed class BotEngine : IBotEngine
         TemplateKey(bot) is StrategyTemplateKeys.TsMomentum285 or StrategyTemplateKeys.BtcDailyMax10 ? 500
         : StrategyTemplateKeys.CanonicalId(TemplateKey(bot)) == StrategyTemplateKeys.ImpulseCatch ? RefactoredStrategyEvaluator.Pump.HistoryBars
         : StrategyTemplateKeys.IsObservation(TemplateKey(bot)) ? ObservationStrategies.HistoryBars
+        : StrategyTemplateKeys.CanonicalId(TemplateKey(bot)) == StrategyTemplateKeys.MomentumRelativeStrengthNew ? 1500
+        : StrategyTemplateKeys.IsProductionNew(TemplateKey(bot)) ? 500
         : null;
 
     private async Task PrefetchDueMarketAsync(
@@ -1699,6 +1701,27 @@ public sealed class BotEngine : IBotEngine
             var templateKey = TemplateKey(bot);
             var inputs = await CycleMarketInputsAsync(templateKey, bot.Symbol, bot.Timeframe, candles, cancellationToken);
             var futures = StrategyMarketContext.Futures(candles, inputs);
+            IReadOnlyDictionary<string, IReadOnlyList<MarketCandle>>? peers = null;
+            if (StrategyTemplateKeys.CanonicalId(templateKey) == StrategyTemplateKeys.MomentumRelativeStrengthNew)
+            {
+                var peerBook = new Dictionary<string, IReadOnlyList<MarketCandle>>(StringComparer.OrdinalIgnoreCase);
+                foreach (var name in _cache.GetKlineSymbols(bot.Timeframe))
+                {
+                    var series = _cache.GetKlines(name, bot.Timeframe);
+                    if (series.Count > 0)
+                    {
+                        peerBook[name] = series;
+                    }
+                }
+
+                if (!peerBook.ContainsKey(bot.Symbol))
+                {
+                    peerBook[bot.Symbol] = candles;
+                }
+
+                peers = peerBook;
+            }
+
             var context = new StrategyContext
             {
                 ClosedCandles = candles,
@@ -1711,7 +1734,11 @@ public sealed class BotEngine : IBotEngine
                 Symbol = bot.Symbol,
                 HigherTimeframeCache = StrategyMarketContext.HigherTimeframeCache(inputs),
                 OpenInterest = futures.OpenInterest,
-                FundingRate = futures.FundingRate
+                FundingRate = futures.FundingRate,
+                MarkPrice = futures.MarkPrice,
+                IndexPrice = futures.IndexPrice,
+                NormalizedBasis = futures.NormalizedBasis,
+                PeerCandles = peers
             };
             var quote = _strategy.EvaluateDetailAt(definition, context, new CausalIndicatorCache(candles), candles.Count - 1);
             signalType = quote.Signal;
@@ -1957,6 +1984,16 @@ public sealed class BotEngine : IBotEngine
             return;
         }
 
+        if (StrategyTemplateKeys.IsProductionNew(definition.Template))
+        {
+            var blocked = ProductionNewGate.EntryBlock(_options.ProductionNew, definition.Template, bot.Mode == TradingMode.Live);
+            if (blocked is not null)
+            {
+                bot.LastError = blocked;
+                return;
+            }
+        }
+
         if (bot.Mode == TradingMode.Live)
         {
             var maxAge = TimeSpan.FromSeconds(Math.Max(1, _options.ReconciliationMaxAgeSeconds));
@@ -2054,6 +2091,35 @@ public sealed class BotEngine : IBotEngine
         {
             bot.LastError = "Observation strategy did not lock a stop and a take profit.";
             return;
+        }
+        else if (StrategyTemplateKeys.IsProductionNew(definition.Template))
+        {
+            if (describedStop is not decimal productionStop || lastPrice <= 0m)
+            {
+                bot.LastError = "NO_TRADE: the -new strategy did not provide a protective stop.";
+                return;
+            }
+
+            var stopPct = Math.Abs(lastPrice - productionStop) / lastPrice * 100m;
+            var longSide = signalType == SignalType.Buy;
+            if (stopPct <= 0m || (longSide ? productionStop >= lastPrice : productionStop <= lastPrice))
+            {
+                bot.LastError = "NO_TRADE: the protective stop is on the wrong side of price.";
+                return;
+            }
+
+            var takePct = describedTake is decimal productionTake
+                ? Math.Abs(productionTake - lastPrice) / lastPrice * 100m
+                : profile.TakeProfitPercent;
+            if (takePct <= 0m)
+            {
+                bot.LastError = "NO_TRADE: take-profit distance is not positive.";
+                return;
+            }
+
+            profile = FlatRangeRisk(profile, stopPct, takePct);
+            var productionHints = snapshot.Sizing ?? new RiskSizingHints();
+            snapshot = snapshot with { Sizing = productionHints with { CostAware = true } };
         }
 
         var ticker = await BookTickerAsync(bot.Symbol, cancellationToken);

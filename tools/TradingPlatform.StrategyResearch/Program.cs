@@ -58,6 +58,10 @@ if (args.Any(a => string.Equals(a, "--news-live", StringComparison.OrdinalIgnore
 {
     return await NewsLiveAnalyzer.RunAsync(root, CancellationToken.None);
 }
+if (args.Any(a => string.Equals(a, "--production-new", StringComparison.OrdinalIgnoreCase)))
+{
+    return ProductionNewResearch.Run(root);
+}
 var candleCacheDir = Path.Combine(root, "artifacts", "strategy-validation-cache");
 var outDir = Path.Combine(root, "artifacts", "strategy-research", isPhase2 ? "phase-2" : "phase-1");
 Directory.CreateDirectory(outDir);
@@ -147,6 +151,16 @@ if (args.Any(a => string.Equals(a, "--extreme-move-signals", StringComparison.Or
 if (args.Any(a => string.Equals(a, "--impulse-now", StringComparison.OrdinalIgnoreCase)))
 {
     return ImpulseNowReplay.Run(candleCacheDir);
+}
+
+if (args.Any(a => string.Equals(a, "--impulse-mirror", StringComparison.OrdinalIgnoreCase)))
+{
+    return ImpulseMirrorReplay.Run(root, candleCacheDir);
+}
+
+if (args.Any(a => string.Equals(a, "--funding-carry", StringComparison.OrdinalIgnoreCase)))
+{
+    return FundingCarryStudy.Run(root);
 }
 
 if (args.Any(a => string.Equals(a, "--pump-ride-live", StringComparison.OrdinalIgnoreCase)))

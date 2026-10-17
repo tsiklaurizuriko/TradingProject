@@ -27,7 +27,8 @@ public sealed class AlphaStrategyTests
             + StrategyTemplateKeys.Positioning.Length
             + StrategyTemplateKeys.Imported.Length
             + StrategyTemplateKeys.Refactored.Length
-            + StrategyTemplateKeys.Observation.Length);
+            + StrategyTemplateKeys.Observation.Length
+            + StrategyTemplateKeys.ProductionNew.Length);
         StrategyTemplateKeys.Scalping.Should().HaveCount(22);
         StrategyTemplateKeys.Observation.Should().HaveCount(3);
         StrategyTemplateKeys.OperatorCatalog.Should().HaveCount(30);
@@ -49,7 +50,8 @@ public sealed class AlphaStrategyTests
                 .Concat(StrategyTemplateKeys.Positioning)
                 .Concat(StrategyTemplateKeys.Imported)
                 .Concat(StrategyTemplateKeys.Refactored)
-                .Concat(StrategyTemplateKeys.Observation));
+                .Concat(StrategyTemplateKeys.Observation)
+                .Concat(StrategyTemplateKeys.ProductionNew));
         StrategyTemplateKeys.IsOperatorCatalog(StrategyTemplateKeys.CrossSectionalReversalReturn15m).Should().BeFalse();
     }
 

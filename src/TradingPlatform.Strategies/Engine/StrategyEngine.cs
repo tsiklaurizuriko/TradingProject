@@ -87,6 +87,23 @@ public sealed class StrategyDefinitionParams
     public bool? UseFuturesFilter { get; set; }
     public decimal PriceDisplacementAtr { get; set; } = 1.5m;
     public decimal OiExtremePercentile { get; set; } = 0.90m;
+    public int MaxImpulseAgeBars { get; set; } = 32;
+    public bool EmaSlopeFilter { get; set; }
+    public bool AtrTrailEnabled { get; set; }
+    public bool OppositeTrendExit { get; set; } = true;
+    public bool EmaTrendBreakExit { get; set; }
+    public int MaxHoldBars { get; set; }
+    public decimal TakeProfitR { get; set; }
+    public bool ReentryConfirmation { get; set; } = true;
+    public bool RangeInvalidationExit { get; set; } = true;
+    public bool RequireBenchmark { get; set; }
+    public bool HedgedMode { get; set; }
+    public int TopRankCount { get; set; } = 5;
+    public int BottomRankCount { get; set; } = 5;
+    public decimal BasisZEntry { get; set; } = 2m;
+    public decimal FundingZEntry { get; set; } = 1.5m;
+    public decimal MomentumWeight24h { get; set; } = 0.5m;
+    public decimal MomentumWeight7d { get; set; } = 0.5m;
 }
 
 public sealed class StrategyDefinitionQuality
@@ -138,6 +155,15 @@ public sealed class StrategyContext
     public IReadOnlyList<decimal?>? IndexPrice { get; init; }
     /// <summary>Normalized basis (Mark-Index)/Index. Null means basis cannot be reconstructed.</summary>
     public IReadOnlyList<decimal?>? NormalizedBasis { get; init; }
+    /// <summary>Peer closed candles for a cross-sectional rank. Null means the universe was not supplied.</summary>
+    public IReadOnlyDictionary<string, IReadOnlyList<MarketCandle>>? PeerCandles { get; init; }
+    /// <summary>Optional benchmark candles, usually BTCUSDT. Null is not treated as a passing filter.</summary>
+    public IReadOnlyList<MarketCandle>? BenchmarkCandles { get; init; }
+    /// <summary>
+    /// Optional precomputed momentum ranks keyed by candle close time.
+    /// Null means the evaluator ranks the peer book itself. A supplied book must contain only information known at that close time.
+    /// </summary>
+    public IReadOnlyDictionary<DateTimeOffset, IReadOnlyList<MomentumScore>>? MomentumScorebook { get; init; }
 }
 
 public sealed class StrategyFuturesSeries
@@ -193,7 +219,9 @@ public interface IStrategyEngine
                 FundingRate = Prefix(context.FundingRate, take),
                 MarkPrice = Prefix(context.MarkPrice, take),
                 IndexPrice = Prefix(context.IndexPrice, take),
-                NormalizedBasis = Prefix(context.NormalizedBasis, take)
+                NormalizedBasis = Prefix(context.NormalizedBasis, take),
+                PeerCandles = context.PeerCandles,
+                BenchmarkCandles = context.BenchmarkCandles
             },
             out reason);
     }

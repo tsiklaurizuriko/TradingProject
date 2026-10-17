@@ -56,6 +56,7 @@ public sealed class TradingOptions
     public ScalpingOptions Scalping { get; set; } = new();
     public PriceActionOptions PriceAction { get; set; } = new();
     public CrossSectionalReversalOptions CrossSectionalReversal { get; set; } = new();
+    public ProductionNewOptions ProductionNew { get; set; } = new();
 }
 
 public sealed class CrossSectionalReversalOptions
