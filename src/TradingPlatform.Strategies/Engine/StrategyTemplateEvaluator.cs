@@ -279,8 +279,6 @@ internal static class StrategyTemplateEvaluator
     {
         var fast = cache.Ema(p.EmaFast);
         var slow = cache.Ema(p.EmaSlow);
-        var rsi = cache.Rsi(p.RsiPeriod);
-        var close = candles[i].Close;
         if (context.HasOpenPosition)
         {
             if (IsLong(context) && CrossesBelow(fast, slow, i))
@@ -296,19 +294,17 @@ internal static class StrategyTemplateEvaluator
             return (SignalType.Hold, "Position open; EMA exit not triggered.");
         }
 
-        if (CrossesAbove(fast, slow, i) && close > (slow[i] ?? 0m) && InRange(rsi[i], p.RsiMinimum, p.RsiLongMax))
+        if (CrossesAbove(fast, slow, i))
         {
-            return (SignalType.Buy, "EMA cross up, close above slow EMA, RSI in band.");
+            return (SignalType.Buy, "EMA 20 crossed above EMA 50 on a closed candle.");
         }
 
-        if (CrossesBelow(fast, slow, i)
-            && close < (slow[i] ?? decimal.MaxValue)
-            && InRange(rsi[i], 100m - p.RsiLongMax, 100m - p.RsiMinimum))
+        if (CrossesBelow(fast, slow, i))
         {
-            return (SignalType.Sell, "EMA cross down, close below slow EMA, RSI in band.");
+            return (SignalType.Sell, "EMA 20 crossed below EMA 50 on a closed candle.");
         }
 
-        return (SignalType.NoAction, "EMA RSI entry not matched.");
+        return (SignalType.NoAction, "EMA cross entry not matched.");
     }
 
     private static (SignalType Signal, string Reason) Macd(
@@ -319,8 +315,6 @@ internal static class StrategyTemplateEvaluator
         CausalIndicatorCache cache)
     {
         var (macd, signal, hist) = cache.Macd(p.MacdFast, p.MacdSlow, p.MacdSignal);
-        var slow = cache.Ema(p.EmaSlow);
-        var close = candles[i].Close;
         if (context.HasOpenPosition)
         {
             if (IsLong(context) && CrossesBelow(macd, signal, i))
@@ -336,14 +330,14 @@ internal static class StrategyTemplateEvaluator
             return (SignalType.Hold, "Position open; MACD exit not triggered.");
         }
 
-        if (CrossesAbove(macd, signal, i) && (hist[i] ?? 0m) > 0m && close > (slow[i] ?? 0m))
+        if (CrossesAbove(macd, signal, i) && (hist[i] ?? 0m) > 0m)
         {
-            return (SignalType.Buy, "MACD crossed above signal with positive histogram.");
+            return (SignalType.Buy, "MACD crossed above signal and the histogram is positive.");
         }
 
-        if (CrossesBelow(macd, signal, i) && (hist[i] ?? 0m) < 0m && close < (slow[i] ?? decimal.MaxValue))
+        if (CrossesBelow(macd, signal, i) && (hist[i] ?? 0m) < 0m)
         {
-            return (SignalType.Sell, "MACD crossed below signal with negative histogram.");
+            return (SignalType.Sell, "MACD crossed below signal and the histogram is negative.");
         }
 
         return (SignalType.NoAction, "MACD entry not matched.");
@@ -357,35 +351,32 @@ internal static class StrategyTemplateEvaluator
         CausalIndicatorCache cache)
     {
         var rsi = cache.Rsi(p.RsiPeriod);
-        var fast = cache.Ema(p.EmaFast);
-        var slow = cache.Ema(p.EmaSlow);
-        var close = candles[i].Close;
         if (context.HasOpenPosition)
         {
-            if (IsLong(context) && (CrossesBelowValue(rsi, 50m, i) || CrossesBelow(fast, slow, i)))
+            if (IsLong(context) && rsi[i] is { } longRsi && longRsi >= p.RsiOverbought)
             {
-                return (SignalType.Exit, "RSI recrossed 50 or EMA reversed.");
+                return (SignalType.Exit, "RSI reached the overbought exit.");
             }
 
-            if (!IsLong(context) && (CrossesAboveValue(rsi, 50m, i) || CrossesAbove(fast, slow, i)))
+            if (!IsLong(context) && rsi[i] is { } shortRsi && shortRsi <= p.RsiOversold)
             {
-                return (SignalType.Exit, "RSI recrossed 50 or EMA reversed.");
+                return (SignalType.Exit, "RSI reached the oversold exit.");
             }
 
             return (SignalType.Hold, "Position open; RSI exit not triggered.");
         }
 
-        if (close > (slow[i] ?? 0m) && CrossesAboveValue(rsi, p.RsiOversold, i))
+        if (CrossesAboveValue(rsi, p.RsiOversold, i))
         {
-            return (SignalType.Buy, "Uptrend RSI crossed up through oversold.");
+            return (SignalType.Buy, "RSI crossed up through 30 on a closed candle.");
         }
 
-        if (close < (slow[i] ?? decimal.MaxValue) && CrossesBelowValue(rsi, p.RsiOverbought, i))
+        if (CrossesBelowValue(rsi, p.RsiOverbought, i))
         {
-            return (SignalType.Sell, "Downtrend RSI crossed down through overbought.");
+            return (SignalType.Sell, "RSI crossed down through 70 on a closed candle.");
         }
 
-        return (SignalType.NoAction, "RSI pullback entry not matched.");
+        return (SignalType.NoAction, "RSI entry not matched.");
     }
 
     private static (SignalType Signal, string Reason) Bollinger(

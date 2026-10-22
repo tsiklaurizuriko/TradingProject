@@ -93,7 +93,7 @@ public sealed class StrategyContextParityTests
     [Fact]
     public void Context_rules_name_the_inputs_each_template_reads()
     {
-        StrategyMarketContext.NeedsHigherTimeframe(StrategyTemplateKeys.EmaRsiTrend).Should().BeTrue();
+        StrategyMarketContext.NeedsHigherTimeframe(StrategyTemplateKeys.EmaRsiTrend).Should().BeFalse();
         StrategyMarketContext.NeedsHigherTimeframe(StrategyTemplateKeys.FlowZone).Should().BeTrue();
         StrategyMarketContext.NeedsOpenInterest(StrategyTemplateKeys.FlowZone).Should().BeTrue();
         StrategyMarketContext.NeedsOpenInterest(StrategyTemplateKeys.SqueezeWatch).Should().BeTrue();

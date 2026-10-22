@@ -336,6 +336,7 @@ public static class StrategyTemplateKeys
     [
         EmaRsiTrend,
         RsiPullback,
+        MacdTrend,
         BollingerReversion,
         DonchianBreakout,
         SupertrendEmaTrend,
@@ -1273,11 +1274,8 @@ public static class StrategyTemplates
             StrategyTemplateKeys.EmaRsiTrend => shared with
             {
                 Timeframe = "15m",
-                RsiOversold = 40m,
-                RsiMinimum = 50m,
-                MinimumRelativeVolume = 1.2m,
-                StopAtrMultiplier = 1.5m,
-                AtrStopMultiplier = 2m
+                VolumeFilterEnabled = false,
+                MinimumRelativeVolume = 0m
             },
             StrategyTemplateKeys.BollingerReversion => shared with
             {
@@ -1609,9 +1607,9 @@ public static class StrategyTemplates
 
     public static string Blurb(string templateKey) => StrategyTemplateKeys.Normalize(templateKey) switch
     {
-        StrategyTemplateKeys.MacdTrend => "იმპულსის გადაკვეთას მიყვება (MACD × სიგნალი, ჰისტოგრამა, ნელი EMA). მიზანი — ტრენდის გაგრძელება, არა მოკლე ხმაური.",
-        StrategyTemplateKeys.EmaRsiTrend => "სწრაფი EMA ნელს კვეთს და RSI ადასტურებს. რისკი 0.5%, სტოპი 3%, ტეიკი 9%, 2x. ხმაურმა 2% აღარ უნდა გაწყვიტოს ტრენდი.",
-        StrategyTemplateKeys.RsiPullback => "ტრენდში უკან დახევას იჭერს. რისკი 0.5%, სტოპი 2.5%, ტეიკი 5%, 2x.",
+        StrategyTemplateKeys.MacdTrend => "MACD 12/26/9 სიგნალს კვეთს და ჰისტოგრამის ნიშანი ემთხვევა. გასვლა საპირისპირო გადაკვეთაზე. ნელი EMA აღარ იფილტრება.",
+        StrategyTemplateKeys.EmaRsiTrend => "EMA 20/50 გადაკვეთა დახურულ სანთელზე. გასვლა საპირისპირო გადაკვეთაზე. პლუს 10%-ზე სტოპი შედის ფასზე გადადის. რისკი 0.5%, სტოპი 5%, ტეიკი 15%, 2x.",
+        StrategyTemplateKeys.RsiPullback => "Wilder RSI 14. ლონგი 30-ის ზემოთ გადაკვეთაზე, შორტი 70-ის ქვემოთ. გასვლა RSI 70 ან 30. რისკი 0.5%, სტოპი 3%, ტეიკი 5%, 2x.",
         StrategyTemplateKeys.BollingerReversion => "ზოლიდან შუაში ბრუნდება. რისკი 0.5%, სტოპი 2.5%, ტეიკი 2%, 2x. მოკლე ტეიკი, რადგან საშუალოსკენ ბრუნდება და 4%-ს ხშირად ვერ ასწრებს.",
         StrategyTemplateKeys.DonchianBreakout => "ბოლო N სანთლის მაღალ/დაბალ ზოლს არღვევს და იმ მიმართულებით შედის. მიზანი — ახალი ექსტრემის გაგრძელება.",
         StrategyTemplateKeys.TurtleTsm => "Systematic trend-following strategy using prior-range breakouts, EMA trend confirmation and ATR-based volatility control.",

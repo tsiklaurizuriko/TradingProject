@@ -1226,6 +1226,11 @@ public static class RefactoredStrategyEvaluator
         return Detail(SignalType.NoAction, "Close is not a range-edge rejection.", candles, i);
     }
 
+    /// <summary>
+    /// Published EMA 20/50 cross on the closed candle. No RSI band, no higher-timeframe filter, no volume filter.
+    /// The exchange stop and target come from the risk profile (5% and 15%). At +10% the protective ratchet
+    /// moves the stop to breakeven. This is the published rule, not a profit claim.
+    /// </summary>
     private static StrategySignalDetail EmaRsi(
         StrategyTemplateParams p,
         IReadOnlyList<MarketCandle> candles,
@@ -1233,75 +1238,54 @@ public static class RefactoredStrategyEvaluator
         StrategyContext context,
         CausalIndicatorCache cache)
     {
-        var regime = HtfBias(context, candles[i].CloseTime, p.TrendEmaPeriod);
-        if (regime is null)
-        {
-            return Detail(SignalType.NoAction, "DATA_UNAVAILABLE: higher-timeframe EMA is missing. No order.", candles, i);
-        }
-
-        if (i < p.EmaSlow + p.RsiPeriod)
-        {
-            return Detail(SignalType.NoAction, "EMA RSI warmup is incomplete.", candles, i);
-        }
-
         var fast = cache.Ema(p.EmaFast);
         var slow = cache.Ema(p.EmaSlow);
-        var rsi = cache.Rsi(p.RsiPeriod);
-        var atr = cache.Atr(p.AtrPeriod);
-        if (fast[i] is not { } emaFast || slow[i] is not { } emaSlow || rsi[i] is not { } rsiNow || rsi[i - 1] is not { } rsiPrev || atr[i] is not { } atrNow)
-        {
-            return Detail(SignalType.NoAction, "EMA RSI indicators are not ready.", candles, i);
-        }
-
-        var median = PriorMedian(candles, i, p.RelativeVolumePeriod, c => c.Volume);
         if (context.HasOpenPosition)
         {
-            var crossed = IsLong(context) ? emaFast < emaSlow : emaFast > emaSlow;
-            if (crossed)
+            if (IsLong(context) && CrossedBelow(fast, slow, i))
             {
-                return Detail(SignalType.Exit, "Opposite EMA cross. REVERSAL_DEFERRED.", candles, i);
+                return Detail(SignalType.Exit, "EMA fast crossed below slow.", candles, i);
             }
 
-            var trail = IsLong(context) ? candles[i].Close - (p.AtrStopMultiplier * atrNow) : candles[i].Close + (p.AtrStopMultiplier * atrNow);
-            return Detail(SignalType.Hold, "EMA RSI position is open.", candles, i, stop: trail);
-        }
-
-        if (median is not { } med || med <= 0m || !StrategyExecutionRules.VolumeUsable(candles[i].Volume) || candles[i].Volume < med * p.MinimumRelativeVolume)
-        {
-            return Detail(SignalType.NoAction, "EMA RSI volume is missing or below the median.", candles, i);
-        }
-
-        var longPullback = regime == true && emaFast > emaSlow && rsiPrev >= p.RsiOversold && rsiPrev <= p.RsiMinimum && rsiNow > p.RsiMinimum && candles[i].Close > emaFast;
-        var shortPullback = regime == false && emaFast < emaSlow && rsiPrev <= 100m - p.RsiOversold && rsiPrev >= 100m - p.RsiMinimum && rsiNow < 100m - p.RsiMinimum && candles[i].Close < emaFast;
-        if (longPullback)
-        {
-            var stop = Math.Max(MinLow(candles, i, p.SwingLength), candles[i].Close - (p.StopAtrMultiplier * atrNow));
-            if (stop >= candles[i].Close)
+            if (!IsLong(context) && CrossedAbove(fast, slow, i))
             {
-                stop = candles[i].Close - (p.StopAtrMultiplier * atrNow);
+                return Detail(SignalType.Exit, "EMA fast crossed above slow.", candles, i);
             }
 
-            var take = candles[i].Close + (2m * (candles[i].Close - stop));
-            return stop < candles[i].Close
-                ? Detail(SignalType.Buy, "EMA RSI pullback reclaimed 50 and EMA20.", candles, i, stop, take)
-                : Detail(SignalType.NoAction, "EMA RSI long stop is not valid.", candles, i);
+            return Detail(SignalType.Hold, "Position open; EMA exit not triggered.", candles, i);
         }
 
-        if (shortPullback)
+        if (CrossedAbove(fast, slow, i))
         {
-            var stop = Math.Min(MaxHigh(candles, i, p.SwingLength), candles[i].Close + (p.StopAtrMultiplier * atrNow));
-            if (stop <= candles[i].Close)
-            {
-                stop = candles[i].Close + (p.StopAtrMultiplier * atrNow);
-            }
-
-            var take = candles[i].Close - (2m * (stop - candles[i].Close));
-            return stop > candles[i].Close
-                ? Detail(SignalType.Sell, "EMA RSI pullback lost 50 and EMA20.", candles, i, stop, take)
-                : Detail(SignalType.NoAction, "EMA RSI short stop is not valid.", candles, i);
+            return Detail(SignalType.Buy, "EMA 20 crossed above EMA 50 on a closed candle.", candles, i);
         }
 
-        return Detail(SignalType.NoAction, "EMA RSI entry is not matched.", candles, i);
+        if (CrossedBelow(fast, slow, i))
+        {
+            return Detail(SignalType.Sell, "EMA 20 crossed below EMA 50 on a closed candle.", candles, i);
+        }
+
+        return Detail(SignalType.NoAction, "EMA cross entry not matched.", candles, i);
+    }
+
+    private static bool CrossedAbove(IReadOnlyList<decimal?> left, IReadOnlyList<decimal?> right, int i)
+    {
+        if (i < 1 || left[i] is not { } l || right[i] is not { } r || left[i - 1] is not { } lp || right[i - 1] is not { } rp)
+        {
+            return false;
+        }
+
+        return lp <= rp && l > r;
+    }
+
+    private static bool CrossedBelow(IReadOnlyList<decimal?> left, IReadOnlyList<decimal?> right, int i)
+    {
+        if (i < 1 || left[i] is not { } l || right[i] is not { } r || left[i - 1] is not { } lp || right[i - 1] is not { } rp)
+        {
+            return false;
+        }
+
+        return lp >= rp && l < r;
     }
 
     private static StrategySignalDetail Bollinger(

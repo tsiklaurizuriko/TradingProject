@@ -74,6 +74,7 @@ const timeframes = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '1d'];
 const templateOptions = [
   { key: 'ema_rsi_trend', label: 'EMA RSI Trend' },
   { key: 'rsi_pullback', label: 'RSI Pullback' },
+  { key: 'macd_trend', label: 'MACD Trend' },
   { key: 'bollinger_reversion', label: 'Bollinger Reversion' },
   { key: 'supertrend_ema_trend', label: 'Supertrend EMA Trend' },
   { key: 'liq_sweep_continuation', label: 'Liquidity Sweep Breakout Continuation' },

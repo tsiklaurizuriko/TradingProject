@@ -751,6 +751,16 @@ export interface TradeDto {
   netPnL?: number | null;
   fundingPnL?: number | null;
   netPendingReason?: string | null;
+  strategyName?: string | null;
+}
+
+export function tradeStrategyName(row: TradeDto, bots: readonly BotDto[]): string {
+  const direct = (row.strategyName || '').trim();
+  if (direct) {
+    return direct;
+  }
+  const bot = bots.find((item) => item.id === row.botId);
+  return (bot?.strategyName || '').trim();
 }
 
 export interface PerformanceDayDto {

@@ -206,6 +206,7 @@ public static class ProtectiveRatchet
         StrategyTemplateKeys.ImpulseCatch => new Policy(0.20m, Trail: 0.30m),
         StrategyTemplateKeys.FAdxSma => new Policy(0.03m, Trail: 0m),
         StrategyTemplateKeys.TripleSupertrend => new Policy(0.10m, Trail: 0m),
+        StrategyTemplateKeys.EmaRsiTrend => new Policy(0.10m, Trail: 0m),
         StrategyTemplateKeys.FlowZone => new Policy(0.08m, Trail: 0m),
         _ => null
     };

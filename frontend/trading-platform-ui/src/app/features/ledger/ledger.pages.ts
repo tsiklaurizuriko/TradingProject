@@ -1,6 +1,6 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { TradingService } from '../../core/trading/trading.service';
-import { PositionDto, feeText, formatTime, groupPositionsByStrategy, holdDuration, isolatedRoi, isLongSide, money, modeBadge, notionalUsdt, pct, pnlClass, price, qty, sideLabel, signedMoney } from '../../core/trading/trading.models';
+import { PositionDto, TradeDto, feeText, formatTime, groupPositionsByStrategy, holdDuration, isolatedRoi, isLongSide, money, modeBadge, notionalUsdt, pct, pnlClass, price, qty, sideLabel, signedMoney, tradeStrategyName } from '../../core/trading/trading.models';
 import { ToastService } from '../../core/ui/toast.service';
 import { UiStateService } from '../../core/ui/ui-state.service';
 import { ListQuery, timeValue } from '../../shared/lists/list-query';
@@ -233,6 +233,7 @@ export class PositionsPage {
               <th><app-sort-btn column="closed" [query]="list">Closed</app-sort-btn></th>
               <th><app-sort-btn column="hold" [query]="list">Duration</app-sort-btn></th>
               <th><app-sort-btn column="symbol" [query]="list">Coin</app-sort-btn></th>
+              <th><app-sort-btn column="strategy" [query]="list">Strategy</app-sort-btn></th>
               <th><app-sort-btn column="side" [query]="list">Side</app-sort-btn></th>
               <th class="num"><app-sort-btn column="qty" [query]="list" align="end">Closed Vol</app-sort-btn></th>
               <th class="num"><app-sort-btn column="entry" [query]="list" align="end">Entry</app-sort-btn></th>
@@ -251,6 +252,7 @@ export class PositionsPage {
                 <td>{{ formatTime(row.closedAt) }}</td>
                 <td>{{ holdDuration(row.openedAt, row.closedAt) }}</td>
                 <td>{{ row.symbol }}</td>
+                <td>{{ strategyOf(row) }}</td>
                 <td><span class="badge" [class.badge-long]="isLongSide(row.side)" [class.badge-short]="!isLongSide(row.side)">{{ sideLabel(row.side) }}</span></td>
                 <td class="num">{{ qty(row.quantity) }}</td>
                 <td class="num">{{ price(row.entryPrice) }}</td>
@@ -283,18 +285,23 @@ export class TradesPage {
   readonly modeBadge = modeBadge;
   readonly list = new ListQuery();
 
+  strategyOf(row: TradeDto): string {
+    return tradeStrategyName(row, this.trading.bots()) || '—';
+  }
+
   constructor() {
     void this.trading.loadLedgerBook();
   }
   readonly rows = computed(() =>
     this.list.apply(
       this.trading.workspaceTrades().filter((row) => !!row.closedAt),
-      (row) => [row.symbol, sideLabel(row.side), row.closedAt ? 'Closed' : 'Open'],
+      (row) => [row.symbol, this.strategyOf(row), sideLabel(row.side), row.closedAt ? 'Closed' : 'Open'],
       {
         opened: (row) => timeValue(row.openedAt),
         closed: (row) => timeValue(row.closedAt),
         hold: (row) => timeValue(row.closedAt) - timeValue(row.openedAt),
         symbol: (row) => row.symbol,
+        strategy: (row) => this.strategyOf(row),
         side: (row) => sideLabel(row.side),
         qty: (row) => row.quantity,
         entry: (row) => row.entryPrice,

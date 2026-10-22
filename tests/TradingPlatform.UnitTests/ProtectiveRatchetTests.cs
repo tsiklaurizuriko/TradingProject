@@ -78,6 +78,21 @@ public sealed class ProtectiveRatchetTests
     }
 
     [Fact]
+    public void Ema_cross_locks_breakeven_only_after_ten_percent_and_keeps_the_take()
+    {
+        ProtectiveRatchet.TryAdvance(
+            StrategyTemplateKeys.EmaRsiTrend, PositionSide.Long, 100m, 95m, 115m, 109m, 0.01m)
+            .Should().BeNull();
+
+        var armed = ProtectiveRatchet.TryAdvance(
+            StrategyTemplateKeys.EmaRsiTrend, PositionSide.Long, 100m, 95m, 115m, 110m, 0.01m);
+        armed.Should().NotBeNull();
+        armed!.Value.StopLoss.Should().Be(100.20m);
+        armed.Value.TakeMoved.Should().BeFalse();
+        armed.Value.TakeProfit.Should().Be(115m);
+    }
+
+    [Fact]
     public void Triple_supertrend_locks_breakeven_only_after_ten_percent_and_keeps_the_take()
     {
         var early = ProtectiveRatchet.TryAdvance(

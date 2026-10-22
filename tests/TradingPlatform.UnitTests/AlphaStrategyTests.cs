@@ -31,13 +31,13 @@ public sealed class AlphaStrategyTests
             + StrategyTemplateKeys.ProductionNew.Length);
         StrategyTemplateKeys.Scalping.Should().HaveCount(22);
         StrategyTemplateKeys.Observation.Should().HaveCount(3);
-        StrategyTemplateKeys.OperatorCatalog.Should().HaveCount(30);
+        StrategyTemplateKeys.OperatorCatalog.Should().HaveCount(31);
         StrategyTemplateKeys.IsOperatorCatalog(StrategyTemplateKeys.BtcDailyMax10).Should().BeTrue();
         StrategyTemplateKeys.IsOperatorCatalog(StrategyTemplateKeys.TsMomentum285).Should().BeTrue();
         StrategyTemplateKeys.TimeframesFor(StrategyTemplateKeys.TsMomentum285).Should().Equal("1d");
         StrategyTemplateKeys.DirectionsFor(StrategyTemplateKeys.TsMomentum285).Should().Equal("LONG");
         StrategyTemplateKeys.IsOperatorCatalog(StrategyTemplateKeys.RsiPullback).Should().BeTrue();
-        StrategyTemplateKeys.IsOperatorCatalog(StrategyTemplateKeys.MacdTrend).Should().BeFalse();
+        StrategyTemplateKeys.IsOperatorCatalog(StrategyTemplateKeys.MacdTrend).Should().BeTrue();
         StrategyTemplateKeys.IsOperatorCatalog(StrategyTemplateKeys.ScalpEmaMomentum).Should().BeFalse();
         StrategyTemplateKeys.Family(StrategyTemplateKeys.ScalpEmaMomentum).Should().Be("SCALPING");
         StrategyTemplateKeys.All.Should().Equal(

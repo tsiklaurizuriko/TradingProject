@@ -143,7 +143,9 @@ public sealed class RefactoredStrategyTests
         var candles = Flat(80, 100m);
         Eval(StrategyTemplateKeys.FlowZone, candles).Reason.Should().Contain("DATA_UNAVAILABLE");
         Eval(StrategyTemplateKeys.BinHv45, candles).Reason.Should().Contain("DATA_UNAVAILABLE");
-        Eval(StrategyTemplateKeys.EmaRsiTrend, candles).Reason.Should().Contain("DATA_UNAVAILABLE");
+        var ema = Eval(StrategyTemplateKeys.EmaRsiTrend, candles);
+        ema.Signal.Should().Be(SignalType.NoAction);
+        ema.Reason.Should().NotContain("DATA_UNAVAILABLE");
     }
 
     [Fact]

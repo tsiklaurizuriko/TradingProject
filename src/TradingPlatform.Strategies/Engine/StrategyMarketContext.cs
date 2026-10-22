@@ -40,7 +40,6 @@ public static class StrategyMarketContext
             or StrategyTemplateKeys.ClucMay72018
             or StrategyTemplateKeys.CombinedBinHCluc
             or StrategyTemplateKeys.FlowZone
-            or StrategyTemplateKeys.EmaRsiTrend
         || StrategyTemplateKeys.RequiredDatasets(templateKey).Contains("CompletedHtf");
 
     public static bool NeedsOpenInterest(string? templateKey) =>

@@ -175,12 +175,12 @@ const ratings: Record<string, StrategyRating> = {
     sample: 'საჯარო EMA+RSI',
   },
   macd_trend: {
-    stars: 1,
-    verdict: 'avoid',
-    note: 'Frozen, მაგრამ 528 წიგნზე ≈ −69%. არ გაუშვა.',
-    pf: 0.694762,
-    bookReturnPct: -69.39,
-    sample: '528×3 Model B',
+    stars: 3,
+    verdict: 'weak',
+    note: 'MACD 12/26/9 სიგნალის გადაკვეთა. ძველი წიგნის −69% ამ წესის გაზომვა არ არის.',
+    pf: null,
+    bookReturnPct: null,
+    sample: 'საჯარო MACD',
   },
   donchian_breakout: {
     stars: 1,

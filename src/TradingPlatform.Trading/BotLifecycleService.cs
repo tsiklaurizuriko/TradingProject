@@ -1456,7 +1456,8 @@ public sealed class TradingQueryService : ITradingQueryService
             fee.Status == FeeKnowledge.Known ? fee.Asset : null,
             t.ClosedAt is null ? null : t.NetPnL,
             t.FundingPnL,
-            t.ClosedAt is null || t.NetPnL is not null ? null : TradePnl.PendingReason(fee));
+            t.ClosedAt is null || t.NetPnL is not null ? null : TradePnl.PendingReason(fee),
+            t.Strategy?.Name ?? "");
     }
 
     private static TradeDto MapTrade(PerformanceTradeRow t)
@@ -1480,7 +1481,8 @@ public sealed class TradingQueryService : ITradingQueryService
             fee.Status == FeeKnowledge.Known ? fee.Asset : null,
             t.ClosedAt is null ? null : t.NetPnL,
             t.FundingPnL,
-            t.ClosedAt is null || t.NetPnL is not null ? null : TradePnl.PendingReason(fee));
+            t.ClosedAt is null || t.NetPnL is not null ? null : TradePnl.PendingReason(fee),
+            t.StrategyName ?? "");
     }
 
     private static List<StrategyResultDto> BuildStrategyResults(

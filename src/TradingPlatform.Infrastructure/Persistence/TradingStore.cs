@@ -838,6 +838,7 @@ public sealed class TradingStore : ITradingStore
             .AsNoTracking()
             .IgnoreQueryFilters()
             .Include(t => t.Bot)
+            .Include(t => t.Strategy)
             .OrderByDescending(t => t.ClosedAt ?? t.OpenedAt)
             .Take(take)
             .ToListAsync(cancellationToken);

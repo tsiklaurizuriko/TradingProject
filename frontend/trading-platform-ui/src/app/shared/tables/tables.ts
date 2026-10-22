@@ -22,6 +22,7 @@ import {
   qty,
   sideLabel,
   signedMoney,
+  tradeStrategyName,
 } from '../../core/trading/trading.models';
 
 @Component({
@@ -316,6 +317,7 @@ export class PositionTableComponent {
               <thead>
                 <tr>
                   <th><app-sort-btn column="symbol" [query]="list">Coin</app-sort-btn></th>
+                  <th><app-sort-btn column="strategy" [query]="list">Strategy</app-sort-btn></th>
                   <th><app-sort-btn column="side" [query]="list">Side</app-sort-btn></th>
                   <th class="num"><app-sort-btn column="qty" [query]="list" align="end">Vol</app-sort-btn></th>
                   <th class="num"><app-sort-btn column="entry" [query]="list" align="end">Entry</app-sort-btn></th>
@@ -329,6 +331,7 @@ export class PositionTableComponent {
                 @for (row of visible(); track row.id) {
                   <tr>
                     <td><strong>{{ row.symbol }}</strong></td>
+                    <td>{{ strategyOf(row) }}</td>
                     <td><span class="badge" [class.badge-long]="isLongSide(row.side)" [class.badge-short]="!isLongSide(row.side)">{{ sideLabel(row.side) }}</span></td>
                     <td class="num">{{ qty(row.quantity) }}</td>
                     <td class="num">{{ price(row.entryPrice) }}</td>
@@ -361,14 +364,21 @@ export class TradeTableComponent {
   readonly signedMoney = signedMoney;
   readonly pct = pct;
   readonly ui = inject(UiStateService);
+  private readonly trading = inject(TradingService);
   readonly list = new ListQuery();
+
+  strategyOf(row: TradeDto): string {
+    return tradeStrategyName(row, this.trading.bots()) || '—';
+  }
+
   readonly visible = computed(() =>
     this.list.apply(
       this.trades().filter((row) => !!row.closedAt),
-      (row) => [row.symbol],
+      (row) => [row.symbol, this.strategyOf(row)],
       {
         time: (row) => timeValue(row.closedAt ?? row.openedAt),
         symbol: (row) => row.symbol,
+        strategy: (row) => this.strategyOf(row),
         side: (row) => sideLabel(row.side),
         qty: (row) => row.quantity,
         entry: (row) => row.entryPrice,

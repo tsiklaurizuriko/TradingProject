@@ -103,15 +103,15 @@ public sealed class StrategyEngineTests
     }
 
     [Fact]
-    public void Ema_rsi_trend_long_on_cross_and_rsi_band()
+    public void Ema_rsi_trend_long_on_cross()
     {
-        SignalOf(StrategyTemplateKeys.EmaRsiTrend, FlatThen(110m)).Should().Be(SignalType.NoAction);
+        SignalOf(StrategyTemplateKeys.EmaRsiTrend, FlatThen(110m)).Should().Be(SignalType.Buy);
     }
 
     [Fact]
     public void Ema_rsi_trend_short_on_cross_down()
     {
-        SignalOf(StrategyTemplateKeys.EmaRsiTrend, FlatThen(90m)).Should().Be(SignalType.NoAction);
+        SignalOf(StrategyTemplateKeys.EmaRsiTrend, FlatThen(90m)).Should().Be(SignalType.Sell);
     }
 
     [Fact]

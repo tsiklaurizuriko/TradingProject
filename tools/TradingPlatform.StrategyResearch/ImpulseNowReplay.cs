@@ -25,6 +25,7 @@ internal static class ImpulseNowReplay
         var wide = new BookStats();
         var first = new BookStats();
         var cappedBook = new BookStats();
+        var later = new BookStats();
         var coins = 0;
         foreach (var file in files)
         {
@@ -39,10 +40,11 @@ internal static class ImpulseNowReplay
             var quote = Quote(book);
             var volume = VolumeRatio(book);
             var days = Days(book);
-            var plain = Walk(book, rise, quote, volume, days, riseMax: 9, skipClimax: false, skipFresh: false);
-            var filtered = Walk(book, rise, quote, volume, days, riseMax: 9, skipClimax: true, skipFresh: true);
-            var capped = Walk(book, rise, quote, volume, days, riseMax: 0.26, skipClimax: true, skipFresh: true);
-            if (plain.Count == 0 && filtered.Count == 0 && capped.Count == 0)
+            var plain = Walk(book, rise, quote, volume, days, riseMax: 9, skipClimax: false, skipFresh: false, firstOnly: true);
+            var filtered = Walk(book, rise, quote, volume, days, riseMax: 9, skipClimax: true, skipFresh: true, firstOnly: true);
+            var capped = Walk(book, rise, quote, volume, days, riseMax: 0.26, skipClimax: true, skipFresh: true, firstOnly: true);
+            var chase = Walk(book, rise, quote, volume, days, riseMax: 9, skipClimax: false, skipFresh: false, firstOnly: false);
+            if (plain.Count == 0 && filtered.Count == 0 && capped.Count == 0 && chase.Count == 0)
             {
                 continue;
             }
@@ -51,6 +53,7 @@ internal static class ImpulseNowReplay
             wide.Add(symbol, plain);
             first.Add(symbol, filtered);
             cappedBook.Add(symbol, capped);
+            later.Add(symbol, chase);
             if (coins % 80 == 0)
             {
                 Console.WriteLine(string.Create(ci, $"coins {coins}"));
@@ -65,6 +68,8 @@ internal static class ImpulseNowReplay
         first.PrintSince(new DateTimeOffset(2026, 8, 8, 0, 0, 0, TimeSpan.FromHours(4)));
         Console.WriteLine("same, rise also capped at 26%");
         cappedBook.Print();
+        Console.WriteLine("later bars too, no climax skip, no fresh-high skip");
+        later.Print();
         return 0;
     }
 
@@ -76,7 +81,8 @@ internal static class ImpulseNowReplay
         List<DayBar> days,
         double riseMax,
         bool skipClimax,
-        bool skipFresh)
+        bool skipFresh,
+        bool firstOnly)
     {
         var trades = new List<Trade>();
         var day = -1;
@@ -95,7 +101,7 @@ internal static class ImpulseNowReplay
                 continue;
             }
 
-            if (i == 0 || rise[i - 1] >= 0.16 || rise[i] > riseMax)
+            if (i == 0 || (firstOnly && rise[i - 1] >= 0.16) || rise[i] > riseMax)
             {
                 i++;
                 continue;

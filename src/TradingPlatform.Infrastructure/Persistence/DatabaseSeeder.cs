@@ -250,7 +250,8 @@ public sealed class DatabaseSeeder
             var hour = row.Key is StrategyTemplateKeys.FAdxSma or StrategyTemplateKeys.TripleSupertrend;
             var freqtradeLong = binhv || hlhb || row.Key is StrategyTemplateKeys.ClucMay72018 or StrategyTemplateKeys.CombinedBinHCluc;
             var longOnly = emaCross || tsMomentum || freqtradeLong || impulse;
-                var parameters = StrategyTemplates.DefaultsFor(row.Key, qualityOn: !row.Research && !flat && !flow && !squeeze && !impulse && !StrategyTemplateKeys.IsObservation(row.Key) && !StrategyTemplateKeys.IsHistoricallyFitted(row.Key)) with
+            var publishedCross = row.Key is StrategyTemplateKeys.MacdTrend or StrategyTemplateKeys.RsiPullback;
+                var parameters = StrategyTemplates.DefaultsFor(row.Key, qualityOn: !publishedCross && !row.Research && !flat && !flow && !squeeze && !impulse && !StrategyTemplateKeys.IsObservation(row.Key) && !StrategyTemplateKeys.IsHistoricallyFitted(row.Key)) with
             {
                 AllowedSide = longOnly ? StrategySides.Long : StrategySides.Both,
                 Timeframe = SeedTimeframe(row.Key)
@@ -437,7 +438,7 @@ public sealed class DatabaseSeeder
 
             if (StrategyTemplateKeys.IsKnown(key))
             {
-                if (StrategyTemplateKeys.IsCanonical(key) && !claimed.Add(StrategyTemplateKeys.Normalize(key)))
+                if (!claimed.Add(StrategyTemplateKeys.Normalize(key)))
                 {
                     strategy.IsEnabled = false;
                     strategy.IsArchived = true;
@@ -544,10 +545,16 @@ public sealed class DatabaseSeeder
         (string Key, string Name, string Description, bool Research) row,
         StrategyTemplateParams parameters)
     {
-        if (StrategyTemplateKeys.IsCanonical(row.Key))
-        {
-            return;
-        }
+            if (StrategyTemplateKeys.IsCanonical(row.Key))
+            {
+                if (row.Key == StrategyTemplateKeys.EmaRsiTrend)
+                {
+                    strategy.Name = row.Name;
+                    strategy.Description = row.Description;
+                }
+
+                return;
+            }
 
         if (row.Key == StrategyTemplateKeys.BtcEma20Ema50Long)
         {
@@ -676,7 +683,8 @@ public sealed class DatabaseSeeder
             strategy.IsEnabled = false;
             strategy.ValidationStatus = StrategyTemplates.ResearchStatus(row.Key);
         }
-        if (string.IsNullOrWhiteSpace(strategy.Description))
+        if (string.IsNullOrWhiteSpace(strategy.Description)
+            || row.Key is StrategyTemplateKeys.MacdTrend or StrategyTemplateKeys.RsiPullback)
         {
             strategy.Description = row.Description;
         }
@@ -684,16 +692,22 @@ public sealed class DatabaseSeeder
         var latest = strategy.Versions.OrderByDescending(v => v.VersionNumber).FirstOrDefault();
         var current = latest is null ? null : StrategyTemplates.Read(latest.DefinitionJson);
         var legacy = latest is not null && LooksLegacyDefinition(latest.DefinitionJson);
+        var publishedCross = row.Key is StrategyTemplateKeys.MacdTrend or StrategyTemplateKeys.RsiPullback;
+        var qualityMismatch = publishedCross
+            ? current?.Quality?.RequireVolume == true
+                || (current?.Quality?.MinAtrPercent ?? 0m) > 0m
+                || (current?.Quality?.MaxAtrPercent ?? 0m) > 0m
+            : current?.Quality?.RequireVolume != true
+                || current?.Quality?.VolumeLookback != 20
+                || current?.Quality?.MinAtrPercent != 0.15m
+                || current?.Quality?.MaxAtrPercent != 4m;
         var mismatch = latest is null
             || legacy
             || current is null
             || current.TemplateKey != parameters.TemplateKey
             || current.AllowedSide != parameters.AllowedSide
             || current.Timeframe != parameters.Timeframe
-            || current.Quality?.RequireVolume != true
-            || current.Quality?.VolumeLookback != 20
-            || current.Quality?.MinAtrPercent != 0.15m
-            || current.Quality?.MaxAtrPercent != 4m
+            || qualityMismatch
             || current.EmaFast != parameters.EmaFast
             || current.EmaSlow != parameters.EmaSlow
             || current.RsiPeriod != parameters.RsiPeriod
@@ -743,11 +757,11 @@ public sealed class DatabaseSeeder
     private static readonly (string Key, string Name, string Description, bool Research)[] Catalog =
     [
         (StrategyTemplateKeys.EmaRsiTrend, "EMA RSI Trend",
-            "Closed-candle EMA cross with an RSI band. Quality filters skip some noisy setups; they do not cap loss at Planned Risk.", false),
+            "Closed-candle EMA 20/50 cross. Exit on the opposite cross. Stop 5%, target 15%. At +10% the stop moves to breakeven. Not a profit claim.", false),
         (StrategyTemplateKeys.MacdTrend, "MACD Trend",
-            "Closed-candle MACD cross with histogram and slow EMA confirmation. Filters skip some noisy setups; they are not a profit claim.", false),
+            "Closed-candle MACD 12/26/9 cross with histogram sign. Exit on the opposite cross. No slow-EMA filter. Not a profit claim.", false),
         (StrategyTemplateKeys.RsiPullback, "RSI Pullback",
-            "Trend-aligned RSI pullback. LONG above the slow EMA at oversold, SHORT below at overbought. Filters skip some noisy setups; they are not a profit claim.", false),
+            "Wilder RSI 14. LONG when RSI crosses above 30, SHORT when it crosses below 70. Exit at RSI 70 or 30. Stop 3%. Not a profit claim.", false),
         (StrategyTemplateKeys.BollingerReversion, "Bollinger Reversion",
             "Close returns inside the Bollinger band while still on the slow EMA side. Filters skip some noisy setups; they are not a profit claim.", false),
         (StrategyTemplateKeys.DonchianBreakout, "Donchian Breakout",
@@ -1036,8 +1050,8 @@ public sealed class DatabaseSeeder
 
     private static readonly Dictionary<string, (decimal Risk, decimal Stop, decimal Take, decimal Leverage, int Positions)> PublishedRisk = new(StringComparer.OrdinalIgnoreCase)
     {
-        [StrategyTemplateKeys.EmaRsiTrend] = (0.5m, 3m, 9m, 2m, 3),
-        [StrategyTemplateKeys.RsiPullback] = (0.5m, 2.5m, 5m, 2m, 3),
+        [StrategyTemplateKeys.EmaRsiTrend] = (0.5m, 5m, 15m, 2m, 3),
+        [StrategyTemplateKeys.RsiPullback] = (0.5m, 3m, 5m, 2m, 3),
         [StrategyTemplateKeys.BollingerReversion] = (0.5m, 2.5m, 2m, 2m, 3),
         [StrategyTemplateKeys.SupertrendEmaTrend] = (0.5m, 3m, 9m, 2m, 3),
         [StrategyTemplateKeys.LiqSweepContinuation] = (0.5m, 3.5m, 7m, 2m, 2),

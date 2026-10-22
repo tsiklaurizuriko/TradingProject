@@ -84,7 +84,8 @@ public sealed record TradeDto(
     string? FeeAsset = null,
     decimal? NetPnL = null,
     decimal? FundingPnL = null,
-    string? NetPendingReason = null);
+    string? NetPendingReason = null,
+    string StrategyName = "");
 
 public sealed record SignalDto(
     Guid Id,
