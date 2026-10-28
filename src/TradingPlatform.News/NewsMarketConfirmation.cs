@@ -426,6 +426,7 @@ public sealed class NewsLiveReport
     public int UniverseCount { get; set; }
     public int Events { get; set; }
     public List<string> Errors { get; set; } = [];
+    public List<string> Diagnostics { get; set; } = [];
     public List<NewsMarketDecision> Decisions { get; set; } = [];
 }
 
@@ -463,9 +464,16 @@ public static class NewsLiveAnalyzer
         return report;
     }
 
-    public static async Task WriteAsync(string repoRoot, NewsLiveReport report, string executionTimeframe, CancellationToken cancellationToken)
+    public static async Task WriteAsync(
+        string repoRoot,
+        NewsLiveReport report,
+        string executionTimeframe,
+        CancellationToken cancellationToken,
+        string? outputDirectory = null)
     {
-        var dir = Path.Combine(repoRoot, "artifacts", "data", "news", "live");
+        var dir = outputDirectory is null
+            ? Path.Combine(repoRoot, "artifacts", "data", "news", "live")
+            : Path.GetFullPath(outputDirectory);
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, "signals.json");
         var records = new List<LiveSignalRecord>();
@@ -503,10 +511,27 @@ public static class NewsLiveAnalyzer
 
         await File.WriteAllTextAsync(path, JsonSerializer.Serialize(records, new JsonSerializerOptions { WriteIndented = true }), cancellationToken);
         var text = new StringBuilder();
-        text.AppendLine(report.SessionRunning ? "LIVE=ON" : "LIVE=OFF");
+        text.AppendLine(outputDirectory is null
+            ? (report.SessionRunning ? "LIVE=ON" : "LIVE=OFF")
+            : "MODE=OFFLINE_SNAPSHOT");
+        text.AppendLine("GeneratedAtUtc=" + DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture));
         text.AppendLine("Universe=" + report.UniverseCount);
         text.AppendLine("Events=" + report.Events);
         text.AppendLine("Decisions=" + report.Decisions.Count);
+        foreach (var diagnostic in report.Diagnostics)
+        {
+            text.AppendLine("Diagnostic=" + diagnostic);
+        }
+
+        foreach (var group in report.Decisions
+                     .Where(item => item.Signal == NewsMarketSignals.NoTrade)
+                     .GroupBy(RejectionLabel)
+                     .OrderByDescending(group => group.Count())
+                     .ThenBy(group => group.Key, StringComparer.Ordinal))
+        {
+            text.AppendLine("Rejection=" + group.Key + ":" + group.Count());
+        }
+
         foreach (var error in report.Errors)
         {
             text.AppendLine("Error=" + error);
@@ -515,11 +540,51 @@ public static class NewsLiveAnalyzer
         foreach (var decision in report.Decisions.Take(20))
         {
             text.AppendLine("---");
+            text.AppendLine("EventId=" + (decision.EventId ?? decision.Record?.EventId ?? "unknown"));
             text.AppendLine(decision.Symbol + " " + decision.Signal);
             text.AppendLine(decision.Reason);
         }
 
         await File.WriteAllTextAsync(Path.Combine(dir, "latest.txt"), text.ToString(), cancellationToken);
+    }
+
+    public static async Task WriteWorkerFailureAsync(string repoRoot, Exception exception, CancellationToken cancellationToken)
+    {
+        var dir = Path.Combine(repoRoot, "artifacts", "data", "news", "live");
+        Directory.CreateDirectory(dir);
+        var text = new StringBuilder();
+        text.AppendLine("WORKER=ERROR");
+        text.AppendLine("GeneratedAtUtc=" + DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture));
+        text.AppendLine("LastSuccessfulSnapshotMayBeStale=true");
+        text.AppendLine("ErrorType=" + exception.GetType().Name);
+        text.AppendLine("Error=See application log for details.");
+        text.AppendLine("Check application logs and order records to determine whether an order was sent before the failure.");
+        await File.WriteAllTextAsync(Path.Combine(dir, "latest.txt"), text.ToString(), cancellationToken);
+    }
+
+    private static string RejectionLabel(NewsMarketDecision decision)
+    {
+        if (!string.IsNullOrWhiteSpace(decision.RejectionCode))
+        {
+            return decision.RejectionCode;
+        }
+
+        var firstLine = decision.Reason.Split('\n', 2)[0].Trim();
+        if (firstLine.StartsWith("Stopped at ", StringComparison.Ordinal))
+        {
+            firstLine = firstLine["Stopped at ".Length..];
+            var colon = firstLine.IndexOf(':');
+            if (colon >= 0)
+            {
+                firstLine = firstLine[..colon];
+            }
+        }
+        else if (firstLine.EndsWith(".", StringComparison.Ordinal))
+        {
+            firstLine = firstLine[..^1];
+        }
+
+        return string.IsNullOrWhiteSpace(firstLine) ? "UNSPECIFIED" : firstLine;
     }
 
     public static IEnumerable<NewsAssetContext> Targets(NewsEvent item, NewsAssetCatalog catalog)
@@ -555,7 +620,7 @@ public static class NewsLiveAnalyzer
         return symbols.DistinctBy(item => item.Symbol);
     }
 
-    public static async Task<int> RunAsync(string repoRoot, CancellationToken cancellationToken)
+    public static async Task<int> RunAsync(string repoRoot, CancellationToken cancellationToken, string? outputDirectory = null)
     {
         var options = LoadOptions(repoRoot);
         options.Enabled = true;
@@ -563,10 +628,32 @@ public static class NewsLiveAnalyzer
         options.Strategy.Enabled = true;
         var catalog = NewsAssetCatalog.LoadUniverse(repoRoot);
         var store = new FileNewsStore(Path.Combine(repoRoot, options.StorePath));
-        var raw = await store.LoadRawAsync(cancellationToken);
+        var loaded = await store.LoadRawAsync(cancellationToken);
+        var raw = outputDirectory is null
+            ? loaded
+            : loaded.Where(item => item.RetrievedAtUtc >= DateTimeOffset.UtcNow.AddHours(-6)).ToList();
         var events = raw.Count == 0 ? [] : new NewsPipeline(options, catalog: catalog).Build(raw);
-        var market = await LoadMarketAsync(repoRoot, options, catalog, events, cancellationToken);
-        var report = Analyze(options, catalog, events, market, DateTimeOffset.UtcNow);
+        var scoped = events
+            .Where(item => item.MarketScope != MarketScope.Global || item.AffectedAssets.Count > 0)
+            .ToList();
+        var market = await LoadMarketAsync(repoRoot, options, catalog, scoped, cancellationToken);
+        var report = Analyze(options, catalog, scoped, market, DateTimeOffset.UtcNow);
+        if (outputDirectory is not null)
+        {
+            report.Diagnostics.Add("RawArticlesStored=" + loaded.Count);
+            report.Diagnostics.Add("RawArticlesInLastSixHours=" + raw.Count);
+            report.Diagnostics.Add("EventsAfterPipelineGates=" + events.Count);
+            report.Diagnostics.Add("EventsSentToMarketScoring=" + scoped.Count);
+            report.Diagnostics.Add("UnscopedGlobalEvents=" + events.Count(item => item.MarketScope == MarketScope.Global && item.AffectedAssets.Count == 0));
+            var unmapped = scoped.Where(item => !Targets(item, catalog).Any()).ToList();
+            report.Diagnostics.Add("EventsWithoutMappedTargets=" + unmapped.Count);
+            foreach (var item in unmapped.Take(10))
+            {
+                var headline = item.OriginalArticles.FirstOrDefault()?.Title ?? item.EventId;
+                headline = headline.Replace('\r', ' ').Replace('\n', ' ').Replace('|', '/');
+                report.Diagnostics.Add("UnmappedEvent=" + item.EventId + "|" + headline);
+            }
+        }
         foreach (var decision in report.Decisions)
         {
             if (decision.Record is not null
@@ -579,11 +666,14 @@ public static class NewsLiveAnalyzer
 
         if (events.Count == 0)
         {
-            report.Errors.Add("No new articles are in the local store. Providers were not called per coin, and no history was invented.");
+            report.Errors.Add(outputDirectory is null
+                ? "No new articles are in the local store. Providers were not called per coin, and no history was invented."
+                : "No raw articles were retrieved in the last six hours. See provider logs for ingestion status.");
         }
 
-        await WriteAsync(repoRoot, report, options.Strategy.Timeframes.Execution, cancellationToken);
-        Console.WriteLine(await File.ReadAllTextAsync(Path.Combine(repoRoot, "artifacts", "data", "news", "live", "latest.txt"), cancellationToken));
+        await WriteAsync(repoRoot, report, options.Strategy.Timeframes.Execution, cancellationToken, outputDirectory);
+        var reportDirectory = outputDirectory ?? Path.Combine(repoRoot, "artifacts", "data", "news", "live");
+        Console.WriteLine(await File.ReadAllTextAsync(Path.Combine(reportDirectory, "latest.txt"), cancellationToken));
         return 0;
     }
 

@@ -40,6 +40,22 @@
 
 .dash-bots { grid-column: 1 / -1; height: 420px; }
 .dash-bots:has(.is-collapsed) { height: auto; }
+.dash-news {
+  grid-column: 1 / -1;
+  min-height: 0;
+  max-height: 640px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.dash-news .pump-detail { white-space: normal; max-width: 460px; }
+.dash-news .table-scroll { flex: 1; min-height: 0; overflow: auto; }
+.dash-news .news-detail {
+  max-width: 640px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .dash-book { grid-column: 1 / -1; min-height: 380px; height: 420px; }
 .dash-account { grid-column: span 3; min-height: 280px; min-width: 0; }
 .dash-pnl { grid-column: span 3; min-height: 280px; }
@@ -124,14 +140,14 @@
 
 @media (max-width: 899px) and (min-width: 600px) {
   .dash-kpi { grid-column: span 6; }
-  .dash-chart, .dash-watch, .dash-controls, .dash-bots, .dash-book, .dash-account, .dash-pnl, .dash-risk {
+  .dash-chart, .dash-watch, .dash-controls, .dash-bots, .dash-news, .dash-book, .dash-account, .dash-pnl, .dash-risk {
     grid-column: span 12;
   }
   .dash-chart, .dash-watch { height: 360px; }
 }
 
 @media (max-width: 599px) {
-  .dash-kpi, .dash-chart, .dash-watch, .dash-controls, .dash-bots, .dash-book, .dash-account, .dash-pnl, .dash-risk {
+  .dash-kpi, .dash-chart, .dash-watch, .dash-controls, .dash-bots, .dash-news, .dash-book, .dash-account, .dash-pnl, .dash-risk {
     grid-column: span 12;
   }
   .dash-kpi { height: auto; }

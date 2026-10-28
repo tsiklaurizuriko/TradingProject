@@ -248,13 +248,13 @@ public class CrossSectionalReversalTests
         plan.Rejected.Should().Contain(row => row.Reason == CrossSectionalRiskPolicy.SameSymbolOccupied);
         plan.Rejected.Should().Contain(row => row.Reason == CrossSectionalRiskPolicy.ClusterLimit);
         var trading = new TradingPlatform.Application.Trading.TradingOptions { LiveTradingEnabled = false };
-        CrossSectionalRiskPolicy.LiveActivationBlock(trading, true, true, true, false, false, false, true).Should().Contain("LIVE = OFF");
+        CrossSectionalRiskPolicy.LiveActivationBlock(trading, true, true, true, false, false, true).Should().Contain("LIVE = OFF");
         trading.LiveTradingEnabled = true;
         trading.CrossSectionalReversal.Enabled = true;
         trading.CrossSectionalReversal.LiveEnabled = true;
         trading.CrossSectionalReversal.Return15mEnabled = true;
         trading.CrossSectionalReversal.ProductionApproval = "INSUFFICIENT_EVIDENCE";
-        CrossSectionalRiskPolicy.LiveActivationBlock(trading, true, true, true, false, false, false, true).Should().BeNull();
+        CrossSectionalRiskPolicy.LiveActivationBlock(trading, true, true, true, false, false, true).Should().BeNull();
         CrossSectionalReversalGate.BlockOrders(trading, StrategyTemplateKeys.CrossSectionalReversalReturn15m, TradingMode.Live).Should().BeNull();
         CrossSectionalReversalGate.BlockOrders(trading, StrategyTemplateKeys.EmaRsiTrend, TradingMode.Live).Should().BeNull();
         trading.LiveTradingEnabled = false;

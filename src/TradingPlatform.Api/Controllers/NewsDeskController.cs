@@ -27,7 +27,10 @@ public sealed class NewsDeskController : ControllerBase
     [HttpGet]
     public async Task<NewsTradingDeskDto> Get(CancellationToken cancellationToken)
     {
+        var root = RepoRoot(_environment.ContentRootPath);
         var desk = NewsDesk.Read(_environment.ContentRootPath, _news.Enabled);
+        var pump = UnexplainedPumpDeskStore.Read(root);
+        pump.Enabled = _news.UnexplainedPump.Enabled;
         var store = new NewsDatabase(_db);
         var session = await store.GetOrCreateSessionAsync(cancellationToken);
         var latestEvent = await store.LatestEventAsync(cancellationToken);
@@ -54,7 +57,8 @@ public sealed class NewsDeskController : ControllerBase
             session.LastStatus,
             await store.RecentFeedAsync(30, _news.Strategy, DateTimeOffset.UtcNow, cancellationToken),
             await store.RecentActivityAsync(40, cancellationToken),
-            HealthRows(_news, await store.ProviderHealthAsync(cancellationToken), DateTimeOffset.UtcNow));
+            HealthRows(_news, await store.ProviderHealthAsync(cancellationToken), DateTimeOffset.UtcNow),
+            pump);
     }
 
     [HttpPost("start")]
@@ -176,4 +180,5 @@ public sealed record NewsTradingDeskDto(
     string? CollectionStatus,
     IReadOnlyList<NewsFeedRow> Items,
     IReadOnlyList<NewsActivityRow> Activity,
-    IReadOnlyList<NewsProviderHealthRow> Providers);
+    IReadOnlyList<NewsProviderHealthRow> Providers,
+    UnexplainedPumpDeskFile Pump);

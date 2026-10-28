@@ -5,6 +5,7 @@ using TradingPlatform.Backtesting;
 using TradingPlatform.Domain.Market;
 using TradingPlatform.Research;
 using TradingPlatform.Strategies.Engine;
+using TradingPlatform.Strategies.Indicators;
 
 namespace TradingPlatform.StrategyResearch;
 
@@ -53,15 +54,27 @@ internal static class CatalogDailyReplay
         [StrategyTemplateKeys.TripleSupertrend] = (0.5m, 8m, 10m, 1m, 5),
     };
 
-    public static async Task<int> RunAsync(string root, string cacheDir, int days, CancellationToken cancellationToken)
+    public static async Task<int> RunAsync(string root, string cacheDir, int days, CancellationToken cancellationToken, string? strategyFilter = null, string? symbolFilter = null, DateTimeOffset? holdoutFrom = null)
     {
         days = Math.Clamp(days, 5, 120);
         var end = DateTimeOffset.UtcNow;
         var start = end.AddDays(-days);
+        var replayStart = holdoutFrom.HasValue && holdoutFrom.Value > start ? holdoutFrom.Value : start;
         var universe = LoadUniverse(root);
+        if (!string.IsNullOrWhiteSpace(symbolFilter))
+        {
+            universe = universe.Where(symbol => string.Equals(symbol, symbolFilter, StringComparison.OrdinalIgnoreCase)).ToArray();
+        }
         var specs = StrategyTemplateKeys.OperatorCatalog
             .Select(Describe)
+            .Where(spec => string.IsNullOrWhiteSpace(strategyFilter)
+                || string.Equals(spec.Key, strategyFilter, StringComparison.OrdinalIgnoreCase))
             .ToArray();
+        if (specs.Length == 0 || universe.Length == 0)
+        {
+            Console.Error.WriteLine($"No catalog strategy or symbols matched filters. strategy={strategyFilter ?? "*"}, symbol={symbolFilter ?? "*"}.");
+            return 2;
+        }
         using var http = new HttpClient { BaseAddress = new Uri("https://fapi.binance.com/"), Timeout = TimeSpan.FromSeconds(60) };
         http.DefaultRequestHeaders.UserAgent.ParseAdd("TradingPlatformCatalogDaily/1.0");
         var futures = new BinanceFuturesHistoryClient(http);
@@ -71,8 +84,8 @@ internal static class CatalogDailyReplay
         var notes = new List<string>();
         var fills = specs.ToDictionary(spec => spec.Key, _ => new List<Fill>(), StringComparer.OrdinalIgnoreCase);
 
-        Console.WriteLine($"Catalog daily replay. Window {start:yyyy-MM-dd} → {end:yyyy-MM-dd} UTC. {specs.Length} strategies. {universe.Length} USD-M coins.");
-        Console.WriteLine("One $10,000 book per strategy. Position cap is the strategy's own cap. Fee 0.10% + slippage 0.05%. Funding is not charged. Open trades are marked at the last close.");
+        Console.WriteLine($"Catalog daily replay. Window {replayStart:yyyy-MM-dd} → {end:yyyy-MM-dd} UTC (data warmup from {start:yyyy-MM-dd}). {specs.Length} strategies. {universe.Length} USD-M coins.");
+        Console.WriteLine("One $10,000 book per strategy. Position cap is the strategy's own cap. Fee 0.10% + slippage 0.05%. Funding settlements are charged where available. Open trades are marked at the last close.");
 
         foreach (var frame in specs.GroupBy(spec => spec.Timeframe))
         {
@@ -116,14 +129,15 @@ internal static class CatalogDailyReplay
                 }
 
                 StrategyFuturesSeries? aligned = null;
+                IReadOnlyList<FundingPoint> fundingRows = [];
                 if (needsFutures)
                 {
                     try
                     {
                         var fetchFrom = FetchFrom("1h", start);
-                        var funding = await FuturesHistoryCache.LoadOrFetchFundingAsync(futures, futuresRoot, symbol, fetchFrom, end, force: false, cancellationToken);
+                        fundingRows = await FuturesHistoryCache.LoadOrFetchFundingAsync(futures, futuresRoot, symbol, fetchFrom, end, force: false, cancellationToken);
                         var oi = await FuturesHistoryCache.LoadOrFetchOpenInterestAsync(futures, futuresRoot, symbol, "1h", fetchFrom, end, force: false, cancellationToken);
-                        aligned = FuturesHistoryCache.Align(series, funding, oi, mark: null, index: null, basis: null);
+                        aligned = FuturesHistoryCache.Align(series, fundingRows, oi, mark: null, index: null, basis: null);
                     }
                     catch (Exception ex)
                     {
@@ -146,8 +160,27 @@ internal static class CatalogDailyReplay
                     }
 
                     var definition = validator.Parse(StrategyTemplates.Build(spec.Name, 1, Parameters(spec, symbol)));
-                    var settings = Settings(start, end, book, spec.Key);
-                    var result = replay.Run(definition, series, settings, futures: wantsFutures ? aligned : null);
+                    var settings = Settings(replayStart, end, book, spec.Key);
+                    var settlements = wantsFutures
+                        ? fundingRows.Select(point => new ReplayFundingSettlement(point.FundingTime, point.FundingRate)).ToList()
+                        : [];
+                    var evalFrom = holdoutFrom.HasValue
+                        ? series.ToList().FindIndex(bar => bar.OpenTime >= replayStart)
+                        : 0;
+                    if (evalFrom < 0 || evalFrom >= series.Count)
+                    {
+                        continue;
+                    }
+                    var result = replay.Run(
+                        definition,
+                        series,
+                        settings,
+                        indicatorCache: holdoutFrom.HasValue ? new CausalIndicatorCache(series) : null,
+                        evaluateFromInclusive: holdoutFrom.HasValue ? evalFrom : null,
+                        evaluateToExclusive: holdoutFrom.HasValue ? series.Count : null,
+                        futures: wantsFutures ? aligned : null,
+                        fundingSettlements: settlements.Count > 0 ? settlements : null,
+                        symbol: symbol);
                     foreach (var trade in result.Trades)
                     {
                         fills[spec.Key].Add(new Fill(symbol, trade.OpenedAt, trade.ClosedAt, trade.PnL, trade.Reason));
@@ -190,8 +223,9 @@ internal static class CatalogDailyReplay
 
         var outDir = Path.Combine(root, "artifacts", "catalog-daily");
         Directory.CreateDirectory(outDir);
-        var path = Path.Combine(outDir, "summary.txt");
-        var text = Render(start, end, rows, notes);
+        var fileName = string.IsNullOrWhiteSpace(strategyFilter) ? "summary.txt" : $"summary-{strategyFilter}{(holdoutFrom.HasValue ? "-holdout" : "")}.txt";
+        var path = Path.Combine(outDir, fileName);
+        var text = Render(replayStart, end, rows, notes);
         await File.WriteAllTextAsync(path, text, cancellationToken);
         Console.WriteLine(text);
         Console.WriteLine($"wrote {path}");

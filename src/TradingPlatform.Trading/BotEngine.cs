@@ -2078,7 +2078,11 @@ public sealed class BotEngine : IBotEngine
             {
                 Sizing = hints with
                 {
-                    MaxMarginUsdt = observation ? ObservationStrategies.MaxEntryMarginUsdt : FlatRangeStrategy.MaxEntryMarginUsdt
+                    MaxMarginUsdt = StrategyTemplateKeys.Normalize(definition.Template) == StrategyTemplateKeys.ObsShockFade
+                        ? ObservationStrategies.ShockFadeMaxEntryMarginUsdt
+                        : observation
+                            ? ObservationStrategies.MaxEntryMarginUsdt
+                            : FlatRangeStrategy.MaxEntryMarginUsdt
                 }
             };
         }

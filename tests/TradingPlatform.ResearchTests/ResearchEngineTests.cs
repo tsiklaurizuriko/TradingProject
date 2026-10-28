@@ -343,7 +343,7 @@ public sealed class ResearchEngineTests
         low.Leverage.Should().Be(3m);
         low.StopLossPercent.Should().Be(2m);
         low.TakeProfitPercent.Should().Be(4m);
-        low.MaxDailyLossPercent.Should().Be(3m);
+        low.MaxDailyLossPercent.Should().Be(0m);
         low.MaxSimultaneousPositions.Should().Be(2);
         low.MaxConsecutiveLosses.Should().Be(5);
         low.CooldownMinutes.Should().Be(30);

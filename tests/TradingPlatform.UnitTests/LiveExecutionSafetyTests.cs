@@ -382,8 +382,7 @@ public sealed class LiveRiskBoundaryTests
         Reject(profile, Facts() with { OpenRiskPercent = 4m }).Should().Contain("exposure");
         Reject(profile, Facts() with { OpenPositions = 2 }).Should().Contain("Position count");
         Reject(profile, Facts() with { PositionsOnSymbol = 1 }).Should().Contain("already has");
-        Reject(profile, Facts() with { DailyRealizedPnl = -30m }).Should().Contain("Daily realized");
-        Reject(profile, Facts() with { DailyRealizedPnl = -29.99m }).Should().BeNull();
+        Reject(profile, Facts() with { DailyRealizedPnl = -30m }).Should().BeNull();
         Reject(profile, Facts() with { Leverage = 3.01m }).Should().Contain("Leverage");
         Reject(profile, Facts() with { Quantity = 0.0009m }).Should().Contain("Quantity");
         Reject(profile, Facts() with { Notional = 4.99m }).Should().Contain("Notional");

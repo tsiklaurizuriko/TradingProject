@@ -206,7 +206,7 @@ public sealed class RiskLossLimitTests
     }
 
     [Fact]
-    public void Live_guard_applies_weekly_and_drawdown_limits()
+    public void Live_guard_ignores_day_and_week_loss_and_still_applies_drawdown()
     {
         var profile = new RiskProfile
         {
@@ -223,10 +223,10 @@ public sealed class RiskLossLimitTests
             AllowLive = true
         };
         LiveRiskFacts Facts(decimal weekly, decimal? drawdown) => new(
-            1_000m, 0m, 0, 0, 0m, 0.5m, 3m, 2m, 0.01m, 500m, 0.001m, 5m, 1_000m, 170m, false, 0, null, DateTimeOffset.UtcNow, true, weekly, drawdown);
+            1_000m, 0m, 0, 0, -30m, 0.5m, 3m, 2m, 0.01m, 500m, 0.001m, 5m, 1_000m, 170m, false, 0, null, DateTimeOffset.UtcNow, true, weekly, drawdown);
 
-        RiskLiveGuard.Reject(TradingMode.Live, profile, Facts(-79m, 14m)).Should().BeNull();
-        RiskLiveGuard.Reject(TradingMode.Live, profile, Facts(-80m, null)).Should().Contain("Weekly");
+        RiskLiveGuard.Reject(TradingMode.Live, profile, Facts(-80m, 14m)).Should().BeNull();
+        RiskLiveGuard.Reject(TradingMode.Live, profile, Facts(-80m, null)).Should().BeNull();
         RiskLiveGuard.Reject(TradingMode.Live, profile, Facts(0m, 15m)).Should().Contain("drawdown");
     }
 

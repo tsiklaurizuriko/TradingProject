@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 
@@ -160,6 +161,359 @@ internal static class FlatRangeStudy
         File.WriteAllText(path, prior + marker + "\n\n" + RiskReport(books, buckets));
         Console.WriteLine("Wrote " + path);
         return 0;
+    }
+
+    public static async Task<int> RunOctoberHoldout(string root, string cacheDir, string candles15mDir, string fundingDir, string outputPath)
+    {
+        Console.WriteLine("Flat range locked-rule October holdout. Research only. No orders.");
+        var trades = new List<(string Symbol, long At, double Gross)>();
+        var productionAlignedTrades = new List<HoldoutTrade>();
+        var books = 0;
+        var hourlyBars = 0;
+        var holdoutStart = new DateTimeOffset(2026, 10, 6, 6, 0, 0, TimeSpan.Zero).ToUnixTimeMilliseconds();
+
+        foreach (var file in Directory.GetFiles(cacheDir, "*_1h.json"))
+        {
+            var symbol = Path.GetFileName(file).Replace("_1h.json", "", StringComparison.OrdinalIgnoreCase);
+            var recentPath = Path.Combine(candles15mDir, symbol + ".json");
+            if (!File.Exists(recentPath)) continue;
+
+            var history = Read(file);
+            var recent = ReadHourlyFrom15m(recentPath);
+            if (recent.N == 0) continue;
+            hourlyBars += recent.N;
+            var book = Merge(history, recent);
+            if (book.N < Lookback + 120) continue;
+            books++;
+
+            var start = Array.BinarySearch(book.OpenMs, holdoutStart);
+            if (start < 0) start = ~start;
+            start = Math.Max(start, Lookback + 100);
+            trades.AddRange(SimulateOctober(book, symbol, start, boundStops: false).Select(trade => (trade.Symbol, trade.At, trade.Gross)));
+            productionAlignedTrades.AddRange(SimulateOctober(book, symbol, start, boundStops: true));
+        }
+
+        var startFunding = new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero).ToUnixTimeMilliseconds();
+        var endFunding = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var funding = await FetchFundingAsync(
+            productionAlignedTrades.Select(trade => trade.Symbol).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+            fundingDir, startFunding, endFunding, CancellationToken.None);
+        var productionWithFunding = productionAlignedTrades.Select(trade =>
+        {
+            var fundingReturn = 0.0;
+            if (funding.Rates.TryGetValue(trade.Symbol, out var settlements))
+            {
+                foreach (var settlement in settlements)
+                {
+                    if (settlement.FundingTime < trade.EntryTimeMs || settlement.FundingTime > trade.ExitTimeMs) continue;
+                    var priceRatio = settlement.MarkPrice > 0 ? settlement.MarkPrice / trade.EntryPrice : 1.0;
+                    fundingReturn -= trade.Side * settlement.FundingRate * priceRatio;
+                }
+            }
+
+            return trade with { Gross = trade.Gross + fundingReturn };
+        }).ToList();
+
+        var sb = new StringBuilder();
+        sb.AppendLine("# Flat range: locked-rule October holdout");
+        sb.AppendLine();
+        sb.AppendLine("This is a prospective temporal holdout of the existing `FlatRangeStudy` rule. No parameters were changed. It starts 2026-10-06 06:00 UTC so all 24-hour bands and prior-100-band width ranks are formed entirely from October bars; earlier 1h cache has a two-hour boundary gap before October. Only entries with a complete 24-hour exit window are included.");
+        sb.AppendLine();
+        sb.AppendLine($"Current-cache symbols with an hourly overlay: {books}. Aggregated October hourly bars: {hourlyBars}. The universe contains current cached contracts only, not delisted symbols.");
+        sb.AppendLine();
+        sb.AppendLine("Both replays use the unchanged prior-24h band and lowest-30%-of-prior-100-bands entry rule. Fees and slippage are 0.12% round trip at 1x, stressed at 1.5x and 2x.");
+        sb.AppendLine();
+        sb.AppendLine($"The close-based research exit produced {trades.Count} trades: exit at opposite 20%, a close through the band, or 24 hours.");
+        sb.AppendLine();
+        sb.AppendLine("| Round-trip cost | Trades | Mean net | Net sum | PF | Win | Top 5 winners share of gross gains | Mean after removing top 5 winners |");
+        sb.AppendLine("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
+        AppendOctoberMetrics(sb, trades);
+
+        sb.AppendLine();
+        sb.AppendLine($"The production-aligned risk rule produced {productionAlignedTrades.Count} trades: exchange stop at the entry-side band bound, take profit at the opposite bound, stop-first when both touch in one hourly candle, 24-hour time exit, skip stop distances below 0.20%, and skip take distance not greater than stop distance. This matches the deployed `FlatRangeStrategy` stop/take definition more closely than the close-based research exit.");
+        sb.AppendLine();
+        sb.AppendLine("| Round-trip cost | Trades | Mean net | Net sum | PF | Win | Top 5 winners share of gross gains | Mean after removing top 5 winners |");
+        sb.AppendLine("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
+        AppendOctoberMetrics(sb, productionAlignedTrades.Select(trade => (trade.Symbol, trade.At, trade.Gross)).ToList());
+
+        sb.AppendLine();
+        sb.AppendLine($"Funding data fetched for {funding.SuccessfulSymbols}/{funding.RequestedSymbols} symbols, covering {funding.SettlementRows} settlements; failures: {funding.Failures.Length}. Funding cash flow is applied at published settlement timestamps using the returned mark price and trade direction. This is separate from fees/slippage.");
+        sb.AppendLine();
+        sb.AppendLine("| Round-trip cost with funding | Trades | Mean net | Net sum | PF | Win | Top 5 winners share of gross gains | Mean after removing top 5 winners |");
+        sb.AppendLine("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
+        AppendOctoberMetrics(sb, productionWithFunding.Select(trade => (trade.Symbol, trade.At, trade.Gross)).ToList());
+        if (funding.Failures.Length > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("Funding-adjusted results are incomplete because some symbols failed to fetch funding data:");
+            foreach (var failure in funding.Failures.Take(20)) sb.AppendLine("- " + failure);
+        }
+
+        var productionNet15 = productionWithFunding.Select(trade => (Trade: trade, Net: trade.Gross - 2 * (FeePerSide + SlipPerSide) * 1.5)).ToList();
+        var bySymbol = productionNet15.GroupBy(row => row.Trade.Symbol, StringComparer.OrdinalIgnoreCase)
+            .Select(group => new { Symbol = group.Key, Count = group.Count(), Mean = group.Average(row => row.Net), Sum = group.Sum(row => row.Net) })
+            .OrderBy(row => row.Mean).ToList();
+        var positiveGainSum = productionNet15.Where(row => row.Net > 0).Sum(row => row.Net);
+        var top10SymbolGain = productionNet15.GroupBy(row => row.Trade.Symbol, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.Sum(row => Math.Max(0, row.Net))).OrderByDescending(value => value).Take(10).Sum();
+        var positionEvents = productionWithFunding.SelectMany(trade => new[] { (Time: trade.EntryTimeMs, Delta: 1), (Time: trade.ExitTimeMs, Delta: -1) })
+            .OrderBy(item => item.Time).ThenBy(item => item.Delta).ToArray();
+        var openPositions = 0;
+        var maxOpenPositions = 0;
+        foreach (var item in positionEvents)
+        {
+            openPositions += item.Delta;
+            maxOpenPositions = Math.Max(maxOpenPositions, openPositions);
+        }
+        var meansBySymbol = bySymbol.Select(row => row.Mean).OrderBy(value => value).ToArray();
+        var p10 = meansBySymbol.Length == 0 ? double.NaN : meansBySymbol[(int)Math.Floor((meansBySymbol.Length - 1) * 0.10)];
+        var median = meansBySymbol.Length == 0 ? double.NaN : meansBySymbol[meansBySymbol.Length / 2];
+        sb.AppendLine();
+        sb.AppendLine("## Cross-symbol and capacity checks at 1.5x cost, including funding");
+        sb.AppendLine();
+        sb.AppendLine($"Symbols with trades: {bySymbol.Count}. Symbols with positive per-trade mean: {bySymbol.Count(row => row.Mean > 0)} ({(bySymbol.Count == 0 ? 0 : bySymbol.Count(row => row.Mean > 0) / (double)bySymbol.Count):P0}). Median symbol mean: {Fmt(median):P2}; 10th percentile: {Fmt(p10):P2}. Symbols with at least 5 trades: {bySymbol.Count(row => row.Count >= 5)}. Top 10 symbols' share of positive per-trade gains: {(positiveGainSum == 0 ? 0 : top10SymbolGain / positiveGainSum):P0}.");
+        sb.AppendLine();
+        sb.AppendLine($"Peak simultaneous positions if every signal is traded at once: {maxOpenPositions}. The 5,886-trade aggregate assumes a separate equal-notional slot per symbol and is not a one-position account backtest. The production risk profile's simultaneous-position and portfolio-risk limits must cap actual deployment; this report does not size an account or compound returns.");
+
+        sb.AppendLine();
+        sb.AppendLine("This is one fixed-rule holdout check, not a parameter search or paper/live approval. A positive result would still require execution-aware costs, delisted-symbol coverage, and a longer untouched forward paper record.");
+        Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+        File.WriteAllText(outputPath, sb.ToString());
+        Console.WriteLine("Wrote " + outputPath);
+        return 0;
+    }
+
+    private static List<HoldoutTrade> SimulateOctober(Bar book, string symbol, int start, bool boundStops)
+    {
+        var trades = new List<HoldoutTrade>();
+        for (var i = start; i + MaxHold < book.N;)
+        {
+            if (!Flat(book, i, out var lo, out var hi))
+            {
+                i++;
+                continue;
+            }
+
+            var entry = book.C[i];
+            var width = hi - lo;
+            var position = (entry - lo) / width;
+            var side = position <= EntryFrac ? 1 : position >= 1 - EntryFrac ? -1 : 0;
+            if (side == 0)
+            {
+                i++;
+                continue;
+            }
+
+            var stop = side > 0 ? lo : hi;
+            var take = side > 0 ? hi : lo;
+            var stopPct = Math.Abs(entry - stop) / entry;
+            var takePct = Math.Abs(take - entry) / entry;
+            if (boundStops && (stopPct < 0.002 || takePct <= stopPct))
+            {
+                i++;
+                continue;
+            }
+
+            var exit = entry;
+            var hold = 1;
+            var last = Math.Min(book.N - 1, i + MaxHold);
+            for (var j = i + 1; j <= last; j++)
+            {
+                hold = j - i;
+                exit = book.C[j];
+                if (boundStops)
+                {
+                    var hitStop = side > 0 ? book.L[j] <= stop : book.H[j] >= stop;
+                    var hitTake = side > 0 ? book.H[j] >= take : book.L[j] <= take;
+                    if (hitStop)
+                    {
+                        exit = stop;
+                        break;
+                    }
+
+                    if (hitTake)
+                    {
+                        exit = take;
+                        break;
+                    }
+                }
+                else
+                {
+                    if ((side > 0 && book.L[j] < lo) || (side < 0 && book.H[j] > hi))
+                    {
+                        exit = side > 0 ? lo : hi;
+                        break;
+                    }
+
+                    var mark = (book.C[j] - lo) / width;
+                    if ((side > 0 && mark >= ExitFrac) || (side < 0 && mark <= 1 - ExitFrac)) break;
+                }
+            }
+
+            var entryTime = book.OpenMs[i] + 3_600_000;
+            var exitTime = book.OpenMs[i + hold] + 3_600_000;
+            trades.Add(new HoldoutTrade(symbol, book.OpenMs[i], entryTime, exitTime, entry, side, side * (exit / entry - 1.0)));
+            i += hold + 1;
+        }
+
+        return trades;
+    }
+
+    private static void AppendOctoberMetrics(StringBuilder sb, IReadOnlyList<(string Symbol, long At, double Gross)> trades)
+    {
+        foreach (var stress in new[] { 1.0, 1.5, 2.0 })
+        {
+            var cost = 2 * (FeePerSide + SlipPerSide) * stress;
+            var net = trades.Select(trade => trade.Gross - cost).ToList();
+            var gains = net.Where(value => value > 0).Sum();
+            var losses = -net.Where(value => value < 0).Sum();
+            var top = net.Where(value => value > 0).OrderByDescending(value => value).Take(5).ToList();
+            var remaining = net.OrderByDescending(value => value).Skip(Math.Min(5, net.Count)).ToList();
+            var pf = losses > 0 ? gains / losses : double.NaN;
+            sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
+                $"| {stress:0.0}x ({cost:P2}) | {net.Count} | {Mean(net):P2} | {net.Sum():P2} | {Fmt(pf)} | {(net.Count == 0 ? 0 : net.Count(value => value > 0) / (double)net.Count):P0} | {(gains == 0 ? 0 : top.Sum() / gains):P0} | {(remaining.Count == 0 ? double.NaN : Mean(remaining)):P2} |"));
+        }
+    }
+
+    private static async Task<FundingDownload> FetchFundingAsync(
+        IReadOnlyList<string> symbols,
+        string outputDirectory,
+        long startTime,
+        long endTime,
+        CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(outputDirectory);
+        using var http = new HttpClient { BaseAddress = new Uri("https://fapi.binance.com/"), Timeout = TimeSpan.FromSeconds(30) };
+        var rates = new ConcurrentDictionary<string, List<FundingSettlement>>(StringComparer.OrdinalIgnoreCase);
+        var failures = new ConcurrentBag<string>();
+        var successful = 0;
+        var rowCount = 0;
+        await Parallel.ForEachAsync(symbols, new ParallelOptions { MaxDegreeOfParallelism = 2, CancellationToken = cancellationToken }, async (symbol, token) =>
+        {
+            try
+            {
+                var path = Path.Combine(outputDirectory, symbol + ".json");
+                if (File.Exists(path))
+                {
+                    try
+                    {
+                        var existing = JsonSerializer.Deserialize<List<FundingSettlement>>(await File.ReadAllTextAsync(path, token));
+                        if (existing is not null)
+                        {
+                            rates[symbol] = existing;
+                            Interlocked.Increment(ref successful);
+                            Interlocked.Add(ref rowCount, existing.Count);
+                            return;
+                        }
+                    }
+                    catch (JsonException)
+                    {
+                        // Re-fetch a malformed partial file.
+                    }
+                }
+
+                var url = string.Create(CultureInfo.InvariantCulture, $"fapi/v1/fundingRate?symbol={Uri.EscapeDataString(symbol)}&startTime={startTime}&endTime={endTime}&limit=1000");
+                using var response = await GetFundingResponseAsync(http, url, token);
+                using var document = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync(token));
+                if (document.RootElement.ValueKind != JsonValueKind.Array) throw new InvalidDataException($"Unexpected funding response for {symbol}.");
+                var settlements = new List<FundingSettlement>();
+                foreach (var row in document.RootElement.EnumerateArray())
+                {
+                    var time = row.GetProperty("fundingTime").GetInt64();
+                    var rate = double.Parse(row.GetProperty("fundingRate").GetString()!, CultureInfo.InvariantCulture);
+                    var mark = row.TryGetProperty("markPrice", out var markElement) && double.TryParse(markElement.GetString(), CultureInfo.InvariantCulture, out var value) ? value : 0.0;
+                    settlements.Add(new FundingSettlement(time, rate, mark));
+                }
+
+                rates[symbol] = settlements;
+                Interlocked.Increment(ref successful);
+                Interlocked.Add(ref rowCount, settlements.Count);
+                await File.WriteAllTextAsync(path, JsonSerializer.Serialize(settlements), token);
+                // Binance documents a shared 500-request/5-minute budget for this endpoint.
+                await Task.Delay(TimeSpan.FromMilliseconds(2_200), token);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                failures.Add(symbol + ": " + ex.GetType().Name + " " + ex.Message);
+            }
+        });
+
+        var manifest = new
+        {
+            DownloadedAtUtc = DateTimeOffset.UtcNow,
+            StartTimeUtc = DateTimeOffset.FromUnixTimeMilliseconds(startTime),
+            EndTimeUtc = DateTimeOffset.FromUnixTimeMilliseconds(endTime),
+            RequestedSymbols = symbols.Count,
+            SuccessfulSymbols = successful,
+            SettlementRows = rowCount,
+            FailedSymbols = failures.OrderBy(value => value, StringComparer.Ordinal).ToArray(),
+            Source = "Binance USD-M GET /fapi/v1/fundingRate"
+        };
+        await File.WriteAllTextAsync(Path.Combine(outputDirectory, "manifest.json"), JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }), cancellationToken);
+        return new FundingDownload(rates, symbols.Count, successful, rowCount, failures.OrderBy(value => value, StringComparer.Ordinal).ToArray());
+    }
+
+    private static async Task<HttpResponseMessage> GetFundingResponseAsync(HttpClient http, string url, CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            var response = await http.GetAsync(url, cancellationToken);
+            if (response.IsSuccessStatusCode) return response;
+            var status = (int)response.StatusCode;
+            var retryAfter = response.Headers.RetryAfter?.Delta;
+            response.Dispose();
+            if (status != 418 && status != 429 && status < 500)
+            {
+                throw new HttpRequestException($"Binance funding endpoint returned {status}.");
+            }
+
+            await Task.Delay(retryAfter ?? TimeSpan.FromSeconds(Math.Min(60, 5 << attempt)), cancellationToken);
+        }
+
+        throw new HttpRequestException("Binance funding endpoint retry limit reached.");
+    }
+
+    private static Bar ReadHourlyFrom15m(string path)
+    {
+        var inv = CultureInfo.InvariantCulture;
+        using var document = JsonDocument.Parse(File.ReadAllBytes(path));
+        var buckets = new SortedDictionary<long, List<(long Open, float High, float Low, float Close)>>();
+        foreach (var row in document.RootElement.EnumerateArray())
+        {
+            var open = DateTimeOffset.Parse(row.GetProperty("OpenTime").GetString()!, inv).ToUnixTimeMilliseconds();
+            var hour = open - open % 3_600_000;
+            if (!buckets.TryGetValue(hour, out var items)) buckets[hour] = items = [];
+            items.Add((open, (float)row.GetProperty("High").GetDouble(), (float)row.GetProperty("Low").GetDouble(), (float)row.GetProperty("Close").GetDouble()));
+        }
+
+        var openMs = new List<long>();
+        var high = new List<float>();
+        var low = new List<float>();
+        var close = new List<float>();
+        foreach (var (hour, items) in buckets)
+        {
+            items.Sort(static (a, b) => a.Open.CompareTo(b.Open));
+            if (items.Count != 4 || items[0].Open != hour || items[1].Open != hour + 900_000 || items[2].Open != hour + 1_800_000 || items[3].Open != hour + 2_700_000) continue;
+            openMs.Add(hour);
+            high.Add(items.Max(item => item.High));
+            low.Add(items.Min(item => item.Low));
+            close.Add(items[^1].Close);
+        }
+
+        return new Bar { OpenMs = openMs.ToArray(), H = high.ToArray(), L = low.ToArray(), C = close.ToArray() };
+    }
+
+    private static Bar Merge(Bar history, Bar recent)
+    {
+        var split = Array.BinarySearch(history.OpenMs, recent.OpenMs[0]);
+        if (split < 0) split = ~split;
+        return new Bar
+        {
+            OpenMs = history.OpenMs.Take(split).Concat(recent.OpenMs).ToArray(),
+            H = history.H.Take(split).Concat(recent.H).ToArray(),
+            L = history.L.Take(split).Concat(recent.L).ToArray(),
+            C = history.C.Take(split).Concat(recent.C).ToArray()
+        };
     }
 
     private static void SimulateRisk(Bar book, RiskBucket[] buckets)
@@ -651,4 +1005,15 @@ internal static class FlatRangeStudy
         public List<double> Net { get; } = [];
         public List<int> Hold { get; } = [];
     }
+
+    private sealed record HoldoutTrade(string Symbol, long At, long EntryTimeMs, long ExitTimeMs, double EntryPrice, int Side, double Gross);
+
+    private sealed record FundingSettlement(long FundingTime, double FundingRate, double MarkPrice);
+
+    private sealed record FundingDownload(
+        ConcurrentDictionary<string, List<FundingSettlement>> Rates,
+        int RequestedSymbols,
+        int SuccessfulSymbols,
+        int SettlementRows,
+        string[] Failures);
 }

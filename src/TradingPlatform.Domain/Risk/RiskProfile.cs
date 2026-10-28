@@ -26,11 +26,11 @@ public sealed class RiskProfile : SoftDeletableEntity
     /// <summary>Application ceiling. Isolated margin = notional / leverage. Not the planned risk.</summary>
     public decimal MaxLeverage { get; set; } = 3m;
 
-    /// <summary>New entries halt when today's realized loss plus open losses (UTC day) reaches this percent of equity.</summary>
-    public decimal MaxDailyLossPercent { get; set; } = 3m;
+    /// <summary>Kept for stored profiles. Day loss no longer halts entries.</summary>
+    public decimal MaxDailyLossPercent { get; set; }
 
-    /// <summary>Same as the daily halt over the UTC week (Monday start). Zero turns it off.</summary>
-    public decimal MaxWeeklyLossPercent { get; set; } = 8m;
+    /// <summary>Kept for stored profiles. Week loss no longer halts entries.</summary>
+    public decimal MaxWeeklyLossPercent { get; set; }
 
     /// <summary>New entries halt when equity is this far below its recorded peak. Zero turns it off.</summary>
     public decimal MaxDrawdownPercent { get; set; } = 15m;

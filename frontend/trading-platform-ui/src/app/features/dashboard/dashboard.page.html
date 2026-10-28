@@ -137,6 +137,123 @@
   <div class="dash-bots">
     <app-bot-table title="Live Bots" [bots]="activeBots()" [positions]="modePositions()" [signals]="trading.workspaceSignals()" (start)="startBot($event)" (stop)="stopBot($event)" />
   </div>
+  <section class="panel dash-news">
+    <div class="section-head">
+      <div class="tabs" role="tablist">
+        <button type="button" [class.is-on]="newsTab() === 'pump'" (click)="newsTab.set('pump')">
+          Pump shorts ({{ pumpPositions().length + pumpChecks().length }})
+        </button>
+        <button type="button" [class.is-on]="newsTab() === 'news'" (click)="newsTab.set('news')">
+          News ({{ newsRows().length }})
+        </button>
+      </div>
+      <div class="section-head-meta">
+        @if (newsTab() === 'pump') {
+          <span class="badge" [class.badge-running]="pumpScanning()" [class.badge-stopped]="!pumpScanning()">
+            {{ pumpScanning() ? 'Scanning' : 'Off' }}
+          </span>
+          @if (newsDesk()?.pump?.lastScanUtc) {
+            <span class="tiny">Last scan {{ when(newsDesk()!.pump!.lastScanUtc) }}</span>
+          }
+        } @else {
+          <span class="badge" [class.badge-running]="newsDesk()?.running" [class.badge-stopped]="!newsDesk()?.running">
+            {{ newsDesk()?.running ? 'Running' : 'Stopped' }}
+          </span>
+        }
+        <a class="tiny" routerLink="/news">View all</a>
+      </div>
+    </div>
+    <div class="table-scroll">
+      @if (newsTab() === 'pump') {
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Coin</th>
+              <th>Order</th>
+              <th>Position</th>
+              <th class="num">Entry</th>
+              <th class="num">Qty</th>
+              <th class="num">Result</th>
+              <th>Detail</th>
+              <th>Time</th>
+            </tr>
+          </thead>
+          <tbody>
+            @if (!pumpPositions().length && !pumpChecks().length) {
+              <tr>
+                <td colspan="8" class="tiny">No 150% move has been checked yet.</td>
+              </tr>
+            }
+            @for (row of pumpPositions(); track row.coin + row.openedAt) {
+              <tr>
+                <td><strong>{{ row.coin }}</strong></td>
+                <td><span class="badge badge-ok">Order filled</span></td>
+                <td>
+                  <span class="badge" [class.badge-short]="row.open" [class.badge-stopped]="!row.open">
+                    {{ row.open ? 'Open' : 'Closed' }}
+                  </span>
+                </td>
+                <td class="num">{{ price(row.entry) }}</td>
+                <td class="num">{{ row.quantity ? price(row.quantity) : '—' }}</td>
+                <td class="num" [class]="row.pnlKnown ? pnlClass(row.pnl) : ''">{{ pumpResult(row) }}</td>
+                <td class="pump-detail">
+                  @if (row.open) {
+                    Unrealized · mark {{ price(row.mark) }} · high {{ price(row.pumpHigh) }}
+                  } @else {
+                    Realized{{ row.closeReason ? ' · ' + row.closeReason : '' }}
+                  }
+                </td>
+                <td>{{ when(row.openedAt) }}</td>
+              </tr>
+            }
+            @for (row of pumpChecks(); track row.coin + row.at + row.orderState + row.reason) {
+              <tr>
+                <td><strong>{{ row.coin }}</strong></td>
+                <td>{{ orderLabel(row.orderState) }}</td>
+                <td class="tiny">—</td>
+                <td class="num">{{ row.entry ? price(row.entry) : '—' }}</td>
+                <td class="num">{{ row.quantity ? price(row.quantity) : '—' }}</td>
+                <td class="num">—</td>
+                <td class="pump-detail">{{ riseLine(row) }}. {{ row.reason }}</td>
+                <td>{{ when(row.at) }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      } @else {
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Coin</th>
+              <th>Decision</th>
+              <th>Detail</th>
+              <th>Time</th>
+            </tr>
+          </thead>
+          <tbody>
+            @if (!newsRows().length) {
+              <tr>
+                <td colspan="4" class="tiny">No news decision yet.</td>
+              </tr>
+            }
+            @for (row of newsRows(); track row.coin + row.at + row.headline) {
+              <tr>
+                <td><strong>{{ row.coin || 'News' }}</strong></td>
+                <td>
+                  <span class="badge" [class.badge-long]="row.verdict === 'LONG'" [class.badge-short]="row.verdict === 'SHORT'" [class.badge-stopped]="row.verdict !== 'LONG' && row.verdict !== 'SHORT'">
+                    {{ newsVerdict(row) }}
+                  </span>
+                  <span class="tiny" style="margin-left:8px">{{ orderLabel(row.orderState) }}</span>
+                </td>
+                <td class="news-detail">{{ row.headline }}</td>
+                <td>{{ when(row.at) }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      }
+    </div>
+  </section>
   <div class="dash-book">
     <app-ledger-book
       [positions]="modePositions()"

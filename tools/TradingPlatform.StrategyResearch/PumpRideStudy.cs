@@ -298,7 +298,7 @@ internal static class PumpRideStudy
     /// Historical measurement of the older book (26% rise cap, volume 3–7×, no fresh 30-day high).
     /// The live entry no longer uses those filters. Reported under several costs.
     /// </summary>
-    public static int RunLive(string root, string cacheDir)
+    public static int RunLive(string root, string cacheDir, string? outputPath = null, string? overlayDirectory = null)
     {
         Console.WriteLine("Pump ride live definition. Research only. No orders.");
         var ci = CultureInfo.InvariantCulture;
@@ -313,7 +313,7 @@ internal static class PumpRideStudy
         var books = new List<(string Symbol, Book Book, Features F, List<DayBar> Days)>();
         foreach (var file in Directory.GetFiles(cacheDir, "*_15m.json"))
         {
-            var book = Read(file);
+            var book = ReadWithOverlay(file, overlayDirectory);
             if (book.N >= Month + Day * 7)
             {
                 books.Add((Path.GetFileName(file).Replace("_15m.json", "", StringComparison.OrdinalIgnoreCase), book, Features.Build(book), DailyBars(book)));
@@ -367,7 +367,7 @@ internal static class PumpRideStudy
         foreach (var file in Directory.GetFiles(cacheDir, "*_15m.json"))
         {
             var symbol = Path.GetFileName(file).Replace("_15m.json", "", StringComparison.OrdinalIgnoreCase);
-            var book = Read(file);
+            var book = ReadWithOverlay(file, overlayDirectory);
             if (book.N < Month + Day * 7)
             {
                 continue;
@@ -434,10 +434,130 @@ internal static class PumpRideStudy
             sb.AppendLine(string.Create(ci, $"- {t.Symbol} {DateTimeOffset.FromUnixTimeMilliseconds(t.At):yyyy-MM-dd HH:mm} net {t.Gross - 0.003:P0}"));
         }
 
-        var path = Path.Combine(root, "docs", "PUMP_RIDE_LIVE.md");
+        if (outputPath is not null)
+        {
+            AppendOosRobustness(sb, trades, ci);
+            AppendOctoberHoldout(sb, trades, ci);
+        }
+
+        var path = outputPath ?? Path.Combine(root, "docs", "PUMP_RIDE_LIVE.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, sb.ToString());
         Console.WriteLine("Wrote " + path);
         return 0;
+    }
+
+    private static Book ReadWithOverlay(string path, string? overlayDirectory)
+    {
+        var historical = Read(path);
+        if (overlayDirectory is null)
+        {
+            return historical;
+        }
+
+        var symbol = Path.GetFileName(path).Replace("_15m.json", "", StringComparison.OrdinalIgnoreCase);
+        var overlayPath = Path.Combine(overlayDirectory, symbol + ".json");
+        if (!File.Exists(overlayPath))
+        {
+            return historical;
+        }
+
+        var recent = Read(overlayPath);
+        if (recent.N == 0)
+        {
+            return historical;
+        }
+
+        var split = Array.BinarySearch(historical.OpenMs, recent.OpenMs.FirstOrDefault());
+        if (split < 0)
+        {
+            split = ~split;
+        }
+
+        return new Book
+        {
+            OpenMs = historical.OpenMs.Take(split).Concat(recent.OpenMs).ToArray(),
+            O = historical.O.Take(split).Concat(recent.O).ToArray(),
+            H = historical.H.Take(split).Concat(recent.H).ToArray(),
+            L = historical.L.Take(split).Concat(recent.L).ToArray(),
+            C = historical.C.Take(split).Concat(recent.C).ToArray(),
+            V = historical.V.Take(split).Concat(recent.V).ToArray()
+        };
+    }
+
+    private static void AppendOctoberHoldout(StringBuilder sb, IReadOnlyList<(long At, long Until, int Split, double Gross, string Symbol)> trades, CultureInfo ci)
+    {
+        var start = new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero).ToUnixTimeMilliseconds();
+        var holdout = trades.Where(trade => trade.Split == 2 && trade.At >= start).ToList();
+        sb.AppendLine();
+        sb.AppendLine("## Additional October holdout (2026-10-01 onward)");
+        sb.AppendLine();
+        sb.AppendLine("This time segment was not included in the local cache used by the earlier report. It is a prospective extension of the same locked live definition, not a replacement for delisted-symbol coverage. Trades with less than a full 4-day exit window at download time are excluded by the existing replay logic.");
+        sb.AppendLine();
+        sb.AppendLine("| Cost | n | Mean net | PF | Win | Net sum | Top 5 share of gains |");
+        sb.AppendLine("| ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
+        foreach (var cost in new[] { 0.003, 0.006, 0.010 })
+        {
+            var net = holdout.Select(trade => trade.Gross - cost).ToList();
+            var gain = net.Where(value => value > 0).Sum();
+            var loss = -net.Where(value => value < 0).Sum();
+            var mean = net.Count == 0 ? 0 : net.Average();
+            var pf = loss > 0 ? gain / loss : 99;
+            var topFiveShare = gain > 0 ? net.Where(value => value > 0).OrderByDescending(value => value).Take(5).Sum() / gain : 0;
+            sb.AppendLine(string.Create(ci, $"| {cost:P1} | {net.Count} | {mean:P2} | {pf:0.00} | {net.Count(value => value > 0) / (double)Math.Max(1, net.Count):P0} | {net.Sum():P2} | {topFiveShare:P0} |"));
+        }
+    }
+
+    private static void AppendOosRobustness(StringBuilder sb, IReadOnlyList<(long At, long Until, int Split, double Gross, string Symbol)> trades, CultureInfo ci)
+    {
+        var oos = trades.Where(trade => trade.Split == 2).ToList();
+        sb.AppendLine();
+        sb.AppendLine("## OOS outlier and cost robustness");
+        sb.AppendLine();
+        sb.AppendLine("This reuses the live-definition replay above; it is a sensitivity check, not an independent validation. OOS means the existing split after 2026-03-23. Trades are equal-sized observations; sums below are not compounded portfolio returns.");
+        sb.AppendLine();
+        sb.AppendLine("| Round-trip cost | n | Net mean | Net sum | PF | Win | Top 1 share of gains | Top 10 share of gains |");
+        sb.AppendLine("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
+        foreach (var cost in new[] { 0.003, 0.006, 0.010 })
+        {
+            var net = oos.Select(trade => trade.Gross - cost).ToList();
+            var gain = net.Where(value => value > 0).Sum();
+            var loss = -net.Where(value => value < 0).Sum();
+            var orderedGains = net.Where(value => value > 0).OrderByDescending(value => value).ToList();
+            var topOneShare = gain > 0 ? orderedGains.Take(1).Sum() / gain : 0;
+            var topTenShare = gain > 0 ? orderedGains.Take(10).Sum() / gain : 0;
+            var profitFactor = loss > 0 ? gain / loss : 99;
+            sb.AppendLine(string.Create(ci, $"| {cost:P1} | {net.Count} | {net.Average():P2} | {net.Sum():P2} | {profitFactor:0.00} | {net.Count(value => value > 0) / (double)Math.Max(1, net.Count):P0} | {topOneShare:P0} | {topTenShare:P0} |"));
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("| Cost | Removed largest positive OOS trades | Remaining n | Remaining mean | Remaining net sum | Remaining PF |");
+        sb.AppendLine("| ---: | ---: | ---: | ---: | ---: | ---: |");
+        foreach (var cost in new[] { 0.003, 0.006, 0.010 })
+        {
+            var net = oos.Select(trade => trade.Gross - cost).ToList();
+            foreach (var remove in new[] { 1, 5, 10 })
+            {
+                var removed = net.Where(value => value > 0).OrderByDescending(value => value).Take(remove).ToList();
+                var remaining = net.Where(value => value <= 0).Concat(net.Where(value => value > 0).OrderByDescending(value => value).Skip(remove)).ToList();
+                var gain = remaining.Where(value => value > 0).Sum();
+                var loss = -remaining.Where(value => value < 0).Sum();
+                var profitFactor = loss > 0 ? gain / loss : 99;
+                var mean = remaining.Count == 0 ? 0 : remaining.Average();
+                sb.AppendLine(string.Create(ci, $"| {cost:P1} | {removed.Count} | {remaining.Count} | {mean:P2} | {remaining.Sum():P2} | {profitFactor:0.00} |"));
+            }
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("Top OOS symbols by total net contribution at 0.3% cost:");
+        sb.AppendLine();
+        foreach (var group in oos.GroupBy(trade => trade.Symbol)
+                     .Select(group => (Symbol: group.Key, Net: group.Sum(trade => trade.Gross - 0.003)))
+                     .OrderByDescending(group => group.Net)
+                     .Take(10))
+        {
+            sb.AppendLine(string.Create(ci, $"- {group.Symbol}: {group.Net:P2}"));
+        }
     }
 
     private static (double Net, int Exit) RatchetExit(Book b, int i, double arm, double ratchet)

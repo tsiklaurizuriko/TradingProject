@@ -613,14 +613,23 @@ public static class RefactoredStrategyEvaluator
         var exitAdx = p.MinimumAdx - 2m;
         if (context.HasOpenPosition)
         {
-            if ((IsLong(context) && crossDown) || (!IsLong(context) && crossUp))
+            var close = candles[i].Close;
+            var fastWrongForTwoBars = IsLong(context)
+                ? nowFast < nowSlow && prevFast < prevSlow
+                : nowFast > nowSlow && prevFast > prevSlow;
+            if (fastWrongForTwoBars)
             {
-                return Detail(SignalType.Exit, "Opposite SMA cross closes the position. REVERSAL_DEFERRED.", candles, i);
+                return Detail(SignalType.Exit, "SMA stayed on the opposite side for two closed bars. REVERSAL_DEFERRED.", candles, i);
             }
 
-            if (adxNow < exitAdx && adx1 < exitAdx)
+            if (!InProfit(context, close) && adxNow < exitAdx && adx1 < exitAdx)
             {
-                return Detail(SignalType.Exit, "ADX stayed below the exit threshold for two bars.", candles, i);
+                return Detail(SignalType.Exit, "ADX faded for two bars while the trade is losing.", candles, i);
+            }
+
+            if (!InProfit(context, close) && ClosedBarsSinceOpen(context, candles, i) >= 12)
+            {
+                return Detail(SignalType.Exit, "Losing ADX SMA trade reached the 12-bar cap.", candles, i);
             }
 
             var trail = IsLong(context)
@@ -1543,6 +1552,22 @@ public static class RefactoredStrategyEvaluator
         }
 
         return high > low && candles[i - 1].Close > 0m;
+    }
+
+    private static int ClosedBarsSinceOpen(StrategyContext context, IReadOnlyList<MarketCandle> candles, int i)
+    {
+        if (context.PositionOpenedAt is not { } opened)
+        {
+            return 0;
+        }
+
+        var held = 0;
+        for (var k = i; k >= 0 && candles[k].CloseTime > opened; k--)
+        {
+            held++;
+        }
+
+        return held;
     }
 
     private static bool TimeExpired(StrategyContext context, MarketCandle bar, StrategyTemplateParams p)

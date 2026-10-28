@@ -1,8 +1,8 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { TradingHubService } from '../../core/realtime/trading-hub.service';
 import { TradingService } from '../../core/trading/trading.service';
-import { BotDto, money, pct, pnlClass, price, signedMoney } from '../../core/trading/trading.models';
+import { BotDto, NewsActivityItem, NewsDeskDto, UnexplainedPumpCheck, UnexplainedPumpPosition, money, pct, pnlClass, price, signedMoney } from '../../core/trading/trading.models';
 import { ToastService } from '../../core/ui/toast.service';
 import { UiStateService } from '../../core/ui/ui-state.service';
 import { TradingChartComponent } from '../../shared/chart/trading-chart';
@@ -44,6 +44,8 @@ export class DashboardPage {
   readonly Math = Math;
   busy: false | 'starting' | 'stopping' = false;
   readonly confirmStartAll = signal(false);
+  readonly newsDesk = signal<NewsDeskDto | null>(null);
+  readonly newsTab = signal<'pump' | 'news'>('pump');
 
   formatUsd(value: number | null | undefined): string {
     if (value === null || value === undefined || Number.isNaN(value)) {
@@ -213,6 +215,77 @@ export class DashboardPage {
 
   constructor() {
     void this.loadChart();
+    void this.loadNews();
+    const timer = setInterval(() => void this.loadNews(), 15000);
+    inject(DestroyRef).onDestroy(() => clearInterval(timer));
+  }
+
+  pumpPositions(): UnexplainedPumpPosition[] {
+    return this.newsDesk()?.pump?.positions ?? [];
+  }
+
+  pumpChecks(): UnexplainedPumpCheck[] {
+    return this.newsDesk()?.pump?.decisions ?? [];
+  }
+
+  pumpResult(row: UnexplainedPumpPosition): string {
+    if (!row.pnlKnown || row.pnl == null) {
+      return row.open ? '—' : 'Pending';
+    }
+    return signedMoney(row.pnl);
+  }
+
+  newsRows(): NewsActivityItem[] {
+    return (this.newsDesk()?.activity ?? []).slice(0, 8);
+  }
+
+  pumpScanning(): boolean {
+    return this.newsDesk()?.pump?.enabled === true;
+  }
+
+  riseLine(card: UnexplainedPumpCheck): string {
+    const percent = Math.round((card.rise || 0) * 100);
+    const span = card.daySpan === 2 ? '2 days' : '24 hours';
+    return percent > 0 ? `Up ${percent}% in ${span}` : 'Rise checked';
+  }
+
+  newsVerdict(card: NewsActivityItem): string {
+    if (card.verdict === 'LONG') {
+      return 'Long';
+    }
+    if (card.verdict === 'SHORT') {
+      return 'Short';
+    }
+    return 'No trade';
+  }
+
+  orderLabel(state: string): string {
+    switch (state) {
+      case 'Filled': return 'Order filled';
+      case 'Sent': return 'Order sent';
+      case 'Closed': return 'Position closed';
+      case 'Rejected': return 'Risk rejected';
+      default: return 'No order';
+    }
+  }
+
+  when(value: string | null | undefined): string {
+    if (!value) {
+      return '—';
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return value;
+    }
+    return date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+
+  private async loadNews(): Promise<void> {
+    try {
+      this.newsDesk.set(await this.trading.newsDesk());
+    } catch {
+      this.newsDesk.set(this.newsDesk());
+    }
   }
 
   async loadChart(): Promise<void> {

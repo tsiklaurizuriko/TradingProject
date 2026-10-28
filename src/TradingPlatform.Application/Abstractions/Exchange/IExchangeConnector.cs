@@ -171,7 +171,14 @@ public interface IExchangeConnector
     /// <summary>Maintenance margin of the leverage bracket that holds <paramref name="notional"/>. Null when it could not be read.</summary>
     Task<MaintenanceBracket?> GetMaintenanceBracketAsync(string symbol, decimal notional, CancellationToken cancellationToken = default) =>
         Task.FromResult<MaintenanceBracket?>(null);
+
+    /// <summary>Recent fills for one coin, including realized PnL. Null when the exchange cannot be read.</summary>
+    Task<IReadOnlyList<ExchangeFillPnl>?> RecentFillPnlAsync(string symbol, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<ExchangeFillPnl>?>(null);
 }
+
+/// <summary>One futures fill. Realized PnL is zero on the opening fill.</summary>
+public sealed record ExchangeFillPnl(DateTimeOffset Time, string Side, decimal Price, decimal Quantity, decimal RealizedPnl);
 
 /// <summary>Rate is a fraction (0.004 = 0.4%). Amount is Binance's "cum" maintenance amount in USDT.</summary>
 public sealed record MaintenanceBracket(decimal Rate, decimal Amount);

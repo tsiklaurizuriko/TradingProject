@@ -49,8 +49,16 @@ public sealed class NewsDatabase
 
     public async Task<bool> HasFinalSignalAsync(string dedupKey, CancellationToken cancellationToken)
     {
+        var completedWithoutSignal = await _db.NewsAnalyses.AsNoTracking()
+            .AnyAsync(row => row.EventDedupKey == dedupKey
+                && (row.Status == "NoCoin" || row.Status == "Skipped"), cancellationToken);
+        if (completedWithoutSignal)
+        {
+            return true;
+        }
+
         var completed = await _db.NewsAnalyses.AsNoTracking()
-            .AnyAsync(row => row.EventDedupKey == dedupKey && (row.Status == "Ok" || row.Status == "NoCoin"), cancellationToken);
+            .AnyAsync(row => row.EventDedupKey == dedupKey && row.Status == "Ok", cancellationToken);
         if (!completed)
         {
             return false;

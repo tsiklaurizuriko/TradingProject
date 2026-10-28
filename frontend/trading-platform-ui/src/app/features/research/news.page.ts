@@ -1,6 +1,6 @@
 import { Component, inject, signal } from '@angular/core';
 import { TradingService } from '../../core/trading/trading.service';
-import { NewsActivityItem, NewsDeskDto, NewsFeedItem } from '../../core/trading/trading.models';
+import { NewsActivityItem, NewsDeskDto, NewsFeedItem, UnexplainedPumpCheck, UnexplainedPumpPosition, pnlClass, signedMoney } from '../../core/trading/trading.models';
 import { IconComponent } from '../../shared/icon/icon';
 
 type NewsFilter = 'all' | 'orders' | 'skipped';
@@ -33,6 +33,91 @@ type NewsFilter = 'all' | 'orders' | 'skipped';
         </span>
         @if (desk()!.collectionStatus) {
           <span class="tiny">Last collection: {{ desk()!.collectionStatus }}</span>
+        }
+      </section>
+
+      <section class="panel pump-panel">
+        <div class="section-head">
+          <h2>Pump shorts</h2>
+          <span class="badge" [class.badge-running]="pumpEnabled()" [class.badge-stopped]="!pumpEnabled()">
+            {{ pumpEnabled() ? 'Scanning' : 'Off' }}
+          </span>
+          @if (pump()?.lastScanUtc) {
+            <span class="tiny">Last scan {{ when(pump()!.lastScanUtc!) }}</span>
+          }
+        </div>
+        <p class="tiny pump-lead">A coin up more than 150% in the last 24 hours, with no public reason, can be shorted after it stops making new highs.</p>
+
+        <h3>Shorts</h3>
+        @if (!pumpPositions().length) {
+          <p class="tiny">No short has been filled.</p>
+        } @else {
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Coin</th>
+                  <th>Order</th>
+                  <th>Position</th>
+                  <th class="num">Entry</th>
+                  <th class="num">Qty</th>
+                  <th class="num">Mark</th>
+                  <th class="num">Result</th>
+                  <th>Detail</th>
+                  <th>Opened</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (row of pumpPositions(); track row.coin + row.openedAt) {
+                  <tr>
+                    <td><strong>{{ base(row.coin) }}</strong> <span class="tiny">{{ row.coin }}</span></td>
+                    <td><span class="badge badge-ok">Order filled</span></td>
+                    <td>
+                      <span class="badge" [class.badge-short]="row.open" [class.badge-stopped]="!row.open">
+                        {{ row.open ? 'Open' : 'Closed' }}
+                      </span>
+                    </td>
+                    <td class="num">{{ price(row.entry) }}</td>
+                    <td class="num">{{ row.quantity ? price(row.quantity) : '—' }}</td>
+                    <td class="num">{{ price(row.mark) }}</td>
+                    <td class="num" [class]="row.pnlKnown ? pnlClass(row.pnl) : ''">{{ pumpResult(row) }}</td>
+                    <td>{{ row.open ? 'Unrealized' : 'Realized' }}{{ row.closeReason ? ' · ' + row.closeReason : '' }}</td>
+                    <td>{{ when(row.openedAt) }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+
+        <h3>Checked coins</h3>
+        @if (!pumpChecks().length) {
+          <p class="tiny">No 150% move has been checked yet. The list appears after the API finishes a scan.</p>
+        } @else {
+          <div class="decision-list">
+            @for (card of pumpChecks(); track card.coin + card.at + card.orderState) {
+              <article class="decision" [class.is-short]="card.signal === 'SHORT'">
+                <header>
+                  <div class="decision-coin">
+                    <strong>{{ base(card.coin) }}</strong>
+                    <span>{{ card.coin }}</span>
+                  </div>
+                  <span class="badge" [class.badge-short]="card.signal === 'SHORT'" [class.badge-stopped]="card.signal !== 'SHORT'">
+                    {{ card.signal === 'SHORT' ? 'Short' : 'No trade' }}
+                  </span>
+                  <span class="badge" [class.badge-ok]="card.orderState === 'Filled'" [class.badge-error]="card.orderState === 'Rejected'" [class.badge-stopped]="card.orderState !== 'Filled' && card.orderState !== 'Rejected'">
+                    {{ orderLabel(card.orderState) }}
+                  </span>
+                  <time>{{ when(card.at) }}</time>
+                </header>
+                <p class="headline">{{ riseLine(card) }}</p>
+                <p class="why">{{ card.reason }}</p>
+                @if (card.orderState === 'Filled' || card.quantity) {
+                  <p class="order-line">{{ pumpOrderLine(card) }}</p>
+                }
+              </article>
+            }
+          </div>
         }
       </section>
 
@@ -166,6 +251,13 @@ type NewsFilter = 'all' | 'orders' | 'skipped';
     .source-list li { display: flex; align-items: center; gap: 8px; font-size: 13px; }
     .source-list span:last-child { color: var(--text-secondary); }
     .panel { margin-bottom: 12px; }
+    .pump-panel h3 { margin: 14px 0 8px; font-size: 14px; }
+    .pump-lead { margin: 8px 0 0; }
+    .pump-panel .section-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .pump-closed { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+    .pump-closed li { display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; font-size: 13px; }
+    .pump-closed span { color: var(--text-secondary); }
+    .table-wrap { overflow-x: auto; }
     @media (max-width: 800px) { .news-stats { grid-template-columns: 1fr; } }
   `,
 })
@@ -215,6 +307,59 @@ export class NewsPage {
 
   providers() {
     return this.desk()?.providers ?? [];
+  }
+
+  pump() {
+    return this.desk()?.pump ?? null;
+  }
+
+  pumpEnabled(): boolean {
+    return this.pump()?.enabled === true;
+  }
+
+  readonly pnlClass = pnlClass;
+
+  pumpPositions(): UnexplainedPumpPosition[] {
+    return this.pump()?.positions ?? [];
+  }
+
+  pumpResult(row: UnexplainedPumpPosition): string {
+    if (!row.pnlKnown || row.pnl == null) {
+      return row.open ? '—' : 'Pending';
+    }
+    return signedMoney(row.pnl);
+  }
+
+  pumpChecks(): UnexplainedPumpCheck[] {
+    return this.pump()?.decisions ?? [];
+  }
+
+  riseLine(card: UnexplainedPumpCheck): string {
+    const percent = Math.round((card.rise || 0) * 100);
+    const span = card.daySpan === 2 ? '2 days' : '24 hours';
+    return percent > 0 ? `Up ${percent}% in ${span}` : 'Rise checked';
+  }
+
+  pumpOrderLine(card: UnexplainedPumpCheck): string {
+    const parts = [`Entry ${this.price(card.entry)}`];
+    if (card.quantity != null) {
+      parts.push(`qty ${this.price(card.quantity)}`);
+    }
+    if (card.stop != null) {
+      parts.push(`stop ${this.price(card.stop)}`);
+    }
+    if (card.takeProfit != null) {
+      parts.push(`take ${this.price(card.takeProfit)}`);
+    }
+    return parts.join(' · ');
+  }
+
+  price(value: number | null | undefined): string {
+    if (value == null || Number.isNaN(value)) {
+      return '—';
+    }
+    const digits = value >= 100 ? 2 : value >= 1 ? 4 : 6;
+    return value.toLocaleString(undefined, { maximumFractionDigits: digits });
   }
 
   sent(card: NewsActivityItem): boolean {

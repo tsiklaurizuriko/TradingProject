@@ -199,4 +199,68 @@ public sealed class ProtectiveRatchetTests
         ProtectiveRatchet.OpeningTake(StrategyTemplateKeys.FlowZone, PositionSide.Long, 100m, 92m, 130m, 100m, 0.01m)
             .Should().Be(130m);
     }
+
+    [Fact]
+    public void Shock_fade_keeps_the_original_stop_until_four_percent()
+    {
+        ProtectiveRatchet.TryAdvance(
+            StrategyTemplateKeys.ObsShockFade, PositionSide.Short, 100m, 108m, 76m, 97m, 0.01m)
+            .Should().BeNull();
+    }
+
+    [Fact]
+    public void Shock_fade_locks_breakeven_at_four_percent_and_keeps_the_far_take()
+    {
+        var decision = ProtectiveRatchet.TryAdvance(
+            StrategyTemplateKeys.ObsShockFade, PositionSide.Short, 100m, 108m, 76m, 96m, 0.01m);
+
+        decision.Should().NotBeNull();
+        decision!.Value.StopMoved.Should().BeTrue();
+        decision.Value.StopLoss.Should().Be(99.80m);
+        decision.Value.TakeMoved.Should().BeFalse();
+        decision.Value.TakeProfit.Should().Be(76m);
+    }
+
+    [Fact]
+    public void Shock_fade_short_trails_the_drop_and_walks_the_take_further_down()
+    {
+        var decision = ProtectiveRatchet.TryAdvance(
+            StrategyTemplateKeys.ObsShockFade, PositionSide.Short, 100m, 99.80m, 76m, 80m, 0.01m);
+
+        decision.Should().NotBeNull();
+        decision!.Value.StopMoved.Should().BeTrue();
+        decision.Value.StopLoss.Should().Be(86.40m);
+        decision.Value.TakeMoved.Should().BeTrue();
+        decision.Value.TakeProfit.Should().Be(73.60m);
+    }
+
+    [Fact]
+    public void Shock_fade_does_not_pull_a_further_take_back_toward_price()
+    {
+        var decision = ProtectiveRatchet.TryAdvance(
+            StrategyTemplateKeys.ObsShockFade, PositionSide.Short, 100m, 99.80m, 70m, 80m, 0.01m);
+
+        decision.Should().NotBeNull();
+        decision!.Value.StopLoss.Should().Be(86.40m);
+        decision.Value.TakeMoved.Should().BeFalse();
+        decision.Value.TakeProfit.Should().Be(70m);
+    }
+
+    [Fact]
+    public void Shock_fade_long_mirrors_the_trail()
+    {
+        var armed = ProtectiveRatchet.TryAdvance(
+            StrategyTemplateKeys.ObsShockFade, PositionSide.Long, 100m, 92m, 124m, 104m, 0.01m);
+        armed.Should().NotBeNull();
+        armed!.Value.StopLoss.Should().Be(100.20m);
+        armed.Value.TakeMoved.Should().BeFalse();
+        armed.Value.TakeProfit.Should().Be(124m);
+
+        var riding = ProtectiveRatchet.TryAdvance(
+            StrategyTemplateKeys.ObsShockFade, PositionSide.Long, 100m, 100.20m, 124m, 130m, 0.01m);
+        riding.Should().NotBeNull();
+        riding!.Value.StopLoss.Should().Be(119.60m);
+        riding.Value.TakeMoved.Should().BeTrue();
+        riding.Value.TakeProfit.Should().Be(140.40m);
+    }
 }

@@ -337,7 +337,7 @@ public sealed class DatabaseSeeder
                 StopLossPercent = 2m,
                 TakeProfitPercent = 300m,
                 MaxLeverage = 2m,
-                MaxDailyLossPercent = 2m,
+                MaxDailyLossPercent = 0m,
                 MaxPortfolioRiskPercent = 1.5m,
                 MaxSimultaneousPositions = 3,
                 MaxConsecutiveLosses = 5,
@@ -684,7 +684,7 @@ public sealed class DatabaseSeeder
             strategy.ValidationStatus = StrategyTemplates.ResearchStatus(row.Key);
         }
         if (string.IsNullOrWhiteSpace(strategy.Description)
-            || row.Key is StrategyTemplateKeys.MacdTrend or StrategyTemplateKeys.RsiPullback)
+            || row.Key is StrategyTemplateKeys.MacdTrend or StrategyTemplateKeys.RsiPullback or StrategyTemplateKeys.ObsShockFade)
         {
             strategy.Description = row.Description;
         }
@@ -759,7 +759,7 @@ public sealed class DatabaseSeeder
         (StrategyTemplateKeys.EmaRsiTrend, "EMA RSI Trend",
             "Closed-candle EMA 20/50 cross. Exit on the opposite cross. Stop 5%, target 15%. At +10% the stop moves to breakeven. Not a profit claim.", false),
         (StrategyTemplateKeys.MacdTrend, "MACD Trend",
-            "Closed-candle MACD 12/26/9 cross with histogram sign. Exit on the opposite cross. No slow-EMA filter. Not a profit claim.", false),
+            "MACD 12/26/9 must hold the signal side for two closed candles, histogram included. A signal exit fires only while the trade is losing. A winner is left to the 4% take and 2% stop. Not a profit claim.", false),
         (StrategyTemplateKeys.RsiPullback, "RSI Pullback",
             "Wilder RSI 14. LONG when RSI crosses above 30, SHORT when it crosses below 70. Exit at RSI 70 or 30. Stop 3%. Not a profit claim.", false),
         (StrategyTemplateKeys.BollingerReversion, "Bollinger Reversion",
@@ -841,7 +841,7 @@ public sealed class DatabaseSeeder
         (StrategyTemplateKeys.ObsCompressionBreakout, "Compression Breakout 72h",
             "OBSERVATION. 1h, ორივე მხარე. ყოველ 4 საათში: თუ 24-საათიანი ვოლატილობა 720-საათიანის ნახევარზე ნაკლებია და დახურვა 168 საათის მაქსიმუმს ზემოთაა — ლონგი, მინიმუმს ქვემოთ — შორტი. 72 საათში იხურება. კატასტროფული სტოპი 2.5σ (2%–15%), ტეიკი 3× სტოპი, მარჟა მაქს. 8 USDT. კვლევაში წმინდა Sharpe უარყოფითი იყო. არ არის validated.", false),
         (StrategyTemplateKeys.ObsShockFade, "Shock Fade 24h",
-            "OBSERVATION. 1h, ორივე მხარე. სანთლის დიაპაზონი ≥ 5× საშუალოზე (168 სთ) და მოცულობა ≥ 3× — მოძრაობის საწინააღმდეგოდ შესვლა. 24 საათში იხურება. კატასტროფული სტოპი 2.5σ (2%–15%), ტეიკი 3× სტოპი, მარჟა მაქს. 8 USDT. ლაივის range-shock დაცვა ასეთ სანთლებზე შესვლას ხშირად ბლოკავს. არ არის validated.", false),
+            "OBSERVATION. 1h, ორივე მხარე. სანთლის დიაპაზონი ≥ 5× საშუალოზე (168 სთ) და მოცულობა ≥ 3× — მოძრაობის საწინააღმდეგოდ შესვლა. 24 საათში იხურება. სტოპი 2.5σ (2%–7.5%), ტეიკი 3× სტოპი. 4% მოგების შემდეგ სტოპი შესვლაზე იკეტება და ფასს 8%-ით მიჰყვება; ტეიკი წინ 8%-ით გადადის, რომ ვარდნა ადრე არ მოიჭრას. შესვლა მაქს. 20 USDT მარჟა, 10x. არ არის validated.", false),
         (StrategyTemplateKeys.ObsTopTraderContrarian, "Top-Trader Contrarian 72h",
             "OBSERVATION. 1h, ორივე მხარე, 00:00 UTC-ზე. ტოპ-ტრეიდერების პოზიციების long/short ფარდობის 30-დღიანი z ყველა ≥ $5M მონეტაზე. ყველაზე „მოკლე“ 20% — ლონგი, ყველაზე „გრძელი“ 20% — შორტი. 72 საათში იხურება. საჭიროა ≥ 20 მონეტა. კატასტროფული სტოპი 2.5σ (2%–15%), მარჟა მაქს. 8 USDT. არ არის validated.", false),
         (StrategyTemplateKeys.MacContrarian710, "Contrarian SMA 7/10",
@@ -859,7 +859,7 @@ public sealed class DatabaseSeeder
         (StrategyTemplateKeys.Hlhb, "HLHB",
             "Freqtrade hlhb. 4h LONG. RSI(10) of (open+close)/2 crosses 50 and EMA(5) crosses EMA(10) on the same bar, ADX above 25. Opposite cross exits. Live rail is stop 8%, take 62%, leverage 1x. The published hyperopt stop of 32% is not used.", true),
         (StrategyTemplateKeys.FAdxSma, "ADX SMA Cross",
-            "Freqtrade FAdxSmaStrategy. 1h BOTH. SMA(12) crosses SMA(48) while ADX(14) is above 30. Exit when ADX falls below 30. ROI 5%, stop 5%.", true),
+            "Freqtrade FAdxSmaStrategy. 1h BOTH. SMA(12) crosses SMA(48) while ADX(14) is rising through 30. Opposite SMA must hold two bars. ADX fade and the 12-bar cap close losers only. Winners stay for the 5% take. Stop 5%.", true),
         (StrategyTemplateKeys.TripleSupertrend, "Triple Supertrend",
             "Freqtrade FSupertrendStrategy. 1h BOTH. Long when Supertrend 8/4, 9/7 and 8/1 are up. Short when 16/1, 18/3 and 18/6 are down. Exit long on 18/3 down, exit short on 9/7 up. Take 10%, stop 8%, leverage 1x.", true),
         (StrategyTemplateKeys.BtcEma20Ema50Long, "30m EMA Cross",
@@ -1033,14 +1033,20 @@ public sealed class DatabaseSeeder
             strategy.RiskProfile.TakeProfitPercent = book.Take;
             strategy.RiskProfile.MaxLeverage = book.Leverage;
             strategy.RiskProfile.MaxSimultaneousPositions = book.Positions;
+            strategy.RiskProfile.MaxDailyLossPercent = 0m;
+            strategy.RiskProfile.MaxWeeklyLossPercent = 0m;
             if (StrategyTemplateKeys.Normalize(strategy.TemplateKey) == StrategyTemplateKeys.ImpulseCatch)
             {
                 strategy.RiskProfile.MaxPortfolioRiskPercent = 15m;
             }
 
+            if (StrategyTemplateKeys.Normalize(strategy.TemplateKey) == StrategyTemplateKeys.ObsShockFade)
+            {
+                strategy.RiskProfile.MaxPortfolioRiskPercent = 40m;
+            }
+
             if (StrategyTemplateKeys.IsProductionNew(strategy.TemplateKey))
             {
-                strategy.RiskProfile.MaxDailyLossPercent = 2m;
                 strategy.RiskProfile.MaxPortfolioRiskPercent = 1.5m;
             }
         }
@@ -1068,7 +1074,7 @@ public sealed class DatabaseSeeder
         [StrategyTemplateKeys.ImpulseCatch] = (0.5m, 12m, 300m, 2m, 30),
         [StrategyTemplateKeys.FlatRange] = (0.5m, 2m, 4m, 3m, 5),
         [StrategyTemplateKeys.ObsCompressionBreakout] = (0.5m, 8m, 24m, 2m, 5),
-        [StrategyTemplateKeys.ObsShockFade] = (0.5m, 8m, 24m, 2m, 5),
+        [StrategyTemplateKeys.ObsShockFade] = (8m, 7.5m, 22.5m, 10m, 5),
         [StrategyTemplateKeys.ObsTopTraderContrarian] = (0.5m, 8m, 24m, 2m, 8),
         [StrategyTemplateKeys.MacContrarian710] = (0.5m, 5m, 5m, 3m, 5),
         [StrategyTemplateKeys.ZigZagFade] = (0.5m, 4m, 8m, 3m, 5),
@@ -1151,7 +1157,7 @@ public sealed class DatabaseSeeder
             StopLossPercent = 2m,
             TakeProfitPercent = 4m,
             MaxLeverage = 3m,
-            MaxDailyLossPercent = 3m,
+            MaxDailyLossPercent = 0m,
             MaxPortfolioRiskPercent = 4m,
             MaxSimultaneousPositions = 5,
             MaxConsecutiveLosses = 5,
@@ -1168,7 +1174,7 @@ public sealed class DatabaseSeeder
             StopLossPercent = 2.5m,
             TakeProfitPercent = 5m,
             MaxLeverage = 5m,
-            MaxDailyLossPercent = 5m,
+            MaxDailyLossPercent = 0m,
             MaxPortfolioRiskPercent = 4m,
             MaxSimultaneousPositions = 2,
             MaxConsecutiveLosses = 5,
@@ -1184,7 +1190,7 @@ public sealed class DatabaseSeeder
             StopLossPercent = 3m,
             TakeProfitPercent = 6m,
             MaxLeverage = 8m,
-            MaxDailyLossPercent = 7m,
+            MaxDailyLossPercent = 0m,
             MaxPortfolioRiskPercent = 4m,
             MaxSimultaneousPositions = 2,
             MaxConsecutiveLosses = 5,
@@ -1249,7 +1255,7 @@ public sealed class DatabaseSeeder
             StopLossPercent = 2.5m,
             TakeProfitPercent = 5m,
             MaxLeverage = 3m,
-            MaxDailyLossPercent = 3m,
+            MaxDailyLossPercent = 0m,
             MaxPortfolioRiskPercent = 4m,
             MaxSimultaneousPositions = 1,
             MaxConsecutiveLosses = 5,
@@ -1266,7 +1272,7 @@ public sealed class DatabaseSeeder
             StopLossPercent = 4m,
             TakeProfitPercent = 5m,
             MaxLeverage = 3m,
-            MaxDailyLossPercent = 3m,
+            MaxDailyLossPercent = 0m,
             MaxPortfolioRiskPercent = 4m,
             MaxSimultaneousPositions = 1,
             MaxConsecutiveLosses = 5,
@@ -1387,7 +1393,7 @@ public sealed class DatabaseSeeder
             StopLossPercent = 8m,
             TakeProfitPercent = 30m,
             MaxLeverage = 1m,
-            MaxDailyLossPercent = 3m,
+            MaxDailyLossPercent = 0m,
             MaxPortfolioRiskPercent = 4m,
             MaxSimultaneousPositions = 1,
             MaxConsecutiveLosses = 5,
@@ -1404,7 +1410,7 @@ public sealed class DatabaseSeeder
             StopLossPercent = 12m,
             TakeProfitPercent = 300m,
             MaxLeverage = 2m,
-            MaxDailyLossPercent = 3m,
+            MaxDailyLossPercent = 0m,
             MaxPortfolioRiskPercent = 15m,
             MaxSimultaneousPositions = 30,
             MaxConsecutiveLosses = 5,
@@ -1421,7 +1427,7 @@ public sealed class DatabaseSeeder
             StopLossPercent = 1m,
             TakeProfitPercent = 3m,
             MaxLeverage = 3m,
-            MaxDailyLossPercent = 3m,
+            MaxDailyLossPercent = 0m,
             MaxPortfolioRiskPercent = 4m,
             MaxSimultaneousPositions = 1,
             MaxConsecutiveLosses = 5,

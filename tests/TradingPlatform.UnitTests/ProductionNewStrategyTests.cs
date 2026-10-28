@@ -300,7 +300,7 @@ public sealed class ProductionNewStrategyTests
     }
 
     [Fact]
-    public void Risk_engine_rejects_cost_aware_size_that_cannot_be_estimated_and_halts_on_the_daily_loss()
+    public void Risk_engine_rejects_cost_aware_size_that_cannot_be_estimated()
     {
         var profile = new RiskProfile
         {
@@ -333,8 +333,7 @@ public sealed class ProductionNewStrategyTests
                 Side = PositionSide.Long
             },
             DateTimeOffset.Parse("2024-06-01T12:00:00Z"));
-        halt.Decision.Should().Be(RiskDecision.Rejected);
-        halt.Reason.Should().Contain("Daily loss");
+        halt.Decision.Should().Be(RiskDecision.Approved);
     }
 
     [Fact]

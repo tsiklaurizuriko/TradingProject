@@ -31,7 +31,21 @@ var root = FindRepoRoot();
 if (args.Any(a => string.Equals(a, "--catalog-daily", StringComparison.OrdinalIgnoreCase)))
 {
     var candleCacheDirEarly = Path.Combine(root, "artifacts", "strategy-validation-cache");
-    return await CatalogDailyReplay.RunAsync(root, candleCacheDirEarly, ParseInt(args, "--days", 30), CancellationToken.None);
+    var holdoutRaw = Arg(args, "--holdout-from");
+    DateTimeOffset? holdoutFrom = DateOnly.TryParse(holdoutRaw, out var holdoutDate)
+        ? new DateTimeOffset(holdoutDate.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero)
+        : DateTimeOffset.TryParse(holdoutRaw, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal, out var parsedHoldout)
+            ? parsedHoldout.ToUniversalTime()
+            : null;
+    return await CatalogDailyReplay.RunAsync(root, candleCacheDirEarly, ParseInt(args, "--days", 30), CancellationToken.None, strategy, symbolFilter, holdoutFrom);
+}
+if (args.Any(a => string.Equals(a, "--triple-supertrend-october-holdout", StringComparison.OrdinalIgnoreCase)))
+{
+    return TripleSupertrendOctoberHoldout.Run(root);
+}
+if (args.Any(a => string.Equals(a, "--funding-basis-long-forward-holdout", StringComparison.OrdinalIgnoreCase)))
+{
+    return await FundingBasisLongForwardHoldout.RunAsync(root, CancellationToken.None);
 }
 if (args.Any(a => string.Equals(a, "--news-research", StringComparison.OrdinalIgnoreCase)))
 {
@@ -57,6 +71,11 @@ if (args.Any(a => string.Equals(a, "--news-event-study", StringComparison.Ordina
 if (args.Any(a => string.Equals(a, "--news-live", StringComparison.OrdinalIgnoreCase)))
 {
     return await NewsLiveAnalyzer.RunAsync(root, CancellationToken.None);
+}
+if (args.Any(a => string.Equals(a, "--news-live-snapshot", StringComparison.OrdinalIgnoreCase)))
+{
+    var output = Path.Combine(root, "artifacts", "research", "audit", "news-live-snapshot");
+    return await NewsLiveAnalyzer.RunAsync(root, CancellationToken.None, output);
 }
 if (args.Any(a => string.Equals(a, "--production-new", StringComparison.OrdinalIgnoreCase)))
 {
@@ -163,6 +182,17 @@ if (args.Any(a => string.Equals(a, "--funding-carry", StringComparison.OrdinalIg
     return FundingCarryStudy.Run(root);
 }
 
+if (args.Any(a => string.Equals(a, "--pump-ride-oos-refresh", StringComparison.OrdinalIgnoreCase)))
+{
+    return await PumpRideHoldoutRunner.RunAsync(root, candleCacheDir, CancellationToken.None);
+}
+
+if (args.Any(a => string.Equals(a, "--pump-ride-live-robustness", StringComparison.OrdinalIgnoreCase)))
+{
+    var output = Path.Combine(root, "artifacts", "research", "audit", "pump-ride-live-robustness.md");
+    return PumpRideStudy.RunLive(root, candleCacheDir, output);
+}
+
 if (args.Any(a => string.Equals(a, "--pump-ride-live", StringComparison.OrdinalIgnoreCase)))
 {
     return PumpRideStudy.RunLive(root, candleCacheDir);
@@ -201,6 +231,14 @@ if (args.Any(a => string.Equals(a, "--btc-daily-max", StringComparison.OrdinalIg
 if (args.Any(a => string.Equals(a, "--flat-range", StringComparison.OrdinalIgnoreCase)))
 {
     return FlatRangeStudy.Run(root, candleCacheDir);
+}
+
+if (args.Any(a => string.Equals(a, "--flat-range-october-holdout", StringComparison.OrdinalIgnoreCase)))
+{
+    var holdoutCandlesDir = Path.Combine(root, "artifacts", "research", "audit", "market-data-oos-2026-10");
+    var holdoutFundingDir = Path.Combine(root, "artifacts", "research", "audit", "funding-oos-2026-10");
+    var holdoutReportPath = Path.Combine(root, "artifacts", "research", "audit", "flat-range-october-holdout-2026-10.md");
+    return await FlatRangeStudy.RunOctoberHoldout(root, candleCacheDir, holdoutCandlesDir, holdoutFundingDir, holdoutReportPath);
 }
 
 if (args.Any(a => string.Equals(a, "--flat-now", StringComparison.OrdinalIgnoreCase)))
@@ -261,6 +299,21 @@ if (args.Any(a => string.Equals(a, "--contextual-pa-discover", StringComparison.
 if (args.Any(a => string.Equals(a, "--contextual-pa-render", StringComparison.OrdinalIgnoreCase)))
 {
     return ContextualPriceActionDiscovery.Render(root);
+}
+
+if (args.Any(a => string.Equals(a, "--contextual-compression-october-holdout", StringComparison.OrdinalIgnoreCase)))
+{
+    return await ContextualCompressionOctoberHoldout.RunAsync(root, candleCacheDir, CancellationToken.None);
+}
+
+if (args.Any(a => string.Equals(a, "--contextual-sweep-october-holdout", StringComparison.OrdinalIgnoreCase)))
+{
+    return await ContextualCompressionOctoberHoldout.RunSweepAsync(root, candleCacheDir, CancellationToken.None);
+}
+
+if (args.Any(a => string.Equals(a, "--pa-triangle-october-holdout", StringComparison.OrdinalIgnoreCase)))
+{
+    return await PriceActionTriangleOctoberHoldout.RunAsync(root, candleCacheDir, CancellationToken.None);
 }
 
 if (args.Any(a => string.Equals(a, "--phase7-data-audit", StringComparison.OrdinalIgnoreCase)))

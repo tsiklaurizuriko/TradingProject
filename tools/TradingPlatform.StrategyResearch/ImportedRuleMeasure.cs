@@ -78,7 +78,7 @@ internal static class ImportedRuleMeasure
             BookStopsOff = true,
             CooldownMinutes = 0,
             MaxConsecutiveLosses = 100_000,
-            MaxDailyLossPercent = 100m
+            MaxDailyLossPercent = 0m
         };
         var result = replay.Run(definition, closed, settings, new CausalIndicatorCache(closed));
         var first = closed[0].Close;

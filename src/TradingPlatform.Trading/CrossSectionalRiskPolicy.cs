@@ -47,7 +47,7 @@ public static class CrossSectionalRiskPolicy
     public const string InsufficientUniverse = "INSUFFICIENT_DATA";
     public const string LiveBlocked = "OTHER_RISK_BLOCK";
 
-    public static string? LiveActivationBlock(TradingOptions options, bool exchangeHealthy, bool marketDataHealthy, bool accountHealthy, bool riskHalted, bool dailyLossHalted, bool emergencyStop, bool isolatedConfirmed)
+    public static string? LiveActivationBlock(TradingOptions options, bool exchangeHealthy, bool marketDataHealthy, bool accountHealthy, bool riskHalted, bool emergencyStop, bool isolatedConfirmed)
     {
         if (!options.EntriesEnabled)
         {
@@ -72,11 +72,6 @@ public static class CrossSectionalRiskPolicy
         if (riskHalted)
         {
             return "A global risk halt is active.";
-        }
-
-        if (dailyLossHalted)
-        {
-            return "Daily loss halt is active.";
         }
 
         if (emergencyStop)

@@ -399,23 +399,13 @@ public sealed class RiskEngine : IRiskEngine
         };
     }
 
-    /// <summary>Daily, weekly and drawdown halts. Limits are percent of current equity; zero turns a limit off.</summary>
+    /// <summary>Drawdown halt. The limit is a percent of the recorded peak; zero turns it off. Day and week loss caps are not applied.</summary>
     public static string? LossHalt(RiskProfile profile, RiskSnapshot snapshot)
     {
         var equity = snapshot.Equity > 0m ? snapshot.Equity : snapshot.AvailableBalance;
         if (equity <= 0m)
         {
             return null;
-        }
-
-        if (profile.MaxDailyLossPercent > 0m && snapshot.AccountDailyPnL <= -(equity * profile.MaxDailyLossPercent / 100m))
-        {
-            return $"Daily loss {snapshot.AccountDailyPnL:0.##} USDT reached the {profile.MaxDailyLossPercent:0.##}% limit. New entries resume at the next UTC day.";
-        }
-
-        if (profile.MaxWeeklyLossPercent > 0m && snapshot.AccountWeeklyPnL <= -(equity * profile.MaxWeeklyLossPercent / 100m))
-        {
-            return $"Weekly loss {snapshot.AccountWeeklyPnL:0.##} USDT reached the {profile.MaxWeeklyLossPercent:0.##}% limit. New entries resume next UTC week.";
         }
 
         if (profile.MaxDrawdownPercent > 0m && snapshot.DrawdownPercent is { } drawdown && drawdown >= profile.MaxDrawdownPercent)

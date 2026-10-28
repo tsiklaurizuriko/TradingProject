@@ -10,7 +10,7 @@ public sealed class ProductionNewOptions
     public bool PaperEnabled { get; set; }
     public decimal RiskPerTradePercent { get; set; } = 0.35m;
     public decimal MaxAggregateOpenRiskPercent { get; set; } = 1.5m;
-    public decimal DailyLossLimitPercent { get; set; } = 2m;
+    public decimal DailyLossLimitPercent { get; set; }
 
     /// <summary>
     /// The daily halt uses realized PnL since UTC midnight plus open losses. Open gains do not offset realized losses.

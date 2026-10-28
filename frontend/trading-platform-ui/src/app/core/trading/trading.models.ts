@@ -1264,6 +1264,43 @@ export interface NewsDeskDto {
   items?: NewsFeedItem[];
   activity?: NewsActivityItem[];
   providers?: NewsProviderHealthItem[];
+  pump?: UnexplainedPumpDesk;
+}
+
+export interface UnexplainedPumpPosition {
+  coin: string;
+  side: string;
+  entry: number;
+  pumpHigh: number;
+  mark: number | null;
+  openedAt: string;
+  open: boolean;
+  closeReason: string | null;
+  quantity: number;
+  pnl: number | null;
+  pnlKnown: boolean;
+}
+
+export interface UnexplainedPumpCheck {
+  at: string;
+  coin: string;
+  signal: string;
+  orderState: string;
+  reason: string;
+  rise: number;
+  daySpan: number;
+  pumpHigh: number;
+  entry: number;
+  quantity: number | null;
+  stop: number | null;
+  takeProfit: number | null;
+}
+
+export interface UnexplainedPumpDesk {
+  enabled: boolean;
+  lastScanUtc: string | null;
+  positions: UnexplainedPumpPosition[];
+  decisions: UnexplainedPumpCheck[];
 }
 
 export interface ScalpingResearchSummaryDto {

@@ -36,8 +36,11 @@ public static class ObservationStrategies
     public const decimal StopSigma = 2.5m;
     public const decimal MinStopPercent = 2m;
     public const decimal MaxStopPercent = 15m;
+    /// <summary>10x Isolated leaves about 9% to liquidation after maintenance margin. A wider stop is rejected.</summary>
+    public const decimal ShockMaxStopPercent = 7.5m;
     public const decimal TakeMultiple = 3m;
     public const decimal MaxEntryMarginUsdt = 8m;
+    public const decimal ShockFadeMaxEntryMarginUsdt = 20m;
 
     public static int MaxHoldHours(string? key) => StrategyTemplateKeys.Normalize(key) switch
     {
@@ -162,7 +165,8 @@ public static class ObservationStrategies
         };
         return Entry(side, bar, slow, ShockHoldHours,
             $"Shock fade: range {(range / avgRange).ToString("0.0", CultureInfo.InvariantCulture)}× and volume {volumeRatio.ToString("0.0", CultureInfo.InvariantCulture)}× the 7-day average. Fades the {(side == SignalType.Sell ? "up" : "down")} move. Time exit 24h.",
-            snapshot);
+            snapshot,
+            ShockMaxStopPercent);
     }
 
     private static string? NotReady(IReadOnlyList<MarketCandle> candles, int i)
@@ -332,9 +336,14 @@ public static class ObservationStrategies
         double hourlyVol,
         int holdHours,
         string reason,
-        Dictionary<string, decimal?>? snapshot = null)
+        Dictionary<string, decimal?>? snapshot = null,
+        decimal maxStopPercent = 0m)
     {
         var stopPct = StopPercent(hourlyVol, holdHours);
+        if (maxStopPercent > 0m && stopPct > maxStopPercent)
+        {
+            stopPct = maxStopPercent;
+        }
         var close = bar.Close;
         var stopDistance = close * stopPct / 100m;
         var stop = side == SignalType.Buy ? close - stopDistance : close + stopDistance;

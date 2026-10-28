@@ -55,6 +55,8 @@ public sealed class NewsOptions
     public NewsMarketStrategyOptions Strategy { get; set; } = new();
 
     public NewsAiOptions Ai { get; set; } = new();
+
+    public UnexplainedPumpOptions UnexplainedPump { get; set; } = new();
 }
 
 public sealed class NewsAiOptions
@@ -242,4 +244,31 @@ public sealed class NewsMarketTimeframes
     public string Structure { get; set; } = "15m";
 
     public string Trend { get; set; } = "1h";
+}
+
+/// <summary>
+/// A coin up more than <see cref="MinRise"/> in the last 24 hours is checked for a public catalyst.
+/// No catalyst and a stall off the high is a short. Orders still require live entries to be on.
+/// </summary>
+public sealed class UnexplainedPumpOptions
+{
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>1.50 means a 150% rise.</summary>
+    public decimal MinRise { get; set; } = 1.50m;
+
+    public decimal MinQuoteVolume { get; set; } = 5_000_000m;
+
+    /// <summary>Last price must be at least this far under the pump high before a short.</summary>
+    public decimal StallPullback { get; set; } = 0.03m;
+
+    public int PollMinutes { get; set; } = 5;
+
+    /// <summary>Close once price has fallen this far from the pump high. 30 means 30%.</summary>
+    public decimal DumpPercent { get; set; } = 30m;
+
+    public int MaxHoldHours { get; set; } = 48;
+
+    /// <summary>Invalidation sits this far above the pump high. 0.50 means 50%. A new high inside this band does not close the short.</summary>
+    public decimal StopBuffer { get; set; } = 0.50m;
 }

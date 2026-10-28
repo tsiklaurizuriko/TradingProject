@@ -91,4 +91,56 @@ public sealed class NewsDecisionStoreTests
         (await db.NewsDecisionAudits.SingleAsync()).PayloadJson.Should().Contain("latency");
         (await db.NewsTradeExecutions.CountAsync()).Should().Be(1);
     }
+
+    [Theory]
+    [InlineData("NoCoin")]
+    [InlineData("Skipped")]
+    public async Task Terminal_non_signal_analysis_prevents_reprocessing(string status)
+    {
+        var options = new DbContextOptionsBuilder<TradingDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options;
+        await using var db = new TradingDbContext(options);
+        var store = new NewsDatabase(db);
+        const string eventKey = "terminal-event";
+
+        await store.AddAnalysisAsync(new NewsAnalysis
+        {
+            EventDedupKey = eventKey,
+            Status = status,
+            ClassifiedAtUtc = DateTimeOffset.UtcNow
+        }, CancellationToken.None);
+
+        (await store.HasFinalSignalAsync(eventKey, CancellationToken.None)).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Ok_analysis_requires_a_stored_signal_to_prevent_reprocessing()
+    {
+        var options = new DbContextOptionsBuilder<TradingDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options;
+        await using var db = new TradingDbContext(options);
+        var store = new NewsDatabase(db);
+        const string eventKey = "analysed-event";
+        var stored = await store.AddEventAsync(new StoredNewsEvent
+        {
+            DedupKey = eventKey,
+            PublishedAtUtc = DateTimeOffset.UtcNow
+        }, CancellationToken.None);
+        await store.AddAnalysisAsync(new NewsAnalysis
+        {
+            StoredNewsEventId = stored.Id,
+            EventDedupKey = eventKey,
+            Status = "Ok",
+            ClassifiedAtUtc = DateTimeOffset.UtcNow
+        }, CancellationToken.None);
+
+        (await store.HasFinalSignalAsync(eventKey, CancellationToken.None)).Should().BeFalse();
+
+        await store.AddSignalAsync(new NewsTradingSignal
+        {
+            StoredNewsEventId = stored.Id,
+            Symbol = "BTCUSDT",
+            SignalTimeUtc = DateTimeOffset.UtcNow
+        }, CancellationToken.None);
+
+        (await store.HasFinalSignalAsync(eventKey, CancellationToken.None)).Should().BeTrue();
+    }
 }

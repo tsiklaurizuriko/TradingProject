@@ -59,6 +59,7 @@ public sealed class StrategySignalRiskTests
     {
         var candles = Enumerable.Range(0, 30).Select(i => Bar(i, 100m)).ToList();
         candles.Add(Bar(30, last));
+        candles.Add(Bar(31, last));
         return candles;
     }
 

@@ -13,8 +13,8 @@ public static class NewsRiskBook
     public const decimal StopLossPercent = 6m;
     public const decimal TakeProfitPercent = 12m;
     public const decimal MaxLeverage = 3m;
-    public const decimal MaxDailyLossPercent = 3m;
-    public const decimal MaxWeeklyLossPercent = 6m;
+    public const decimal MaxDailyLossPercent = 0m;
+    public const decimal MaxWeeklyLossPercent = 0m;
     public const decimal MaxDrawdownPercent = 15m;
     public const decimal MaxPortfolioRiskPercent = 1.5m;
     public const int MaxSimultaneousPositions = 2;

@@ -61,6 +61,7 @@ public static class ServiceCollectionExtensions
         services.AddTrading(configuration);
         services.AddNews(configuration);
         services.AddHostedService<NewsLiveWorker>();
+        services.AddHostedService<UnexplainedPumpWorker>();
         services.AddBacktesting();
         services.AddBinance(configuration);
         services.AddSingleton<ITradingRealtimePublisher, SignalRTradingRealtimePublisher>();

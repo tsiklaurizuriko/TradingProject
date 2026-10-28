@@ -14,7 +14,7 @@ public static class StrategyExecutionRules
     public const decimal ResearchRiskPerTradePercent = 0.25m;
 
     public const decimal ResearchAggregateStopRiskPercent = 1.5m;
-    public const decimal ResearchDailyLossLockPercent = 2m;
+    public const decimal ResearchDailyLossLockPercent = 0m;
 
     public const decimal EntryFeeRate = 0.0004m;
     public const decimal ExitFeeRate = 0.0004m;

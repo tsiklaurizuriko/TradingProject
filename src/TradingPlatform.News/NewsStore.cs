@@ -11,9 +11,31 @@ public sealed class FileNewsStore
 
     public async Task SaveRawAsync(string provider, DateTimeOffset day, IReadOnlyList<RawNewsItem> items, CancellationToken cancellationToken)
     {
-        var path = Path.Combine(_root, "raw", provider, day.UtcDateTime.ToString("yyyy-MM-dd") + ".json");
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        await File.WriteAllTextAsync(path, JsonSerializer.Serialize(items, Json), cancellationToken);
+        foreach (var batch in items.GroupBy(item => (item.RetrievedAtUtc == default ? day : item.RetrievedAtUtc).UtcDateTime.Date))
+        {
+            var path = Path.Combine(_root, "raw", provider, batch.Key.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture) + ".json");
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            List<RawNewsItem> existing = File.Exists(path)
+                ? JsonSerializer.Deserialize<List<RawNewsItem>>(await File.ReadAllTextAsync(path, cancellationToken)) ?? []
+                : [];
+            var combined = existing.Concat(batch).ToList();
+            var identified = combined
+                .Where(item => !string.IsNullOrWhiteSpace(item.Id))
+                .GroupBy(item => item.Id, StringComparer.Ordinal)
+                .Select(group =>
+                {
+                    var ordered = group.OrderBy(item => item.RetrievedAtUtc).ToList();
+                    var latest = ordered[^1];
+                    latest.RetrievedAtUtc = ordered[0].RetrievedAtUtc;
+                    return latest;
+                });
+            var anonymous = combined.Where(item => string.IsNullOrWhiteSpace(item.Id));
+            var merged = identified.Concat(anonymous)
+                .OrderBy(item => item.RetrievedAtUtc)
+                .ThenBy(item => item.Id, StringComparer.Ordinal)
+                .ToList();
+            await File.WriteAllTextAsync(path, JsonSerializer.Serialize(merged, Json), cancellationToken);
+        }
     }
 
     public async Task<IReadOnlyList<RawNewsItem>> LoadRawAsync(CancellationToken cancellationToken)
@@ -70,6 +92,9 @@ public sealed class NewsPipeline
     }
 
     public IReadOnlyList<NewsEvent> Build(IReadOnlyList<RawNewsItem> items)
+        => Build(items, out _);
+
+    public IReadOnlyList<NewsEvent> Build(IReadOnlyList<RawNewsItem> items, out int filteredByQualityGates)
     {
         var clustered = _options.DeduplicationEnabled
             ? NewsEventClusterer.Cluster(items, _options)
@@ -86,9 +111,11 @@ public sealed class NewsPipeline
         }
 
         NewsEventClusterer.AssignNovelty(clustered);
-        return clustered
+        var accepted = clustered
             .Where(item => item.ImpactScore >= _options.MinimumImpact && item.ConfidenceScore >= _options.MinimumConfidence)
             .ToList();
+        filteredByQualityGates = clustered.Count - accepted.Count;
+        return accepted;
     }
 
     private static bool IsMacro(NewsEvent item) =>
@@ -123,6 +150,10 @@ public sealed class NewsCollectionResult
     public IReadOnlyList<NewsProviderReport> Providers { get; init; } = [];
 
     public IReadOnlyList<string> Errors { get; init; } = [];
+
+    public int RawArticlesFetched { get; init; }
+
+    public int EventsFilteredByQualityGates { get; init; }
 }
 
 public sealed class NewsCollector
@@ -219,12 +250,19 @@ public sealed class NewsCollector
             .Select(report => report.Provider + ": " + report.Error)
             .ToList();
         Errors = errors;
-        var built = _pipeline.Build(raw);
+        var built = _pipeline.Build(raw, out var filteredByQualityGates);
         if (_options.CacheEnabled)
         {
             await _store.SaveEventsAsync(built, cancellationToken);
         }
 
-        return new NewsCollectionResult { Events = built, Providers = reports, Errors = errors };
+        return new NewsCollectionResult
+        {
+            Events = built,
+            Providers = reports,
+            Errors = errors,
+            RawArticlesFetched = raw.Count,
+            EventsFilteredByQualityGates = filteredByQualityGates
+        };
     }
 }

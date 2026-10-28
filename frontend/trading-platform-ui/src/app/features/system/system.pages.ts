@@ -107,7 +107,7 @@ export class RiskPage {
       stopLossPercent: stored?.stopLossPercent ?? row.stopLossPercent ?? 2,
       takeProfitPercent: stored?.takeProfitPercent ?? row.takeProfitPercent ?? 4,
       maxLeverage: stored?.maxLeverage ?? row.maxLeverage ?? 3,
-      maxDailyLossPercent: stored?.maxDailyLossPercent ?? 3,
+      maxDailyLossPercent: stored?.maxDailyLossPercent ?? 0,
       maxPortfolioRiskPercent: stored?.maxPortfolioRiskPercent ?? 4,
       maxSimultaneousPositions: stored?.maxSimultaneousPositions ?? row.maxSimultaneousPositions ?? 5,
       maxConsecutiveLosses: stored?.maxConsecutiveLosses ?? row.maxConsecutiveLosses ?? 5,

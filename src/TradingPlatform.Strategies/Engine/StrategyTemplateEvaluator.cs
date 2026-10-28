@@ -317,30 +317,50 @@ internal static class StrategyTemplateEvaluator
         var (macd, signal, hist) = cache.Macd(p.MacdFast, p.MacdSlow, p.MacdSignal);
         if (context.HasOpenPosition)
         {
-            if (IsLong(context) && CrossesBelow(macd, signal, i))
+            if (!InProfit(context, candles[i].Close))
             {
-                return (SignalType.Exit, "MACD crossed below the signal line.");
-            }
+                if (IsLong(context) && HeldBelow(macd, signal, i))
+                {
+                    return (SignalType.Exit, "MACD stayed below the signal for two closed candles while the trade is losing.");
+                }
 
-            if (!IsLong(context) && CrossesAbove(macd, signal, i))
-            {
-                return (SignalType.Exit, "MACD crossed above the signal line.");
+                if (!IsLong(context) && HeldAbove(macd, signal, i))
+                {
+                    return (SignalType.Exit, "MACD stayed above the signal for two closed candles while the trade is losing.");
+                }
             }
 
             return (SignalType.Hold, "Position open; MACD exit not triggered.");
         }
 
-        if (CrossesAbove(macd, signal, i) && (hist[i] ?? 0m) > 0m)
+        if (HeldAbove(macd, signal, i) && (hist[i] ?? 0m) > 0m && (hist[i - 1] ?? 0m) > 0m)
         {
-            return (SignalType.Buy, "MACD crossed above signal and the histogram is positive.");
+            return (SignalType.Buy, "MACD stayed above the signal for two closed candles and the histogram is positive.");
         }
 
-        if (CrossesBelow(macd, signal, i) && (hist[i] ?? 0m) < 0m)
+        if (HeldBelow(macd, signal, i) && (hist[i] ?? 0m) < 0m && (hist[i - 1] ?? 0m) < 0m)
         {
-            return (SignalType.Sell, "MACD crossed below signal and the histogram is negative.");
+            return (SignalType.Sell, "MACD stayed below the signal for two closed candles and the histogram is negative.");
         }
 
         return (SignalType.NoAction, "MACD entry not matched.");
+    }
+
+    /// <summary>The cross printed on the previous closed bar and this closed bar is still on that side.</summary>
+    private static bool HeldAbove(IReadOnlyList<decimal?> left, IReadOnlyList<decimal?> right, int i) =>
+        i >= 2 && CrossesAbove(left, right, i - 1) && left[i] is { } now && right[i] is { } line && now > line;
+
+    private static bool HeldBelow(IReadOnlyList<decimal?> left, IReadOnlyList<decimal?> right, int i) =>
+        i >= 2 && CrossesBelow(left, right, i - 1) && left[i] is { } now && right[i] is { } line && now < line;
+
+    private static bool InProfit(StrategyContext context, decimal close)
+    {
+        if (context.AverageEntryPrice is not { } entry || entry <= 0m)
+        {
+            return false;
+        }
+
+        return IsLong(context) ? close > entry : close < entry;
     }
 
     private static (SignalType Signal, string Reason) RsiPullback(

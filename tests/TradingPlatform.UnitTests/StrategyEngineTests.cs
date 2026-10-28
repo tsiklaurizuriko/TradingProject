@@ -115,9 +115,10 @@ public sealed class StrategyEngineTests
     }
 
     [Fact]
-    public void Macd_trend_long_on_cross()
+    public void Macd_trend_long_waits_for_a_second_closed_candle()
     {
-        SignalOf(StrategyTemplateKeys.MacdTrend, FlatThen(120m)).Should().Be(SignalType.Buy);
+        SignalOf(StrategyTemplateKeys.MacdTrend, FlatThen(120m)).Should().Be(SignalType.NoAction);
+        SignalOf(StrategyTemplateKeys.MacdTrend, HoldLast(FlatThen(120m))).Should().Be(SignalType.Buy);
     }
 
     [Fact]
@@ -198,7 +199,7 @@ public sealed class StrategyEngineTests
             MacdSignal = 2,
             Quality = new StrategyQualityParams(true, 5, 0m, 0m)
         });
-        var candles = FlatThen(120m);
+        var candles = HoldLast(FlatThen(120m));
         candles[^1] = Bar(candles.Count - 1, 120m, 1m);
         new StrategyEngine().Evaluate(
             new StrategyDefinitionValidator().Parse(json),
@@ -220,7 +221,7 @@ public sealed class StrategyEngineTests
             MacdSignal = 2,
             Quality = new StrategyQualityParams(false, 20, 50m, 0m)
         });
-        var candles = FlatThen(120m);
+        var candles = HoldLast(FlatThen(120m));
         new StrategyEngine().Evaluate(
             new StrategyDefinitionValidator().Parse(json),
             Flat(candles),
@@ -240,19 +241,12 @@ public sealed class StrategyEngineTests
             MacdSlow = 6,
             MacdSignal = 2
         });
-        var candles = FlatThen(80m);
-        var signal = new StrategyEngine().Evaluate(
-            new StrategyDefinitionValidator().Parse(json),
-            new StrategyContext
-            {
-                ClosedCandles = candles,
-                CurrentPrice = candles[^1].Close,
-                HasOpenPosition = true,
-                AverageEntryPrice = candles[0].Close,
-                PositionSide = TradingPlatform.Domain.Positions.PositionSide.Long
-            },
-            out _);
-        signal.Should().Be(SignalType.Exit);
+        var definition = new StrategyDefinitionValidator().Parse(json);
+        var firstBar = FlatThen(80m);
+        new StrategyEngine().Evaluate(definition, OpenLong(firstBar), out _).Should().Be(SignalType.Hold);
+        var held = HoldLast(firstBar);
+        new StrategyEngine().Evaluate(definition, OpenLong(held), out _).Should().Be(SignalType.Exit);
+        new StrategyEngine().Evaluate(definition, OpenLong(held, 70m), out _).Should().Be(SignalType.Hold);
     }
 
     [Fact]
@@ -332,7 +326,7 @@ public sealed class StrategyEngineTests
             MacdSlow = 6,
             MacdSignal = 2
         });
-        var candles = FlatThen(120m);
+        var candles = HoldLast(FlatThen(120m));
         new StrategyEngine().Evaluate(
             new StrategyDefinitionValidator().Parse(json),
             new StrategyContext
@@ -352,9 +346,10 @@ public sealed class StrategyEngineTests
     }
 
     [Fact]
-    public void Macd_trend_short_on_cross_down()
+    public void Macd_trend_short_waits_for_a_second_closed_candle()
     {
-        SignalOf(StrategyTemplateKeys.MacdTrend, FlatThen(80m)).Should().Be(SignalType.Sell);
+        SignalOf(StrategyTemplateKeys.MacdTrend, FlatThen(80m)).Should().Be(SignalType.NoAction);
+        SignalOf(StrategyTemplateKeys.MacdTrend, HoldLast(FlatThen(80m))).Should().Be(SignalType.Sell);
     }
 
     [Fact]
@@ -438,6 +433,16 @@ public sealed class StrategyEngineTests
         return new StrategyEngine().Evaluate(new StrategyDefinitionValidator().Parse(json), Flat(candles), out _);
     }
 
+    private static StrategyContext OpenLong(IReadOnlyList<MarketCandle> candles, decimal? entry = null) =>
+        new()
+        {
+            ClosedCandles = candles,
+            CurrentPrice = candles[^1].Close,
+            HasOpenPosition = true,
+            AverageEntryPrice = entry ?? candles[0].Close,
+            PositionSide = TradingPlatform.Domain.Positions.PositionSide.Long
+        };
+
     private static StrategyContext Flat(IReadOnlyList<MarketCandle> candles) =>
         new()
         {
@@ -450,6 +455,13 @@ public sealed class StrategyEngineTests
     {
         var candles = Enumerable.Range(0, 30).Select(i => Bar(i, 100m, 10m)).ToList();
         candles.Add(Bar(30, last, 10m));
+        return candles;
+    }
+
+    private static List<MarketCandle> HoldLast(List<MarketCandle> candles)
+    {
+        var last = candles[^1];
+        candles.Add(Bar(candles.Count, last.Close, last.Volume));
         return candles;
     }
 

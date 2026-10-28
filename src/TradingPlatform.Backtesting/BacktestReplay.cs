@@ -18,7 +18,7 @@ public sealed record ReplaySettings(
     decimal SlippagePercent,
     decimal StopLossPercent,
     decimal TakeProfitPercent,
-    decimal MaxDailyLossPercent = 100m,
+    decimal MaxDailyLossPercent = 0m,
     decimal MaxPortfolioRiskPercent = 100m,
     int MaxSimultaneousPositions = 20,
     int MaxConsecutiveLosses = 100,

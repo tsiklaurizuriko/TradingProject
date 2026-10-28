@@ -144,7 +144,11 @@ public sealed class NewsAssetCatalog
 
             foreach (var identity in Identities)
             {
-                if (ContainsToken(text, identity.BaseAsset) || ContainsToken(text, identity.Symbol))
+                var baseAsset = identity.BaseAsset.ToUpperInvariant();
+                var baseAssetMentioned = baseAsset.Length >= 5
+                    ? ContainsToken(upper, baseAsset)
+                    : ContainsToken(text, identity.BaseAsset);
+                if (baseAssetMentioned || ContainsToken(upper, identity.Symbol.ToUpperInvariant()))
                 {
                     Add(links, identity, identity.ProviderAssetId);
                 }

@@ -34,7 +34,7 @@ public static class ProductionNewBacktest
         SlippagePercent: 0.05m,
         StopLossPercent: 2m,
         TakeProfitPercent: 4m,
-        MaxDailyLossPercent: 2m,
+        MaxDailyLossPercent: 0m,
         MaxPortfolioRiskPercent: 1.5m,
         HonorSuggestedStops: true,
         PreserveNullTake: true,

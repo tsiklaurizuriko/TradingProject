@@ -70,7 +70,15 @@ public sealed class NewsLiveWorker : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "News collection failed. No order was sent.");
+                _logger.LogWarning(ex, "News worker cycle failed. Check order records to determine whether an order was sent before the failure.");
+                try
+                {
+                    await NewsLiveAnalyzer.WriteWorkerFailureAsync(FindRepo(_environment.ContentRootPath), ex, stoppingToken);
+                }
+                catch (Exception reportException)
+                {
+                    _logger.LogWarning(reportException, "Could not update the News live status report after a failed cycle.");
+                }
             }
 
             await Delay(NextWait(options), stoppingToken);
@@ -135,9 +143,12 @@ public sealed class NewsLiveWorker : BackgroundService
         {
             _logger.LogWarning("News provider {Provider} failed: {Error}", failure.Provider, failure.Error);
         }
+        var fetchedArticles = collected.RawArticlesFetched;
+        var failedProviders = collected.Providers.Where(item => !item.Succeeded).Select(item => item.Provider).ToArray();
 
         var schedules = due.ToDictionary(provider => provider.Name, provider => provider.ScheduleKey, StringComparer.Ordinal);
-        var reports = collected.Providers.Select(item => WithNextPoll(options, item, schedules.GetValueOrDefault(item.Provider, item.Provider))).Concat(NewsProviderCatalog.DisabledCredentialReports(options, now)).ToList();
+        var disabledCredentialReports = NewsProviderCatalog.DisabledCredentialReports(options, now);
+        var reports = collected.Providers.Select(item => WithNextPoll(options, item, schedules.GetValueOrDefault(item.Provider, item.Provider))).Concat(disabledCredentialReports).ToList();
         if (collected.Events.Count > 0 || reports.Count > 0)
         {
             await database.SaveIngestionAsync(collected.Events, reports, cancellationToken);
@@ -171,7 +182,8 @@ public sealed class NewsLiveWorker : BackgroundService
         }
 
         var remembered = new NewsPipeline(options, catalog: catalog).Build(
-            await database.RecentArticlesAsync(now.AddMinutes(-options.Strategy.MaxNewsAgeMinutes), cancellationToken));
+            await database.RecentArticlesAsync(now.AddMinutes(-options.Strategy.MaxNewsAgeMinutes), cancellationToken),
+            out var rememberedFilteredByQualityGates);
         if (remembered.Count > 0)
         {
             await database.SaveIngestionAsync(remembered, [], cancellationToken);
@@ -182,10 +194,10 @@ public sealed class NewsLiveWorker : BackgroundService
             .GroupBy(item => item.EventId, StringComparer.Ordinal)
             .Select(group => group.First())
             .ToList();
+        var alreadyDecided = 0;
         if (options.Ai.Enabled && events.Count > 0)
         {
             var fresh = new List<NewsEvent>(events.Count);
-            var alreadyDecided = 0;
             foreach (var item in events)
             {
                 if (await database.HasFinalSignalAsync(item.EventId, cancellationToken))
@@ -227,6 +239,17 @@ public sealed class NewsLiveWorker : BackgroundService
         }
 
         var report = NewsLiveAnalyzer.Analyze(options, catalog, scoped, market, options.Ai.Enabled ? decisionTime : now);
+        report.Diagnostics.Add("ProviderArticlesFetched=" + fetchedArticles);
+        report.Diagnostics.Add("ProviderPollsAttempted=" + collected.Providers.Count);
+        report.Diagnostics.Add("ProviderFailures=" + (failedProviders.Length == 0 ? "0" : string.Join(',', failedProviders)));
+        report.Diagnostics.Add("ProvidersDisabledForMissingCredentials=" + (disabledCredentialReports.Count == 0 ? "0" : string.Join(',', disabledCredentialReports.Select(item => item.Provider))));
+        report.Diagnostics.Add("EventsBuiltFromCurrentPoll=" + collected.Events.Count);
+        report.Diagnostics.Add("EventsFilteredByQualityGatesCurrentPoll=" + collected.EventsFilteredByQualityGates);
+        report.Diagnostics.Add("EventsRebuiltFromRecentArticles=" + remembered.Count);
+        report.Diagnostics.Add("EventsFilteredByQualityGatesRecentArticles=" + rememberedFilteredByQualityGates);
+        report.Diagnostics.Add("EventsSkippedAsAlreadyDecided=" + alreadyDecided);
+        report.Diagnostics.Add("EventsSentToMarketScoring=" + scoped.Count);
+        report.Diagnostics.Add("EventsWithoutMappedTargets=" + scoped.Count(item => !NewsLiveAnalyzer.Targets(item, catalog).Any()));
         if (options.Ai.Enabled)
         {
             foreach (var item in events)
@@ -274,6 +297,10 @@ public sealed class NewsLiveWorker : BackgroundService
                 connector = scope.ServiceProvider.GetRequiredService<IExchangeConnectorFactory>().Create(TradingMode.Live, account.Id);
             }
         }
+        report.Diagnostics.Add("NewsSessionRunning=" + session.Running);
+        report.Diagnostics.Add("EntriesEnabled=" + trading.EntriesEnabled);
+        report.Diagnostics.Add("LiveAccountAvailable=" + (liveAccountId is not null));
+        report.Diagnostics.Add("LiveConnectorAvailable=" + (connector is not null));
 
         var reconciliation = scope.ServiceProvider.GetRequiredService<ReconciliationState>();
         var tradingStore = scope.ServiceProvider.GetRequiredService<ITradingStore>();
@@ -301,6 +328,7 @@ public sealed class NewsLiveWorker : BackgroundService
         }
 
         report.SessionRunning = session.Running;
+        report.Diagnostics.Add("ActionableSignalsAfterRisk=" + report.Decisions.Count(item => item.Signal != NewsMarketSignals.NoTrade));
         await NewsLiveAnalyzer.WriteAsync(root, report, options.Strategy.Timeframes.Execution, cancellationToken);
         var candidates = report.Decisions.Count(item => item.Signal != NewsMarketSignals.NoTrade);
         _pending.Clear();
@@ -1150,7 +1178,7 @@ public sealed class NewsLiveWorker : BackgroundService
 
     private void LogNews(NewsEvent item, string symbol, string decision, string? reason, string stage) =>
         _logger.LogInformation(
-            "{Stage} {EventId} {Symbol} {Decision} {Confidence} {Impact} {Latency} {Model} {Reason}",
+            "{Stage} {EventId} {Symbol} {Decision} {Confidence} {Impact} {Latency} {Model} {Reason} Sources={Sources} Headline={Headline} Assets={Assets} ProviderAssetIds={ProviderAssetIds} MappedTargets={MappedTargets}",
             stage,
             item.EventId,
             symbol,
@@ -1159,7 +1187,12 @@ public sealed class NewsLiveWorker : BackgroundService
             item.ImpactScore,
             item.ClassifiedAtUtc is { } classified ? NewsLatency.Milliseconds(item.DetectedAtUtc, classified) : 0,
             item.AiModel ?? string.Empty,
-            reason ?? string.Empty);
+            reason ?? string.Empty,
+            string.Join(',', item.OriginalArticles.Select(article => article.Provider).Distinct(StringComparer.OrdinalIgnoreCase)),
+            string.Join(" | ", item.OriginalArticles.Select(article => article.Title).Where(title => !string.IsNullOrWhiteSpace(title)).Distinct(StringComparer.Ordinal).Select(title => title.Length <= 180 ? title : title[..180])),
+            string.Join(',', item.Assets),
+            string.Join(',', item.ProviderAssetIds),
+            string.Join(',', item.AffectedAssets.Select(asset => asset.Symbol ?? asset.BaseAsset).Distinct(StringComparer.OrdinalIgnoreCase)));
 
     private static string FindRepo(string start)
     {

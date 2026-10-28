@@ -7,10 +7,10 @@ internal static class SystemRiskCatalog
 {
     public static IReadOnlyList<RiskProfile> All() =>
     [
-        Book("LOW", 0.5m, 2m, 4m, 3m, 3m, allowLive: true, active: true, maxPositions: 5),
-        Book("MEDIUM", 1m, 2.5m, 5m, 5m, 5m, allowLive: true, active: false, maxPositions: 2),
-        Book("HIGH", 2m, 3m, 6m, 8m, 7m, allowLive: false, active: false, maxPositions: 2),
-        Book("30m EMA Cross", 0.5m, 1m, 3m, 3m, 3m, allowLive: false, active: false, maxPositions: 1),
+        Book("LOW", 0.5m, 2m, 4m, 3m, allowLive: true, active: true, maxPositions: 5),
+        Book("MEDIUM", 1m, 2.5m, 5m, 5m, allowLive: true, active: false, maxPositions: 2),
+        Book("HIGH", 2m, 3m, 6m, 8m, allowLive: false, active: false, maxPositions: 2),
+        Book("30m EMA Cross", 0.5m, 1m, 3m, 3m, allowLive: false, active: false, maxPositions: 1),
         NewsRiskBook.Create()
     ];
 
@@ -42,7 +42,20 @@ internal static class SystemRiskCatalog
             added = true;
         }
 
-        if (added)
+        var cleared = false;
+        foreach (var row in rows)
+        {
+            if (row.MaxDailyLossPercent == 0m && row.MaxWeeklyLossPercent == 0m)
+            {
+                continue;
+            }
+
+            row.MaxDailyLossPercent = 0m;
+            row.MaxWeeklyLossPercent = 0m;
+            cleared = true;
+        }
+
+        if (added || cleared)
         {
             await db.SaveChangesAsync(cancellationToken);
         }
@@ -54,7 +67,6 @@ internal static class SystemRiskCatalog
         decimal stop,
         decimal take,
         decimal leverage,
-        decimal dailyLoss,
         bool allowLive,
         bool active,
         int maxPositions = 2) =>
@@ -68,7 +80,8 @@ internal static class SystemRiskCatalog
             StopLossPercent = stop,
             TakeProfitPercent = take,
             MaxLeverage = leverage,
-            MaxDailyLossPercent = dailyLoss,
+            MaxDailyLossPercent = 0m,
+            MaxWeeklyLossPercent = 0m,
             MaxPortfolioRiskPercent = 4m,
             MaxSimultaneousPositions = maxPositions,
             MaxConsecutiveLosses = 5,

@@ -70,11 +70,6 @@ public static class RiskLiveGuard
             return "Maximum leverage is missing.";
         }
 
-        if (risk.MaxDailyLossPercent <= 0m)
-        {
-            return "Daily loss limit is missing.";
-        }
-
         if (risk.MaxPortfolioRiskPercent <= 0m)
         {
             return "Exposure limit is missing.";
@@ -139,17 +134,6 @@ public static class RiskLiveGuard
         if (facts.PositionsOnSymbol > 0)
         {
             return "This coin already has an open position.";
-        }
-
-        var dailyLimit = facts.Equity * profile.MaxDailyLossPercent / 100m;
-        if (facts.DailyRealizedPnl <= -dailyLimit)
-        {
-            return "Daily realized loss is at the limit.";
-        }
-
-        if (profile.MaxWeeklyLossPercent > 0m && facts.WeeklyRealizedPnl <= -(facts.Equity * profile.MaxWeeklyLossPercent / 100m))
-        {
-            return "Weekly realized loss is at the limit.";
         }
 
         if (profile.MaxDrawdownPercent > 0m && facts.DrawdownPercent is { } drawdown && drawdown >= profile.MaxDrawdownPercent)

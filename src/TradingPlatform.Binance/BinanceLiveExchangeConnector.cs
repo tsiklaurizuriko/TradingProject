@@ -1110,6 +1110,57 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
         }
     }
 
+    public async Task<IReadOnlyList<ExchangeFillPnl>?> RecentFillPnlAsync(string symbol, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var (key, secret) = await RequireKeys(cancellationToken);
+            var json = await _signed.GetFuturesUserTradesAsync(key, secret, symbol, null, cancellationToken);
+            if (json.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            var rows = new List<ExchangeFillPnl>();
+            foreach (var row in json.EnumerateArray())
+            {
+                var time = DateTimeOffset.UtcNow;
+                if (row.TryGetProperty("time", out var timeEl) && timeEl.TryGetInt64(out var ms))
+                {
+                    time = DateTimeOffset.FromUnixTimeMilliseconds(ms);
+                }
+
+                var side = row.TryGetProperty("side", out var sideEl) ? sideEl.GetString() ?? "" : "";
+                rows.Add(new ExchangeFillPnl(time, side, ReadDecimal(row, "price"), ReadDecimal(row, "qty"), ReadDecimal(row, "realizedPnl")));
+            }
+
+            return rows;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private static decimal ReadDecimal(JsonElement row, string name)
+    {
+        if (!row.TryGetProperty(name, out var value))
+        {
+            return 0m;
+        }
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.Number => value.GetDecimal(),
+            JsonValueKind.String => decimal.TryParse(value.GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var parsed) ? parsed : 0m,
+            _ => 0m
+        };
+    }
+
     private static IEnumerable<int> ReadBracketList(JsonElement row)
     {
         if (!row.TryGetProperty("brackets", out var brackets) || brackets.ValueKind != JsonValueKind.Array)

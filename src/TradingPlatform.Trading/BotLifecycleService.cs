@@ -1931,7 +1931,7 @@ public sealed class TradingQueryService : ITradingQueryService
             StopLossPercent = 2m,
             TakeProfitPercent = 4m,
             MaxLeverage = 3m,
-            MaxDailyLossPercent = 3m,
+            MaxDailyLossPercent = 0m,
             MaxPortfolioRiskPercent = 4m,
             MaxSimultaneousPositions = 5,
             MaxConsecutiveLosses = 5,

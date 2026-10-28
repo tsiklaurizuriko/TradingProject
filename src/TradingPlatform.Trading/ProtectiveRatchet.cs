@@ -11,8 +11,9 @@ public readonly record struct ProtectiveRatchetDecision(
 
 /// <summary>
 /// Tightens a working stop after the trade is already in profit. The stop never moves
-/// back out. The take profit stays at the price the strategy configured: moving it out
-/// to 50% or 100% left the full stop in place and the advertised target never filled.
+/// back out. The take profit stays at the price the strategy configured, except Shock Fade:
+/// once that trade is in profit its take walks further ahead of the move, and the stop
+/// trails behind so a bounce banks the drop instead of the original target filling first.
 /// </summary>
 public static class ProtectiveRatchet
 {
@@ -36,12 +37,14 @@ public static class ProtectiveRatchet
         var shortSide = side == PositionSide.Short;
         var profit = shortSide ? (entry - mark) / entry : (mark - entry) / entry;
         var stop = currentStop;
+        var take = currentTake;
         var stopMoved = false;
+        var takeMoved = false;
         if (profit >= policy.Arm)
         {
+            var clearance = Clearance(entry, tickSize);
             var candidate = CandidateStop(policy, shortSide, entry, mark);
             candidate = LiveProtectivePrices.RoundToTick(candidate, tickSize, down: !shortSide);
-            var clearance = Clearance(entry, tickSize);
             var safe = shortSide ? candidate > mark + clearance : candidate < mark - clearance;
             var tighter = shortSide ? candidate < currentStop : candidate > currentStop;
             if (safe && tighter && Math.Abs(candidate - currentStop) >= entry * MinimumStep)
@@ -49,14 +52,27 @@ public static class ProtectiveRatchet
                 stop = candidate;
                 stopMoved = true;
             }
+
+            if (policy.Follow > 0m && currentTake > 0m)
+            {
+                var ahead = shortSide ? mark * (1m - policy.Follow) : mark * (1m + policy.Follow);
+                ahead = LiveProtectivePrices.RoundToTick(ahead, tickSize, down: shortSide);
+                var further = shortSide ? ahead < currentTake : ahead > currentTake;
+                var stillAhead = shortSide ? ahead < mark - clearance : ahead > mark + clearance;
+                if (further && stillAhead && Math.Abs(ahead - currentTake) >= entry * MinimumStep)
+                {
+                    take = ahead;
+                    takeMoved = true;
+                }
+            }
         }
 
-        if (!stopMoved)
+        if (!stopMoved && !takeMoved)
         {
             return null;
         }
 
-        return new ProtectiveRatchetDecision(stop, currentTake, stopMoved, TakeMoved: false);
+        return new ProtectiveRatchetDecision(stop, take, stopMoved, takeMoved);
     }
 
     public static bool RestoresBookTake(string? templateKey) =>
@@ -208,12 +224,14 @@ public static class ProtectiveRatchet
         StrategyTemplateKeys.TripleSupertrend => new Policy(0.10m, Trail: 0m),
         StrategyTemplateKeys.EmaRsiTrend => new Policy(0.10m, Trail: 0m),
         StrategyTemplateKeys.FlowZone => new Policy(0.08m, Trail: 0m),
+        StrategyTemplateKeys.ObsShockFade => new Policy(0.04m, Trail: 0.08m, Follow: 0.08m),
         _ => null
     };
 
     /// <summary>
     /// <paramref name="Trail"/> is the distance under the mark, 0 for breakeven only. Impulse Catch arms at +20%
     /// and trails 30%: a tighter exchange trail stopped pump rides out in normal pullbacks (docs/PUMP_RIDE_LIVE.md).
+    /// <paramref name="Follow"/> walks the take that far ahead of the mark. 0 leaves the configured take in place.
     /// </summary>
-    private readonly record struct Policy(decimal Arm, decimal Trail);
+    private readonly record struct Policy(decimal Arm, decimal Trail, decimal Follow = 0m);
 }

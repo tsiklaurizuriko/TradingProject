@@ -2,6 +2,7 @@ using TradingPlatform.Domain.Positions;
 using TradingPlatform.Domain.Risk;
 using TradingPlatform.Domain.Trading;
 using TradingPlatform.Risk;
+using TradingPlatform.Strategies.Engine;
 using FluentAssertions;
 using Xunit;
 
@@ -296,10 +297,10 @@ public sealed class RiskEngineTests
     }
 
     [Theory]
-    [InlineData(-6.99, false)]
-    [InlineData(-7, true)]
-    [InlineData(-70, true)]
-    public void Daily_loss_at_the_limit_locks_new_entries(decimal dayPnl, bool halted)
+    [InlineData(-6.99)]
+    [InlineData(-7)]
+    [InlineData(-70)]
+    public void Daily_loss_does_not_lock_new_entries(decimal dayPnl)
     {
         var result = new RiskEngine().Evaluate(
             SignalType.Buy,
@@ -307,24 +308,20 @@ public sealed class RiskEngineTests
             Clear() with { DailyRealizedPnL = dayPnl, AccountDailyPnL = dayPnl },
             DateTimeOffset.UtcNow);
 
-        result.Decision.Should().Be(halted ? RiskDecision.Rejected : RiskDecision.Approved);
-        result.HaltAccount.Should().Be(halted);
-        if (halted)
-        {
-            result.Reason.Should().Contain("Daily loss");
-        }
+        result.Decision.Should().Be(RiskDecision.Approved);
+        result.HaltAccount.Should().BeFalse();
     }
 
     [Fact]
-    public void Weekly_loss_at_the_limit_locks_even_when_today_is_flat()
+    public void Weekly_loss_does_not_lock_when_today_is_flat()
     {
         var profile = High();
         profile.MaxWeeklyLossPercent = 10m;
 
         var result = new RiskEngine().Evaluate(SignalType.Buy, profile, Clear() with { AccountWeeklyPnL = -10m }, DateTimeOffset.UtcNow);
 
-        result.HaltAccount.Should().BeTrue();
-        result.Reason.Should().Contain("Weekly loss");
+        result.HaltAccount.Should().BeFalse();
+        result.Decision.Should().Be(RiskDecision.Approved);
     }
 
     [Theory]
@@ -401,6 +398,53 @@ public sealed class RiskEngineTests
         bankruptcyOnly.Allowed.Should().BeTrue("5% bankruptcy distance leaves room for a 3.5% stop and 1% buffer");
         realBracket.Allowed.Should().BeFalse("1% maintenance margin pulls liquidation to ~4.04%, inside stop plus buffer");
         realBracket.Reason.Should().Contain("maintenance margin");
+    }
+
+    [Fact]
+    public void Shock_fade_fills_twenty_usdt_of_margin_at_ten_times()
+    {
+        var profile = High();
+        profile.RiskPerTradePercent = 8m;
+        profile.StopLossPercent = 7.5m;
+        profile.TakeProfitPercent = 22.5m;
+        profile.MaxLeverage = 10m;
+        profile.MaxPortfolioRiskPercent = 40m;
+        profile.MaxDailyLossPercent = 10m;
+
+        var plan = RiskEngine.Plan(
+            profile,
+            200m,
+            0.15m,
+            PositionSide.Short,
+            new RiskSizingHints
+            {
+                MaxMarginUsdt = ObservationStrategies.ShockFadeMaxEntryMarginUsdt,
+                MaintenanceMarginRate = 0.004m,
+                StepSize = 1m,
+                MinQuantity = 1m,
+                MinNotional = 5m
+            });
+
+        plan.Allowed.Should().BeTrue(plan.Reason);
+        plan.Leverage.Should().Be(10m);
+        plan.IsolatedMargin.Should().BeLessThanOrEqualTo(20m);
+        plan.IsolatedMargin.Should().BeGreaterThan(15m);
+        plan.PositionNotional.Should().BeGreaterThan(150m);
+    }
+
+    [Fact]
+    public void Ten_times_rejects_a_stop_that_would_liquidate_first()
+    {
+        var profile = High();
+        profile.MaxLeverage = 10m;
+        profile.StopLossPercent = 12m;
+        profile.TakeProfitPercent = 24m;
+        profile.MaxPortfolioRiskPercent = 40m;
+
+        var plan = RiskEngine.Plan(profile, 200m, 0.15m, PositionSide.Short, new RiskSizingHints { MaintenanceMarginRate = 0.004m });
+
+        plan.Allowed.Should().BeFalse();
+        plan.Reason.Should().Contain("liquidation");
     }
 
     [Fact]
