@@ -153,11 +153,55 @@ public sealed class UnexplainedPumpShortTests
     }
 
     [Fact]
-    public void A_short_stays_open_until_the_pump_gives_back()
+    public void A_wide_pump_stop_is_capped_so_ten_times_leverage_can_enter()
     {
-        UnexplainedPumpShort.ProfitExit(0.10m, 0.12m, 30m).Should().BeNull();
-        UnexplainedPumpShort.ProfitExit(0.10m, 0.08m, 30m).Should().BeNull();
-        UnexplainedPumpShort.ProfitExit(0.10m, 0.070m, 30m).Should().Contain("gave back");
+        UnexplainedPumpShort.StopPercent(1.2818m, 1.43m, 0.50m).Should().Be(67.34m);
+        UnexplainedPumpShort.OrderStopPercent(1.2818m, 1.43m, 0.50m).Should().Be(7.5m);
+        UnexplainedPumpShort.OrderLeverage.Should().Be(10m);
+        UnexplainedPumpShort.MaxEntryMarginUsdt.Should().Be(20m);
+    }
+
+    [Fact]
+    public void The_first_squeeze_keeps_the_disaster_stop()
+    {
+        var follow = UnexplainedPumpShort.Follow(0.0189002m, 0.016863m, 0.020243m, 30m, 20m, 40m);
+        follow.Following.Should().BeFalse();
+        follow.Stop.Should().Be(0.020243m);
+        UnexplainedPumpShort.BounceExit(follow, 0.019661m).Should().BeNull();
+    }
+
+    [Fact]
+    public void A_dump_trails_thirty_percent_above_the_low()
+    {
+        var follow = UnexplainedPumpShort.Follow(0.0189002m, 0.012388m, 0.020243m, 30m, 20m, 40m);
+        follow.Following.Should().BeTrue();
+        follow.Stop.Should().Be(0.012388m * 1.30m);
+        UnexplainedPumpShort.BounceExit(follow, 0.016027m).Should().BeNull();
+        UnexplainedPumpShort.BounceExit(follow, follow.Stop).Should().Contain("bounce");
+    }
+
+    [Fact]
+    public void A_forty_percent_drop_tightens_the_trail_to_twenty()
+    {
+        var entry = 0.0189002m;
+        var follow = UnexplainedPumpShort.Follow(entry, entry * 0.60m, 0.020243m, 30m, 20m, 40m);
+        follow.Following.Should().BeTrue();
+        follow.Stop.Should().Be(entry * 0.60m * 1.20m);
+    }
+
+    [Fact]
+    public void The_hold_clock_retires_once_the_drop_is_under_way()
+    {
+        UnexplainedPumpShort.DumpHasStarted(0.0189002m, 0.016863m, 15m).Should().BeFalse();
+        UnexplainedPumpShort.DumpHasStarted(0.0189002m, 0.012388m, 15m).Should().BeTrue();
+    }
+
+    [Fact]
+    public void The_follow_stop_waits_for_the_low_bar_to_close()
+    {
+        var lowAt = new DateTimeOffset(2026, 11, 3, 3, 47, 0, TimeSpan.Zero);
+        UnexplainedPumpShort.BarHasClosed(lowAt, lowAt.AddMinutes(8)).Should().BeFalse();
+        UnexplainedPumpShort.BarHasClosed(lowAt, new DateTimeOffset(2026, 11, 3, 4, 0, 0, TimeSpan.Zero)).Should().BeTrue();
     }
 
     [Fact]
@@ -255,6 +299,20 @@ public sealed class UnexplainedPumpShortTests
         var rows = PumpNewsSearch.ReadRss(xml, "google-news");
         rows.Should().ContainSingle();
         rows![0].Title.Should().Be("IRYS lists on Upbit");
+    }
+
+    [Fact]
+    public void A_short_closed_from_outside_may_be_sent_once_more_the_same_day()
+    {
+        var day = new DateTimeOffset(2026, 10, 28, 12, 30, 0, TimeSpan.Zero);
+        UnexplainedPumpShort.MaySendToday(0, 0, 1, out var retry).Should().BeTrue();
+        retry.Should().Be(1);
+        var again = UnexplainedPumpShort.ClientOrderId("EVAAUSDT", day, retry);
+        again.Should().StartWith("pump-");
+        again.Should().NotBe(UnexplainedPumpShort.ClientOrderId("EVAAUSDT", day));
+        UnexplainedPumpShort.MaySendToday(1, 0, 0, out _).Should().BeFalse();
+        UnexplainedPumpShort.MaySendToday(0, 1, 0, out _).Should().BeFalse();
+        UnexplainedPumpShort.MaySendToday(0, 0, 2, out _).Should().BeFalse();
     }
 
     private static UnexplainedPumpDecision Decide(PumpMove? move, bool stalled, PumpNewsVerdict news) =>

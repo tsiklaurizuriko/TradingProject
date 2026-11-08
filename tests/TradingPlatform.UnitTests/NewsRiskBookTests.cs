@@ -21,6 +21,8 @@ public sealed class NewsRiskBookTests
         book.MaxDailyLossPercent.Should().Be(0m);
         book.MaxWeeklyLossPercent.Should().Be(0m);
         book.MaxSimultaneousPositions.Should().Be(2);
+        book.MaxConsecutiveLosses.Should().Be(0);
+        book.CooldownMinutes.Should().Be(0);
         (book.StopLossPercent + book.MinimumLiquidationSafetyBufferPercent).Should().BeLessThan(100m / book.MaxLeverage);
     }
 }

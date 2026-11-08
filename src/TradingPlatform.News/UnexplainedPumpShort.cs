@@ -47,6 +47,7 @@ public sealed record UnexplainedPumpDecision(
 
 /// <summary>
 /// 150% in the last 24 hours, no public catalyst, and the price has stopped printing the high.
+/// The short then follows the drop. It has no target under the high.
 /// </summary>
 public static class UnexplainedPumpShort
 {
@@ -97,22 +98,72 @@ public static class UnexplainedPumpShort
     }
 
     /// <summary>
-    /// The short stays open through bounces and a push above the old high.
-    /// It closes when price has fallen <paramref name="dumpPercent"/> from the pump high.
+    /// Where the protective buy sits. <see cref="PumpFollow.Following"/> is true once the drop has pulled
+    /// that price under the original disaster stop. Until then the disaster stop stays, so the first squeeze
+    /// cannot knock the short out.
     /// </summary>
-    public static string? ProfitExit(decimal pumpHigh, decimal mark, decimal dumpPercent)
+    public readonly record struct PumpFollow(decimal Stop, bool Following);
+
+    /// <summary>
+    /// The short has no target under the pump high. The stop trails the lowest mark and only moves down.
+    /// A drop of <paramref name="tightenAfterPercent"/> or more switches from the wide trail to the tight one,
+    /// so a deep winner cannot be given all the way back. The result never sits above <paramref name="disasterStop"/>.
+    /// </summary>
+    public static PumpFollow Follow(
+        decimal entry,
+        decimal bestMark,
+        decimal disasterStop,
+        decimal widePercent,
+        decimal tightPercent,
+        decimal tightenAfterPercent)
     {
-        if (pumpHigh <= 0m || mark <= 0m || dumpPercent <= 0m)
+        if (entry <= 0m || bestMark <= 0m || widePercent <= 0m)
+        {
+            return new PumpFollow(disasterStop, false);
+        }
+
+        var drop = (entry - bestMark) / entry * 100m;
+        var trail = tightPercent > 0m && drop >= tightenAfterPercent ? tightPercent : widePercent;
+        var line = bestMark * (1m + trail / 100m);
+        if (disasterStop > 0m && line >= disasterStop)
+        {
+            return new PumpFollow(disasterStop, false);
+        }
+
+        return new PumpFollow(line, true);
+    }
+
+    /// <summary>The dump has ended when the mark trades up through a live follow stop.</summary>
+    public static string? BounceExit(PumpFollow follow, decimal mark)
+    {
+        if (!follow.Following || follow.Stop <= 0m || mark < follow.Stop)
         {
             return null;
         }
 
-        if (mark <= pumpHigh * (1m - dumpPercent / 100m))
+        return "The drop stalled. Closed on the bounce.";
+    }
+
+    /// <summary>The hold clock retires once the low is this far under the entry. A working dump is not closed on time.</summary>
+    public static bool DumpHasStarted(decimal entry, decimal bestMark, decimal startedPercent)
+    {
+        if (entry <= 0m || bestMark <= 0m || startedPercent <= 0m)
         {
-            return "The pump gave back. Closed on the drop.";
+            return false;
         }
 
-        return null;
+        return bestMark <= entry * (1m - startedPercent / 100m);
+    }
+
+    /// <summary>The 15-minute bar that printed <paramref name="lowAt"/> has finished, so the follow stop may move.</summary>
+    public static bool BarHasClosed(DateTimeOffset lowAt, DateTimeOffset now) =>
+        QuarterHour(now) > QuarterHour(lowAt);
+
+    public static DateTimeOffset QuarterHour(DateTimeOffset time)
+    {
+        var utc = time.ToUniversalTime();
+        var minute = utc.Minute - (utc.Minute % 15);
+        return new DateTimeOffset(utc.Year, utc.Month, utc.Day, utc.Hour, minute, 0, TimeSpan.Zero);
     }
 
     public static UnexplainedPumpDecision Decide(
@@ -160,12 +211,33 @@ public static class UnexplainedPumpShort
             lastPrice);
     }
 
-    public static string ClientOrderId(string symbol, DateTimeOffset day)
+    public static string ClientOrderId(string symbol, DateTimeOffset day, int retry = 0)
     {
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(
-            "pump|" + symbol.ToUpperInvariant() + "|" + day.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)));
+        var key = "pump|" + symbol.ToUpperInvariant() + "|" + day.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        if (retry > 0)
+        {
+            key += "|r" + retry.ToString(CultureInfo.InvariantCulture);
+        }
+
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(key));
         return "pump-" + Convert.ToHexString(hash)[..20].ToLowerInvariant();
     }
+
+    /// <summary>
+    /// One short per coin per day. A single entry that was closed from outside this book may be sent once more.
+    /// </summary>
+    public static bool MaySendToday(int openToday, int closedByThisBook, int closedFromOutside, out int retry)
+    {
+        retry = closedFromOutside;
+        return openToday == 0 && closedByThisBook == 0 && closedFromOutside <= 1;
+    }
+
+    /// <summary>10x Isolated leaves about 9% to liquidation. A wider exchange stop is rejected.</summary>
+    public const decimal MaxStopPercent = 7.5m;
+    public const decimal OrderLeverage = 10m;
+    public const decimal MaxEntryMarginUsdt = 20m;
+    public const decimal RiskPerTradePercent = 8m;
+    public const decimal MaxPortfolioRiskPercent = 40m;
 
     public static decimal StopPercent(decimal entry, decimal pumpHigh, decimal buffer)
     {
@@ -176,6 +248,13 @@ public static class UnexplainedPumpShort
 
         var distance = (pumpHigh * (1m + buffer) / entry - 1m) * 100m;
         return distance <= 0m ? 0m : Math.Round(distance, 2, MidpointRounding.AwayFromZero);
+    }
+
+    /// <summary>Exchange stop. The 50% band above the high stays the software exit. This cap is what 10x can hold.</summary>
+    public static decimal OrderStopPercent(decimal entry, decimal pumpHigh, decimal buffer)
+    {
+        var distance = StopPercent(entry, pumpHigh, buffer);
+        return distance <= 0m ? 0m : Math.Min(distance, MaxStopPercent);
     }
 
     private static UnexplainedPumpDecision None(string symbol, string reason, PumpMove? move = null, decimal entry = 0m) =>

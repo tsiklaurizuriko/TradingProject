@@ -111,11 +111,6 @@ public static class RiskLiveGuard
             return "Available margin is missing. Live entry is blocked.";
         }
 
-        if (!facts.DrawdownKnown)
-        {
-            return "Daily drawdown cannot be calculated. Live entry is blocked.";
-        }
-
         if (facts.RequestedRiskPercent > profile.RiskPerTradePercent)
         {
             return "Risk per trade exceeds the profile.";
@@ -134,11 +129,6 @@ public static class RiskLiveGuard
         if (facts.PositionsOnSymbol > 0)
         {
             return "This coin already has an open position.";
-        }
-
-        if (profile.MaxDrawdownPercent > 0m && facts.DrawdownPercent is { } drawdown && drawdown >= profile.MaxDrawdownPercent)
-        {
-            return "Equity drawdown from its recorded peak is at the limit.";
         }
 
         if (facts.Leverage > profile.MaxLeverage)
@@ -164,15 +154,6 @@ public static class RiskLiveGuard
         if (facts.AvailableMargin.Value < facts.RequiredMargin)
         {
             return "Available margin is below the required margin.";
-        }
-
-        if (profile.MaxConsecutiveLosses > 0
-            && facts.ConsecutiveLosses >= profile.MaxConsecutiveLosses
-            && facts.LastLossAt is { } lossAt
-            && profile.CooldownMinutes > 0
-            && facts.UtcNow < lossAt.AddMinutes(profile.CooldownMinutes))
-        {
-            return "Loss cooldown is still active.";
         }
 
         return null;

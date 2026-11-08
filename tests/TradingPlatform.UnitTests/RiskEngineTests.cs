@@ -325,10 +325,11 @@ public sealed class RiskEngineTests
     }
 
     [Theory]
-    [InlineData(null, false)]
-    [InlineData(14.9, false)]
-    [InlineData(15.0, true)]
-    public void Drawdown_from_the_recorded_peak_locks_new_entries(double? drawdown, bool halted)
+    [InlineData(null)]
+    [InlineData(14.9)]
+    [InlineData(15.0)]
+    [InlineData(90.0)]
+    public void A_drop_from_the_equity_peak_does_not_lock_new_entries(double? drawdown)
     {
         var profile = High();
         profile.MaxDrawdownPercent = 15m;
@@ -339,7 +340,8 @@ public sealed class RiskEngineTests
             Clear() with { DrawdownPercent = drawdown is { } d ? (decimal)d : null },
             DateTimeOffset.UtcNow);
 
-        result.HaltAccount.Should().Be(halted);
+        result.HaltAccount.Should().BeFalse();
+        result.Decision.Should().Be(RiskDecision.Approved);
     }
 
     [Fact]
@@ -487,7 +489,7 @@ public sealed class RiskEngineTests
     }
 
     [Fact]
-    public void Rejects_consecutive_losses_during_cooldown()
+    public void A_loss_streak_does_not_lock_a_new_entry()
     {
         var now = DateTimeOffset.UtcNow;
         var result = new RiskEngine().Evaluate(
@@ -496,9 +498,8 @@ public sealed class RiskEngineTests
             Clear() with { ConsecutiveLosses = 5, LastLossAt = now.AddMinutes(-5) },
             now);
 
-        result.Decision.Should().Be(RiskDecision.Rejected);
-        result.HaltAccount.Should().BeTrue();
-        result.Reason.Should().Contain("Consecutive loss");
+        result.Decision.Should().Be(RiskDecision.Approved);
+        result.HaltAccount.Should().BeFalse();
     }
 
     [Fact]

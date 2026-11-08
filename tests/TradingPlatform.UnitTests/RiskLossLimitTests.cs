@@ -125,6 +125,8 @@ public sealed class RiskLossLimitTests
         BinanceLiveExchangeConnector.ReadTakerFeePercent(Json("""{"symbol":"BTCUSDT","makerCommissionRate":"0.000200","takerCommissionRate":"0.000500"}""")).Should().Be(0.05m);
         BinanceLiveExchangeConnector.ReadTakerFeePercent(Json("""{"takerCommissionRate":"5"}""")).Should().BeNull();
         BinanceLiveExchangeConnector.ReadTakerFeePercent(Json("""{"code":-2015}""")).Should().BeNull();
+        BinanceLiveExchangeConnector.IsUnknownSymbol("Invalid symbol. (code -1121)").Should().BeTrue();
+        BinanceLiveExchangeConnector.IsUnknownSymbol("Invalid API-key, IP, or permissions for action (code -2015)").Should().BeFalse();
     }
 
     [Theory]
@@ -206,7 +208,7 @@ public sealed class RiskLossLimitTests
     }
 
     [Fact]
-    public void Live_guard_ignores_day_and_week_loss_and_still_applies_drawdown()
+    public void Live_guard_ignores_account_equity_moving_up_or_down()
     {
         var profile = new RiskProfile
         {
@@ -222,12 +224,12 @@ public sealed class RiskLossLimitTests
             MaxSimultaneousPositions = 2,
             AllowLive = true
         };
-        LiveRiskFacts Facts(decimal weekly, decimal? drawdown) => new(
-            1_000m, 0m, 0, 0, -30m, 0.5m, 3m, 2m, 0.01m, 500m, 0.001m, 5m, 1_000m, 170m, false, 0, null, DateTimeOffset.UtcNow, true, weekly, drawdown);
+        LiveRiskFacts Facts(decimal weekly, decimal? drawdown, bool drawdownKnown = true) => new(
+            1_000m, 0m, 0, 0, -30m, 0.5m, 3m, 2m, 0.01m, 500m, 0.001m, 5m, 1_000m, 170m, false, 0, null, DateTimeOffset.UtcNow, drawdownKnown, weekly, drawdown);
 
         RiskLiveGuard.Reject(TradingMode.Live, profile, Facts(-80m, 14m)).Should().BeNull();
-        RiskLiveGuard.Reject(TradingMode.Live, profile, Facts(-80m, null)).Should().BeNull();
-        RiskLiveGuard.Reject(TradingMode.Live, profile, Facts(0m, 15m)).Should().Contain("drawdown");
+        RiskLiveGuard.Reject(TradingMode.Live, profile, Facts(-80m, null, false)).Should().BeNull();
+        RiskLiveGuard.Reject(TradingMode.Live, profile, Facts(0m, 15m)).Should().BeNull();
     }
 
     private static JsonElement Json(string text) => JsonSerializer.Deserialize<JsonElement>(text);

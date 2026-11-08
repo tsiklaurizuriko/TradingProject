@@ -222,12 +222,18 @@ export class GoalProgressComponent {
               @for (row of rows(); track row.key) {
                 <div
                   class="risk-table-row"
-                  [class.is-full]="!row.historical && row.openCoins >= row.maxPositions"
+                  [class.is-full]="!row.historical && row.maxPositions != null && row.openCoins >= row.maxPositions"
                   [title]="strategyTitle(row)"
                 >
                   <span class="risk-strategy-name" [title]="row.name">{{ row.name }}</span>
                   <span class="num">{{ bookLabel(row) }}</span>
-                  @if (row.historical) {
+                  @if (row.external) {
+                    @if (row.maxPositions != null) {
+                      <strong class="num">{{ row.openCoins }}/{{ row.maxPositions }}</strong>
+                    } @else {
+                      <strong class="num">{{ row.openCoins }}</strong>
+                    }
+                  } @else if (row.historical) {
                     <span class="num muted">—</span>
                   } @else {
                     <strong class="num">{{ row.openCoins }}/{{ row.maxPositions }}</strong>
@@ -267,6 +273,32 @@ export class RiskOverviewComponent {
     const loaded = results !== null;
     const byName = new Map((results ?? []).map((row) => [row.name.trim().toLowerCase(), row]));
     const used = new Set<string>();
+    const books = (results ?? [])
+      .filter((row) => row.externalBook)
+      .map((row) => {
+        used.add(row.name.trim().toLowerCase());
+        return {
+          key: `book:${row.name}`,
+          name: row.name,
+          openCoins: row.openEntries,
+          maxPositions: row.maxPositions ?? null,
+          stopLossPercent: row.stopLossPercent ?? null,
+          takeProfitPercent: row.takeProfitPercent ?? null,
+          riskPerTradePercent: null,
+          maxLeverage: null,
+          plannedRiskUsdt: 0,
+          plannedRiskPercent: 0,
+          entries: row.entries,
+          wins: row.wins,
+          losses: row.losses,
+          openEntries: row.openEntries,
+          pnl: row.realizedPnL,
+          unrealized: row.unrealizedPnL,
+          historical: false,
+          external: true,
+          firstHistorical: false,
+        };
+      });
     const running = this.occupancy().map((row) => {
       const hit = byName.get(row.name.trim().toLowerCase());
       if (hit) {
@@ -290,6 +322,7 @@ export class RiskOverviewComponent {
         pnl: loaded ? (hit?.realizedPnL ?? 0) : null,
         unrealized: loaded ? (hit?.unrealizedPnL ?? 0) : null,
         historical: false,
+        external: false,
         firstHistorical: false,
       };
     });
@@ -314,10 +347,11 @@ export class RiskOverviewComponent {
         pnl: row.realizedPnL,
         unrealized: row.unrealizedPnL,
         historical: true,
+        external: false,
         firstHistorical: index === 0,
       };
       });
-    return [...running, ...extra];
+    return [...books, ...running, ...extra];
   });
   readonly uniqueCoins = computed(() => uniqueOpenCoins(this.positions()));
   readonly totalOpenRisk = computed(() =>
@@ -328,8 +362,11 @@ export class RiskOverviewComponent {
     return available > 0 ? (this.totalOpenRisk() / available) * 100 : 0;
   });
   bookLabel(row: { stopLossPercent?: number | null; takeProfitPercent?: number | null }): string {
-    if (row.stopLossPercent == null || row.takeProfitPercent == null) {
+    if (row.stopLossPercent == null) {
       return '—';
+    }
+    if (row.takeProfitPercent == null) {
+      return `${row.stopLossPercent}% / —`;
     }
     return `${row.stopLossPercent}% / ${row.takeProfitPercent}%`;
   }
@@ -365,7 +402,7 @@ export class RiskOverviewComponent {
   strategyTitle(row: {
     historical: boolean;
     openCoins: number;
-    maxPositions: number;
+    maxPositions: number | null;
     entries: number | null;
     wins: number | null;
     losses: number | null;
@@ -373,7 +410,7 @@ export class RiskOverviewComponent {
     unrealized: number | null;
   }): string {
     const parts: string[] = [];
-    if (!row.historical && row.openCoins > row.maxPositions) {
+    if (!row.historical && row.maxPositions != null && row.openCoins > row.maxPositions) {
       parts.push('Existing Isolated stays until it closes. New coins are blocked.');
     }
     if (row.entries !== null) {

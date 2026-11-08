@@ -351,15 +351,6 @@ public sealed class RiskEngine : IRiskEngine
         }
 
         var available = snapshot.AvailableBalance;
-        var maxLosses = profile.MaxConsecutiveLosses > 0 ? profile.MaxConsecutiveLosses : 5;
-        var cooldown = TimeSpan.FromMinutes(profile.CooldownMinutes > 0 ? profile.CooldownMinutes : 30);
-        if (snapshot.ConsecutiveLosses >= maxLosses
-            && snapshot.LastLossAt is { } last
-            && utcNow < last + cooldown)
-        {
-            return Lock("Consecutive loss limit reached. New entries are locked until the cooldown ends.");
-        }
-
         if (snapshot.SymbolAlreadyOpen)
         {
             return Reject("This coin already has an open Isolated position. Binance USD-M is one position per coin.");
@@ -399,20 +390,11 @@ public sealed class RiskEngine : IRiskEngine
         };
     }
 
-    /// <summary>Drawdown halt. The limit is a percent of the recorded peak; zero turns it off. Day and week loss caps are not applied.</summary>
+    /// <summary>Day, week, peak-equity, and loss-streak halts are not applied. A run of losing trades does not block a new entry.</summary>
     public static string? LossHalt(RiskProfile profile, RiskSnapshot snapshot)
     {
-        var equity = snapshot.Equity > 0m ? snapshot.Equity : snapshot.AvailableBalance;
-        if (equity <= 0m)
-        {
-            return null;
-        }
-
-        if (profile.MaxDrawdownPercent > 0m && snapshot.DrawdownPercent is { } drawdown && drawdown >= profile.MaxDrawdownPercent)
-        {
-            return $"Equity is {drawdown:0.##}% below its recorded peak (limit {profile.MaxDrawdownPercent:0.##}%). New entries stay halted while it is. A withdrawal also lowers equity and counts here.";
-        }
-
+        _ = profile;
+        _ = snapshot;
         return null;
     }
 

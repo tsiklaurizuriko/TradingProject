@@ -125,6 +125,40 @@ public sealed class TradingStore : ITradingStore
         return working.Concat(latest).ToList();
     }
 
+    public async Task<IReadOnlyList<ExternalBook.OutsideMark>> GetOutsideBookMarksAsync(
+        IReadOnlyCollection<string> openSymbols,
+        DateTimeOffset since,
+        CancellationToken cancellationToken = default)
+    {
+        var symbols = openSymbols
+            .Where(symbol => !string.IsNullOrWhiteSpace(symbol))
+            .Select(symbol => symbol.Trim().ToUpperInvariant())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (symbols.Length == 0)
+        {
+            return [];
+        }
+
+        var rows = await _db.Orders.AsNoTracking()
+            .Where(order => order.Mode == TradingMode.Live
+                && order.CreatedAt >= since
+                && symbols.Contains(order.Symbol)
+                && (order.ClientOrderId.StartsWith("news-")
+                    || order.ClientOrderId.StartsWith("pump-")
+                    || (order.Type == OrderType.Market
+                        && order.Status == OrderStatus.Filled
+                        && order.ClientOrderId.StartsWith("L"))))
+            .Select(order => new { order.Symbol, order.ClientOrderId, order.CreatedAt })
+            .ToListAsync(cancellationToken);
+        return rows
+            .Select(order => new ExternalBook.OutsideMark(
+                order.Symbol,
+                order.CreatedAt,
+                !ExternalBook.IsNewsOrPump(order.ClientOrderId)))
+            .ToList();
+    }
+
     public async Task<IReadOnlyList<Bot>> ListBotsAsync(CancellationToken cancellationToken = default)
     {
         try

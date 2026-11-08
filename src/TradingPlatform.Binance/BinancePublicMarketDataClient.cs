@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -25,6 +26,10 @@ public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
     private static DateTimeOffset FundingUntil;
 
     private static readonly SemaphoreSlim InFlight = new(8, 8);
+    private static readonly ConcurrentDictionary<string, DateTimeOffset> UnpricedUntil = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly TimeSpan UnpricedHold = TimeSpan.FromSeconds(60);
+
+    internal static void ClearUnpriced() => UnpricedUntil.Clear();
 
     private readonly HttpClient _futures;
     private readonly ILogger<BinancePublicMarketDataClient> _logger;
@@ -517,9 +522,15 @@ public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
     public async Task<decimal> GetLastPriceAsync(string symbol, CancellationToken cancellationToken = default)
     {
         var id = symbol.ToUpperInvariant();
-        if (FuturesPriceBook.TryGet(id, DateTimeOffset.UtcNow, out var cached))
+        var now = DateTimeOffset.UtcNow;
+        if (FuturesPriceBook.TryGet(id, now, out var cached))
         {
             return cached;
+        }
+
+        if (UnpricedUntil.TryGetValue(id, out var until) && now < until)
+        {
+            throw new SymbolPriceUnavailableException(id);
         }
 
         var url = $"fapi/v1/ticker/price?symbol={id}";
@@ -530,9 +541,56 @@ public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
             throw new HttpRequestException("Binance USD-M last price is unavailable.");
         }
 
-        var price = Dec(payload.Value.GetProperty("price"));
-        FuturesPriceBook.Set(id, price, DateTimeOffset.UtcNow);
-        return price;
+        switch (ReadTickerPrice(payload.Value, out var price))
+        {
+            case TickerPriceRead.Priced:
+                UnpricedUntil.TryRemove(id, out _);
+                FuturesPriceBook.Set(id, price, DateTimeOffset.UtcNow);
+                return price;
+            case TickerPriceRead.Unpriced:
+                var hold = DateTimeOffset.UtcNow + UnpricedHold;
+                UnpricedUntil[id] = hold;
+                _logger.LogInformation(
+                    "Binance USD-M {Symbol} returned no last price. The coin is not trading and is skipped until {Until:HH:mm:ss} UTC.",
+                    id,
+                    hold);
+                throw new SymbolPriceUnavailableException(id);
+            default:
+                cancellationToken.ThrowIfCancellationRequested();
+                throw new HttpRequestException("Binance USD-M last price is unavailable.");
+        }
+    }
+
+    /// <summary>
+    /// A settling contract answers HTTP 200 with <c>{}</c>. That is not a missing dictionary key and not a transport failure.
+    /// </summary>
+    internal static TickerPriceRead ReadTickerPrice(JsonElement payload, out decimal price)
+    {
+        price = 0m;
+        if (payload.ValueKind != JsonValueKind.Object)
+        {
+            return TickerPriceRead.Unavailable;
+        }
+
+        if (payload.TryGetProperty("price", out var priceEl))
+        {
+            try
+            {
+                price = Dec(priceEl);
+            }
+            catch (FormatException)
+            {
+                return TickerPriceRead.Unavailable;
+            }
+            catch (OverflowException)
+            {
+                return TickerPriceRead.Unavailable;
+            }
+
+            return price > 0m ? TickerPriceRead.Priced : TickerPriceRead.Unavailable;
+        }
+
+        return payload.TryGetProperty("code", out _) ? TickerPriceRead.Unavailable : TickerPriceRead.Unpriced;
     }
 
     public async Task<IReadOnlyDictionary<string, decimal>> GetLastPricesAsync(CancellationToken cancellationToken = default)
@@ -893,4 +951,11 @@ public sealed class BinancePublicMarketDataClient : IPublicMarketDataClient
 
     private static decimal Dec(JsonElement element) =>
         decimal.Parse(element.GetString() ?? element.GetRawText(), CultureInfo.InvariantCulture);
+}
+
+internal enum TickerPriceRead
+{
+    Priced,
+    Unpriced,
+    Unavailable
 }

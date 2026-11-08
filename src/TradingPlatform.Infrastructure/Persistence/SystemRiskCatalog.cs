@@ -45,13 +45,20 @@ internal static class SystemRiskCatalog
         var cleared = false;
         foreach (var row in rows)
         {
-            if (row.MaxDailyLossPercent == 0m && row.MaxWeeklyLossPercent == 0m)
+            if (row.MaxDailyLossPercent == 0m
+                && row.MaxWeeklyLossPercent == 0m
+                && row.MaxDrawdownPercent == 0m
+                && row.MaxConsecutiveLosses == 0
+                && row.CooldownMinutes == 0)
             {
                 continue;
             }
 
             row.MaxDailyLossPercent = 0m;
             row.MaxWeeklyLossPercent = 0m;
+            row.MaxDrawdownPercent = 0m;
+            row.MaxConsecutiveLosses = 0;
+            row.CooldownMinutes = 0;
             cleared = true;
         }
 
@@ -82,6 +89,7 @@ internal static class SystemRiskCatalog
             MaxLeverage = leverage,
             MaxDailyLossPercent = 0m,
             MaxWeeklyLossPercent = 0m,
+            MaxDrawdownPercent = 0m,
             MaxPortfolioRiskPercent = 4m,
             MaxSimultaneousPositions = maxPositions,
             MaxConsecutiveLosses = 5,

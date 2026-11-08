@@ -787,6 +787,10 @@ export interface StrategyResultDto {
   openEntries: number;
   realizedPnL: number;
   unrealizedPnL: number;
+  stopLossPercent?: number | null;
+  takeProfitPercent?: number | null;
+  maxPositions?: number | null;
+  externalBook?: boolean;
 }
 
 export interface PerformanceDto {

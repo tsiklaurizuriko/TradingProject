@@ -107,6 +107,49 @@ public sealed class LiveIsolatedReconciler
                 group => group.Key,
                 group => group.OrderByDescending(claim => claim.CreatedAt).First().BotId,
                 StringComparer.OrdinalIgnoreCase);
+        var outsideMarks = new List<ExternalBook.OutsideMark>();
+        foreach (var order in live.OpenOrders)
+        {
+            ExternalBook.Note(outsideMarks, order.Symbol, order.ClientOrderId, order.Type, order.Status, order.CreatedAt);
+        }
+
+        var openOnExchange = live.OpenPositions.Where(row => row.Quantity > 0m).Select(row => row.Symbol).ToArray();
+        if (openOnExchange.Length > 0)
+        {
+            outsideMarks.AddRange(await _store.GetOutsideBookMarksAsync(openOnExchange, now.AddDays(-7), cancellationToken));
+        }
+
+        var heldOutside = ExternalBook.HeldSymbols(openOnExchange, outsideMarks);
+        var released = 0;
+        foreach (var position in book.Where(position => position.Quantity > 0m).ToList())
+        {
+            var key = IsolatedOccupancy.CoinKey(position.Symbol);
+            if (!heldOutside.Contains(key))
+            {
+                continue;
+            }
+
+            if (entryBySymbol.TryGetValue(key, out var ownerId) && ownerId == position.BotId)
+            {
+                continue;
+            }
+
+            position.Quantity = 0m;
+            position.UnrealizedPnL = 0m;
+            position.ClosedAt = now;
+            var holder = position.Bot ?? await _store.GetBotAsync(position.BotId, cancellationToken);
+            if (holder is not null)
+            {
+                holder.LastError = ExternalBook.StandDown;
+            }
+
+            released++;
+            _logger.LogInformation(
+                "Left {Symbol} with news or pump shorts. Bot {BotId} will not take it.",
+                position.Symbol,
+                position.BotId);
+        }
+
         var returned = 0;
         foreach (var position in book.Where(position => position.Quantity > 0m).ToList())
         {
@@ -159,6 +202,11 @@ public sealed class LiveIsolatedReconciler
         var adopted = 0;
         foreach (var remote in live.OpenPositions.Where(row => row.Quantity > 0m))
         {
+            if (heldOutside.Contains(IsolatedOccupancy.CoinKey(remote.Symbol)))
+            {
+                continue;
+            }
+
             var known = book.Any(position =>
                 position.Quantity > 0m
                 && string.Equals(position.Symbol, remote.Symbol, StringComparison.OrdinalIgnoreCase));
@@ -236,6 +284,11 @@ public sealed class LiveIsolatedReconciler
         var retiredOrders = 0;
         foreach (var order in await _store.GetRestingLiveProtectionAsync(cancellationToken))
         {
+            if (ExternalBook.IsNewsOrPump(order.ClientOrderId))
+            {
+                continue;
+            }
+
             if (now - order.CreatedAt < IsolatedOccupancy.OverlayGrace)
             {
                 continue;
@@ -254,7 +307,7 @@ public sealed class LiveIsolatedReconciler
             retiredOrders++;
         }
 
-        if (missing > 0 || adopted > 0 || returned > 0 || collapsed > 0 || retiredOrders > 0)
+        if (missing > 0 || adopted > 0 || returned > 0 || collapsed > 0 || retiredOrders > 0 || released > 0)
         {
             await _store.SaveChangesAsync(cancellationToken);
         }
@@ -262,6 +315,11 @@ public sealed class LiveIsolatedReconciler
         var unknown = new List<string>();
         foreach (var remote in live.OpenPositions.Where(row => row.Quantity > 0m))
         {
+            if (heldOutside.Contains(IsolatedOccupancy.CoinKey(remote.Symbol)))
+            {
+                continue;
+            }
+
             var known = book.Any(position =>
                 position.Quantity > 0m
                 && string.Equals(position.Symbol, remote.Symbol, StringComparison.OrdinalIgnoreCase));
@@ -273,6 +331,11 @@ public sealed class LiveIsolatedReconciler
 
         foreach (var remote in live.OpenOrders)
         {
+            if (ExternalBook.IsNewsOrPump(remote.ClientOrderId))
+            {
+                continue;
+            }
+
             if (string.IsNullOrWhiteSpace(remote.ClientOrderId)
                 || await _store.GetOrderByClientOrderIdAsync(remote.ClientOrderId, cancellationToken) is null)
             {

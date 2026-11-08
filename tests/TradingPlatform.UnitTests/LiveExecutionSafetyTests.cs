@@ -394,7 +394,7 @@ public sealed class LiveRiskBoundaryTests
     {
         Reject(Profile(), Facts() with { Equity = 0m }).Should().Contain("Equity is missing");
         Reject(Profile(), Facts() with { AvailableMargin = null }).Should().Contain("Available margin is missing");
-        Reject(Profile(), Facts() with { DrawdownKnown = false }).Should().Contain("drawdown");
+        Reject(Profile(), Facts() with { DrawdownKnown = false }).Should().BeNull();
         Reject(Profile(), Facts() with { KillSwitch = true }).Should().Contain("Kill switch");
         Reject(Profile(), Facts() with { StopDistancePercent = 0m }).Should().Contain("Stop distance");
         Reject(Profile(), Facts() with
@@ -402,7 +402,7 @@ public sealed class LiveRiskBoundaryTests
             ConsecutiveLosses = 5,
             LastLossAt = DateTimeOffset.UnixEpoch,
             UtcNow = DateTimeOffset.UnixEpoch.AddMinutes(10)
-        }).Should().Contain("cooldown");
+        }).Should().BeNull();
 
         RiskLiveGuard.ProfileProblem(TradingMode.Live, null).Should().Contain("missing");
         RiskLiveGuard.ProfileProblem(TradingMode.Live, new RiskProfile { AllowLive = false }).Should().Contain("not allowed");

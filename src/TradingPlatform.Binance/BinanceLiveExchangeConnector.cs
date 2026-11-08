@@ -407,7 +407,7 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
         var cacheKey = $"{_accountId:N}:{symbol}";
         if (TakerFees.TryGetValue(cacheKey, out var cached) && DateTimeOffset.UtcNow - cached.At < TakerFeeTtl)
         {
-            return cached.Percent;
+            return cached.Percent >= 0m ? cached.Percent : null;
         }
 
         try
@@ -421,6 +421,11 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
 
             TakerFees[cacheKey] = (percent, DateTimeOffset.UtcNow);
             return percent;
+        }
+        catch (DomainException ex) when (IsUnknownSymbol(ex.Message))
+        {
+            TakerFees[cacheKey] = (-1m, DateTimeOffset.UtcNow);
+            return null;
         }
         catch (DomainException)
         {
@@ -441,6 +446,10 @@ public sealed class BinanceLiveExchangeConnector : IExchangeConnector
             return null;
         }
     }
+
+    /// <summary>Binance -1121. The coin is not a trading contract, so the fee call is not repeated for six hours.</summary>
+    internal static bool IsUnknownSymbol(string? message) =>
+        message?.Contains("-1121", StringComparison.Ordinal) == true;
 
     /// <summary>takerCommissionRate is a fraction ("0.000400"); the result is percent (0.04).</summary>
     public static decimal? ReadTakerFeePercent(JsonElement payload)

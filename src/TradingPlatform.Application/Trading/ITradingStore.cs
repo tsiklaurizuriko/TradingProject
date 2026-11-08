@@ -33,6 +33,12 @@ public interface ITradingStore
     Task<IReadOnlyList<StrategyEntryClaim>> GetStrategyEntryClaimsAsync(
         IReadOnlyCollection<string> openSymbols,
         CancellationToken cancellationToken = default);
+
+    /// <summary>News, pump-short, and bot entry marks on these coins since <paramref name="since"/>.</summary>
+    Task<IReadOnlyList<ExternalBook.OutsideMark>> GetOutsideBookMarksAsync(
+        IReadOnlyCollection<string> openSymbols,
+        DateTimeOffset since,
+        CancellationToken cancellationToken = default);
     Task<IReadOnlyList<Bot>> ListBotsAsync(CancellationToken cancellationToken = default);
     Task<IReadOnlyList<Bot>> ListWorkspaceBotsAsync(Guid userId, TradingMode mode, CancellationToken cancellationToken = default);
     Task<Bot?> GetBotAsync(Guid botId, CancellationToken cancellationToken = default);

@@ -32,8 +32,8 @@ public sealed class RiskProfile : SoftDeletableEntity
     /// <summary>Kept for stored profiles. Week loss no longer halts entries.</summary>
     public decimal MaxWeeklyLossPercent { get; set; }
 
-    /// <summary>New entries halt when equity is this far below its recorded peak. Zero turns it off.</summary>
-    public decimal MaxDrawdownPercent { get; set; } = 15m;
+    /// <summary>Kept for stored profiles. A drop from the equity peak no longer halts entries.</summary>
+    public decimal MaxDrawdownPercent { get; set; }
 
     /// <summary>Cap on sum of planned risk across this strategy's open Isolated positions, as percent of available.</summary>
     public decimal MaxPortfolioRiskPercent { get; set; } = 4m;

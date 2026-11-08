@@ -2148,14 +2148,14 @@ public sealed class TradingQueryService : ITradingQueryService
             throw new DomainException(ErrorCodes.ValidationFailed, "Maximum simultaneous positions per strategy must be between 1 and 20.");
         }
 
-        if (request.MaxConsecutiveLosses < 1 || request.MaxConsecutiveLosses > 50)
+        if (request.MaxConsecutiveLosses < 0 || request.MaxConsecutiveLosses > 50)
         {
-            throw new DomainException(ErrorCodes.ValidationFailed, "Consecutive loss limit must be between 1 and 50.");
+            throw new DomainException(ErrorCodes.ValidationFailed, "Consecutive loss limit must be between 0 and 50. Zero turns it off.");
         }
 
-        if (request.CooldownMinutes < 1 || request.CooldownMinutes > 1440)
+        if (request.CooldownMinutes < 0 || request.CooldownMinutes > 1440)
         {
-            throw new DomainException(ErrorCodes.ValidationFailed, "Cooldown must be between 1 and 1440 minutes.");
+            throw new DomainException(ErrorCodes.ValidationFailed, "Cooldown must be between 0 and 1440 minutes. Zero turns it off.");
         }
 
         if (request.MinimumLiquidationSafetyBufferPercent < 0.1m || request.MinimumLiquidationSafetyBufferPercent > 20m)

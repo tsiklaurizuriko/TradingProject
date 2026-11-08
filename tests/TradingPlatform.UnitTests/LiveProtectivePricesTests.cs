@@ -54,6 +54,33 @@ public sealed class LiveProtectivePricesTests
     }
 
     [Fact]
+    public void FromEntry_short_take_beyond_zero_keeps_a_valid_stop()
+    {
+        var (stop, take) = LiveProtectivePrices.FromEntry(
+            8.613m,
+            12m,
+            300m,
+            0.001m,
+            TradingPlatform.Domain.Positions.PositionSide.Short);
+
+        stop.Should().Be(9.647m);
+        take.Should().Be(0.001m);
+        LiveProtectivePrices.IsValidTrigger(8.613m, stop, take, TradingPlatform.Domain.Positions.PositionSide.Short)
+            .Should().BeTrue();
+    }
+
+    [Fact]
+    public void FromEntry_long_stop_beyond_zero_stays_one_tick_below_entry()
+    {
+        var (stop, take) = LiveProtectivePrices.FromEntry(10m, 150m, 3m, 0.01m);
+
+        stop.Should().Be(0.01m);
+        take.Should().Be(10.30m);
+        LiveProtectivePrices.IsValidTrigger(10m, stop, take, TradingPlatform.Domain.Positions.PositionSide.Long)
+            .Should().BeTrue();
+    }
+
+    [Fact]
     public void Client_order_ids_fit_binance_limit_and_are_stable()
     {
         var botId = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");

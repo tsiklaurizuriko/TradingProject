@@ -15,11 +15,11 @@ public static class NewsRiskBook
     public const decimal MaxLeverage = 3m;
     public const decimal MaxDailyLossPercent = 0m;
     public const decimal MaxWeeklyLossPercent = 0m;
-    public const decimal MaxDrawdownPercent = 15m;
+    public const decimal MaxDrawdownPercent = 0m;
     public const decimal MaxPortfolioRiskPercent = 1.5m;
     public const int MaxSimultaneousPositions = 2;
-    public const int MaxConsecutiveLosses = 3;
-    public const int CooldownMinutes = 60;
+    public const int MaxConsecutiveLosses = 0;
+    public const int CooldownMinutes = 0;
     public const decimal MinimumLiquidationSafetyBufferPercent = 1m;
 
     public static RiskProfile Create() =>

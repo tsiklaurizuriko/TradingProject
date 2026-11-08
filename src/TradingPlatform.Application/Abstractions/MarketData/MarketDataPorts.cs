@@ -22,6 +22,18 @@ public sealed record RankedUsdtSpotSymbol(
 
 public sealed record CachedTicker(string Symbol, decimal Price, DateTimeOffset Timestamp);
 
+/// <summary>Binance answered, but this coin has no last price. Settling and delisted contracts do this.</summary>
+public sealed class SymbolPriceUnavailableException : Exception
+{
+    public SymbolPriceUnavailableException(string symbol)
+        : base($"{symbol} has no last price. The coin is not trading, so this cycle was skipped.")
+    {
+        Symbol = symbol;
+    }
+
+    public string Symbol { get; }
+}
+
 public interface IPublicMarketDataClient
 {
     Task<IReadOnlyList<MarketCandle>> GetClosedKlinesAsync(

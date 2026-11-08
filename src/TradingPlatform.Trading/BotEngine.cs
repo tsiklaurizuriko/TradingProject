@@ -46,11 +46,13 @@ public sealed class BotEngine : IBotEngine
     private readonly BotCycleState _state;
     private readonly TopTraderRankBook _topTraderRanks;
     private readonly Dictionary<string, Symbol?> _cycleSymbols = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _cycleUnpriced = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _publishedSymbols = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _storedCandles = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<Guid, HashSet<string>> _strategySlots = new();
     private readonly Dictionary<string, StrategyMarketInputs> _cycleMarketInputs = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, DateTimeOffset> _cyclePriceAt = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _outsideBook = new(StringComparer.OrdinalIgnoreCase);
     private IReadOnlyDictionary<string, FuturesBookTicker>? _cycleBook;
 
     public BotEngine(
@@ -111,6 +113,7 @@ public sealed class BotEngine : IBotEngine
             _cycleBook = null;
             await RecordLiveEquityAsync(bots, cancellationToken);
             await HandOffStoppedSnapshotsAsync(cancellationToken);
+            await LoadOutsideBookAsync(cancellationToken);
             await WatchUnattendedLivePositionsAsync(bots, cancellationToken);
             var cycleKlines = new Dictionary<string, IReadOnlyList<MarketCandle>>(StringComparer.OrdinalIgnoreCase);
             var cyclePrices = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
@@ -119,6 +122,7 @@ public sealed class BotEngine : IBotEngine
             var book = (await _store.GetOpenPositionsForModeAsync(TradingMode.Live, cancellationToken)).ToList();
             await RebuildStrategySlotsAsync(bots, book, cancellationToken);
             _cycleSymbols.Clear();
+            _cycleUnpriced.Clear();
             _publishedSymbols.Clear();
             _storedCandles.Clear();
             _cycleMarketInputs.Clear();
@@ -138,6 +142,7 @@ public sealed class BotEngine : IBotEngine
                     lastReconcileAttempt = _clock.UtcNow;
                     await RefreshLiveIsolatedBookAsync(cancellationToken);
                     await _reconcile.ReconcileAsync(cancellationToken);
+                    await LoadOutsideBookAsync(cancellationToken);
                     await ProtectOpenPositionsAsync(bots, cycleFilters, cancellationToken);
                     var refreshed = (await _store.GetOpenPositionsForModeAsync(TradingMode.Live, cancellationToken)).ToList();
                     book.Clear();
@@ -1058,7 +1063,7 @@ public sealed class BotEngine : IBotEngine
         return candles;
     }
 
-    private async Task<decimal> GetCycleLastPriceAsync(
+    private async Task<(decimal Price, bool Tradable)> GetCycleLastPriceAsync(
         string symbol,
         IReadOnlyList<MarketCandle> candles,
         Dictionary<string, decimal> cyclePrices,
@@ -1066,9 +1071,10 @@ public sealed class BotEngine : IBotEngine
     {
         if (cyclePrices.TryGetValue(symbol, out var hit))
         {
-            return hit;
+            return (hit, !_cycleUnpriced.Contains(symbol));
         }
 
+        var tradable = true;
         decimal lastPrice;
         try
         {
@@ -1077,6 +1083,16 @@ public sealed class BotEngine : IBotEngine
             {
                 _cyclePriceAt[symbol] = _clock.UtcNow;
             }
+        }
+        catch (SymbolPriceUnavailableException) when (candles.Count == 0)
+        {
+            throw;
+        }
+        catch (SymbolPriceUnavailableException)
+        {
+            tradable = false;
+            _cycleUnpriced.Add(symbol);
+            lastPrice = candles[^1].Close;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -1093,7 +1109,7 @@ public sealed class BotEngine : IBotEngine
         }
 
         cyclePrices[symbol] = lastPrice;
-        return lastPrice;
+        return (lastPrice, tradable);
     }
 
     private async Task<Dictionary<string, RankedUsdtSpotSymbol>> LoadCycleFiltersAsync(CancellationToken cancellationToken)
@@ -1429,7 +1445,17 @@ public sealed class BotEngine : IBotEngine
 
         var klineLimit = SpecialKlineLimit(bot);
         var candles = await GetCycleKlinesAsync(bot.Symbol, bot.Timeframe, cycleKlines, cancellationToken, klineLimit);
-        var lastPrice = await GetCycleLastPriceAsync(bot.Symbol, candles, cyclePrices, cancellationToken);
+        decimal lastPrice;
+        bool priceTradable;
+        try
+        {
+            (lastPrice, priceTradable) = await GetCycleLastPriceAsync(bot.Symbol, candles, cyclePrices, cancellationToken);
+        }
+        catch (SymbolPriceUnavailableException ex)
+        {
+            bot.LastError = ex.Message;
+            return;
+        }
         var now = _clock.UtcNow;
         _cache.SetKlines(bot.Symbol, bot.Timeframe, candles);
         _cache.SetTicker(bot.Symbol, lastPrice, now);
@@ -1477,6 +1503,13 @@ public sealed class BotEngine : IBotEngine
         var liveBook = bot.Mode == TradingMode.Live ? _live.Current.OpenPositions : null;
         var liveAuth = bot.Mode == TradingMode.Live && IsolatedOccupancy.HasFreshFuturesBook(_live.Current);
         var coinOpen = IsolatedOccupancy.IsCoinOpen(bot.Symbol, book, liveBook, liveAuth, now);
+        if (_outsideBook.Contains(IsolatedOccupancy.CoinKey(bot.Symbol)))
+        {
+            ReleaseOutsidePosition(position, now);
+            bot.LastError = ExternalBook.StandDown;
+            return;
+        }
+
         if (position is not null || coinOpen)
         {
             claimed.Add(claimKey);
@@ -1984,6 +2017,12 @@ public sealed class BotEngine : IBotEngine
             return;
         }
 
+        if (!priceTradable)
+        {
+            bot.LastError = $"{bot.Symbol} has no last price. The coin is not trading, so no new order was sent.";
+            return;
+        }
+
         if (StrategyTemplateKeys.IsProductionNew(definition.Template))
         {
             var blocked = ProductionNewGate.EntryBlock(_options.ProductionNew, definition.Template, bot.Mode == TradingMode.Live);
@@ -2016,15 +2055,6 @@ public sealed class BotEngine : IBotEngine
                 bot.LastError = gate;
                 return;
             }
-        }
-
-        var maxLosses = profile.MaxConsecutiveLosses > 0 ? profile.MaxConsecutiveLosses : 5;
-        var coinCooldown = TimeSpan.FromMinutes(profile.CooldownMinutes > 0 ? profile.CooldownMinutes : 30);
-        var (coinLosses, coinLastLoss) = await _store.GetSymbolLossStreakAsync(bot.Mode, bot.Symbol, cancellationToken);
-        if (coinLosses >= maxLosses && coinLastLoss is { } coinLossAt && now < coinLossAt + coinCooldown)
-        {
-            bot.LastError = $"Isolated {bot.Symbol} lost {coinLosses} times in a row. New entries wait until the cooldown ends.";
-            return;
         }
 
         if (!claimed.Add(claimKey))
@@ -2861,6 +2891,41 @@ public sealed class BotEngine : IBotEngine
             string.Equals(row.Symbol, symbol, StringComparison.OrdinalIgnoreCase)
             && (stop ? LiveProtectivePrices.IsStopOrder(row.Type) : LiveProtectivePrices.IsTakeOrder(row.Type)));
 
+    private async Task LoadOutsideBookAsync(CancellationToken cancellationToken)
+    {
+        _outsideBook.Clear();
+        var live = _live.Current;
+        var open = live.OpenPositions.Where(row => row.Quantity > 0m).Select(row => row.Symbol).ToArray();
+        if (open.Length == 0)
+        {
+            return;
+        }
+
+        var marks = new List<ExternalBook.OutsideMark>();
+        foreach (var order in live.OpenOrders)
+        {
+            ExternalBook.Note(marks, order.Symbol, order.ClientOrderId, order.Type, order.Status, order.CreatedAt);
+        }
+
+        marks.AddRange(await _store.GetOutsideBookMarksAsync(open, _clock.UtcNow.AddDays(-7), cancellationToken));
+        foreach (var symbol in ExternalBook.HeldSymbols(open, marks))
+        {
+            _outsideBook.Add(symbol);
+        }
+    }
+
+    private static void ReleaseOutsidePosition(Position? position, DateTimeOffset now)
+    {
+        if (position is null || position.Quantity <= 0m)
+        {
+            return;
+        }
+
+        position.Quantity = 0m;
+        position.UnrealizedPnL = 0m;
+        position.ClosedAt = now;
+    }
+
     private async Task ProtectOpenPositionsAsync(
         IReadOnlyList<Bot> running,
         IReadOnlyDictionary<string, RankedUsdtSpotSymbol> cycleFilters,
@@ -2875,6 +2940,11 @@ public sealed class BotEngine : IBotEngine
         var book = (await _store.GetOpenPositionsForModeAsync(TradingMode.Live, cancellationToken)).ToList();
         foreach (var remote in live.OpenPositions.Where(row => row.Quantity > 0m))
         {
+            if (_outsideBook.Contains(IsolatedOccupancy.CoinKey(remote.Symbol)))
+            {
+                continue;
+            }
+
             if (HasWorkingProtection(live.OpenOrders, remote.Symbol, stop: true)
                 && HasWorkingProtection(live.OpenOrders, remote.Symbol, stop: false))
             {
@@ -2925,6 +2995,11 @@ public sealed class BotEngine : IBotEngine
         Symbol? market,
         CancellationToken cancellationToken)
     {
+        if (_outsideBook.Contains(IsolatedOccupancy.CoinKey(bot.Symbol)))
+        {
+            return new OverlayProtectResult(null, true);
+        }
+
         if (bot.Mode != TradingMode.Live || !IsolatedOccupancy.IsOwner(bot, running, book))
         {
             return new OverlayProtectResult(position, false);
@@ -3893,6 +3968,12 @@ public sealed class BotEngine : IBotEngine
         var runningIds = running.Select(bot => bot.Id).ToHashSet();
         foreach (var position in book.Where(row => row.Quantity > 0m && !runningIds.Contains(row.BotId)))
         {
+            if (_outsideBook.Contains(IsolatedOccupancy.CoinKey(position.Symbol)))
+            {
+                ReleaseOutsidePosition(position, _clock.UtcNow);
+                continue;
+            }
+
             var bot = position.Bot ?? await _store.GetBotAsync(position.BotId, cancellationToken);
             if (bot is null)
             {

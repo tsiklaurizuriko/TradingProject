@@ -376,7 +376,11 @@ public sealed record StrategyResultDto(
     int Losses,
     int OpenEntries,
     decimal RealizedPnL,
-    decimal UnrealizedPnL);
+    decimal UnrealizedPnL,
+    decimal? StopLossPercent = null,
+    decimal? TakeProfitPercent = null,
+    int? MaxPositions = null,
+    bool ExternalBook = false);
 
 public sealed record PerformanceDto(
     string Mode,

@@ -1,11 +1,14 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Hosting;
 using TradingPlatform.Application.Abstractions.MarketData;
 using Microsoft.Extensions.Options;
 using TradingPlatform.Application.Trading;
 using TradingPlatform.Domain.Errors;
 using TradingPlatform.Domain.Trading;
+using TradingPlatform.Infrastructure.Persistence;
+using TradingPlatform.News;
 using TradingPlatform.Trading;
 
 namespace TradingPlatform.Api.Controllers;
@@ -24,6 +27,8 @@ public sealed class TradingController : ControllerBase
     private readonly IBacktestService _backtests;
     private readonly IScalpingResearchQuery _scalping;
     private readonly IPriceActionResearchQuery _priceAction;
+    private readonly IHostEnvironment _environment;
+    private readonly TradingDbContext _db;
 
     public TradingController(
         ITradingQueryService query,
@@ -34,7 +39,9 @@ public sealed class TradingController : ControllerBase
         ITradeEligibility eligibility,
         IBacktestService backtests,
         IScalpingResearchQuery scalping,
-        IPriceActionResearchQuery priceAction)
+        IPriceActionResearchQuery priceAction,
+        IHostEnvironment environment,
+        TradingDbContext db)
     {
         _query = query;
         _lifecycle = lifecycle;
@@ -45,11 +52,16 @@ public sealed class TradingController : ControllerBase
         _backtests = backtests;
         _scalping = scalping;
         _priceAction = priceAction;
+        _environment = environment;
+        _db = db;
     }
 
     [HttpGet("overview")]
-    public Task<PortfolioDto> Overview(CancellationToken cancellationToken) =>
-        _query.GetOverviewAsync(cancellationToken);
+    public async Task<PortfolioDto> Overview(CancellationToken cancellationToken)
+    {
+        var overview = await _query.GetOverviewAsync(cancellationToken);
+        return ExternalBookCash.Apply(overview, await ExternalCashAsync(cancellationToken), DateTimeOffset.UtcNow);
+    }
 
     [HttpGet("bots")]
     public Task<IReadOnlyList<BotDto>> Bots(CancellationToken cancellationToken) =>
@@ -68,8 +80,36 @@ public sealed class TradingController : ControllerBase
         _query.GetTradesAsync(cancellationToken);
 
     [HttpGet("performance")]
-    public Task<PerformanceDto> Performance([FromQuery] string mode = "Paper", CancellationToken cancellationToken = default) =>
-        _query.GetPerformanceAsync(mode, cancellationToken);
+    public async Task<PerformanceDto> Performance([FromQuery] string mode = "Paper", CancellationToken cancellationToken = default)
+    {
+        var performance = await _query.GetPerformanceAsync(mode, cancellationToken);
+        if (!string.Equals(mode, "Live", StringComparison.OrdinalIgnoreCase))
+        {
+            return performance;
+        }
+
+        var root = RepoRoot(_environment.ContentRootPath);
+        var news = await new NewsDatabase(_db).ListFilledExecutionsAsync(cancellationToken);
+        var books = new List<StrategyResultDto>
+        {
+            ExternalBookOverview.Pump(UnexplainedPumpDeskStore.Read(root)),
+            ExternalBookOverview.News(news),
+        };
+        if (performance.StrategyResults is not null)
+        {
+            books.AddRange(performance.StrategyResults);
+        }
+
+        return ExternalBookCash.Apply(
+            performance with { StrategyResults = books },
+            ExternalBookCash.Load(root, news),
+            DateTimeOffset.UtcNow);
+    }
+
+    private async Task<IReadOnlyList<ExternalBookCash.DatedCash>> ExternalCashAsync(CancellationToken cancellationToken) =>
+        ExternalBookCash.Load(
+            RepoRoot(_environment.ContentRootPath),
+            await new NewsDatabase(_db).ListFilledExecutionsAsync(cancellationToken));
 
     [HttpGet("risk-profile")]
     public Task<RiskProfileDto> RiskProfile([FromQuery] string? mode, CancellationToken cancellationToken) =>
@@ -502,5 +542,21 @@ public sealed class TradingController : ControllerBase
     {
         var value = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
         return Guid.TryParse(value, out var id) ? id : Guid.Empty;
+    }
+
+    private static string RepoRoot(string start)
+    {
+        var dir = new DirectoryInfo(start);
+        while (dir is not null)
+        {
+            if (System.IO.File.Exists(Path.Combine(dir.FullName, "src", "TradingPlatform.Api", "data", "futures-universe.json")))
+            {
+                return dir.FullName;
+            }
+
+            dir = dir.Parent;
+        }
+
+        return start;
     }
 }

@@ -1,3 +1,4 @@
+using System.Globalization;
 using TradingPlatform.Application.Abstractions.Exchange;
 using TradingPlatform.Domain.Positions;
 
@@ -27,6 +28,17 @@ public static class LiveProtectivePrices
             : entryPrice * (1m + takeProfitPercent / 100m);
         var stop = RoundToTick(stopRaw, tick, down: !shortSide);
         var take = RoundToTick(takeRaw, tick, down: shortSide);
+        // A short take or a long stop past 100% of entry lands at or below zero. Keep one tick so the stop can still be placed.
+        if (stop <= 0m)
+        {
+            stop = tick;
+        }
+
+        if (take <= 0m)
+        {
+            take = tick;
+        }
+
         if (shortSide)
         {
             if (stop <= entryPrice)
@@ -56,7 +68,7 @@ public static class LiveProtectivePrices
         {
             throw new ArgumentOutOfRangeException(
                 nameof(entryPrice),
-                $"Protective prices are not a valid Isolated SL/TP around entry {entryPrice}: SL {stop}, TP {take}.");
+                string.Create(CultureInfo.InvariantCulture, $"Protective prices are not a valid Isolated SL/TP around entry {entryPrice}: SL {stop}, TP {take}."));
         }
 
         return (stop, take);

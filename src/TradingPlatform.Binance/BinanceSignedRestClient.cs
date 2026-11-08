@@ -466,7 +466,11 @@ public sealed class BinanceSignedRestClient
 
         if (!response.IsSuccessStatusCode)
         {
-            var level = ReadBinanceCode(body) is { } code && BenignCodes.Contains(code) ? LogLevel.Debug : LogLevel.Warning;
+            var code = ReadBinanceCode(body);
+            var expected = code is { } binanceCode && (
+                BenignCodes.Contains(binanceCode)
+                || (binanceCode == -1121 && path.Contains("commissionRate", StringComparison.Ordinal)));
+            var level = expected ? LogLevel.Debug : LogLevel.Warning;
             _logger.Log(level, "Binance signed {Path} failed: {Status} {Body}", path, (int)response.StatusCode, body);
             throw new DomainException(ClassifyFailure((int)response.StatusCode, body), TrimBinanceError(body));
         }

@@ -562,6 +562,7 @@ public sealed class ExchangeAccountService : IExchangeAccountService
         }
 
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var outsideMarks = new List<ExternalBook.OutsideMark>();
         var fillsBySymbol = new Dictionary<string, List<UserTradeFill>>(StringComparer.OrdinalIgnoreCase);
         var symbols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var openCoins = new HashSet<string>(
@@ -618,10 +619,7 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                 continue;
             }
 
-            if (openCoins.Contains(symbol))
-            {
-                await PersistOrderHistoryAsync(bot, symbol, apiKey, apiSecret, seen, cancellationToken);
-            }
+            await PersistOrderHistoryAsync(bot, symbol, apiKey, apiSecret, seen, outsideMarks, cancellationToken);
 
             try
             {
@@ -668,6 +666,15 @@ public sealed class ExchangeAccountService : IExchangeAccountService
             }
         }
 
+        if (fillsBySymbol.Count > 0)
+        {
+            var stored = await _trading.GetOutsideBookMarksAsync(
+                fillsBySymbol.Keys.ToList(),
+                DateTimeOffset.UtcNow.AddDays(-21),
+                cancellationToken);
+            outsideMarks.AddRange(stored);
+        }
+
         foreach (var (symbol, fills) in fillsBySymbol)
         {
             var bot = BotFor(symbol);
@@ -676,6 +683,7 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                 continue;
             }
 
+            var marks = outsideMarks.Where(mark => string.Equals(mark.Symbol, symbol, StringComparison.OrdinalIgnoreCase)).ToList();
             foreach (var trip in BinanceClosedFill.RoundTrips(
                          symbol,
                          fills.Select(item => new BinanceClosedFill.Fill(
@@ -688,6 +696,12 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                              item.RealizedPnl,
                              item.FeeAsset)).ToList()))
             {
+                if (ExternalBook.TripBelongsOutside(trip.OpenedAt, trip.ClosedAt, marks))
+                {
+                    await ForgetOutsideTripAsync(bot, trip, cancellationToken);
+                    continue;
+                }
+
                 await UpsertClosedTradeAsync(bot, trip, funding, cancellationToken);
             }
         }
@@ -706,9 +720,9 @@ public sealed class ExchangeAccountService : IExchangeAccountService
             }
 
             var fill = MatchFill(fillsBySymbol, row);
-            await UpsertClosedTradeAsync(
-                bot,
-                new BinanceClosedFill.ClosedIsolated(
+            var opened = fill?.Time ?? row.Time;
+            var marks = outsideMarks.Where(mark => string.Equals(mark.Symbol, row.Symbol, StringComparison.OrdinalIgnoreCase)).ToList();
+            var trip = new BinanceClosedFill.ClosedIsolated(
                     row.Symbol,
                     fill?.Side == OrderSide.Buy ? OrderSide.Sell : OrderSide.Buy,
                     fill?.Quantity ?? 0m,
@@ -718,11 +732,16 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                     fill?.Price ?? 0m,
                     fill is not null && BinanceClosedFill.IsClosing(fill.RealizedPnl) ? fill.RealizedPnl : row.Pnl,
                     fill is null ? FeeBook.Unknown() : FeeBook.FromReport(fill.Fee, fill.FeeAsset),
-                    fill?.Time ?? row.Time,
-                    fill?.Time ?? row.Time,
-                    string.IsNullOrWhiteSpace(row.TradeId) ? row.TranId.ToString() : row.TradeId),
-                null,
-                cancellationToken);
+                    opened,
+                    opened,
+                    string.IsNullOrWhiteSpace(row.TradeId) ? row.TranId.ToString() : row.TradeId);
+            if (ExternalBook.TripBelongsOutside(opened, opened, marks))
+            {
+                await ForgetOutsideTripAsync(bot, trip, cancellationToken);
+                continue;
+            }
+
+            await UpsertClosedTradeAsync(bot, trip, null, cancellationToken);
         }
 
         await _trading.SaveChangesAsync(cancellationToken);
@@ -734,6 +753,7 @@ public sealed class ExchangeAccountService : IExchangeAccountService
         string apiKey,
         string apiSecret,
         HashSet<string> seen,
+        List<ExternalBook.OutsideMark> outsideMarks,
         CancellationToken cancellationToken)
     {
         try
@@ -741,6 +761,7 @@ public sealed class ExchangeAccountService : IExchangeAccountService
             var json = await _signed.GetFuturesAllOrdersAsync(apiKey, apiSecret, symbol, cancellationToken);
             foreach (var row in ParseOrders(json, "Futures"))
             {
+                ExternalBook.Note(outsideMarks, symbol, row.ClientOrderId, row.Type, row.Status, row.CreatedAt);
                 await UpsertLiveOrderAsync(
                     bot,
                     symbol,
@@ -767,6 +788,7 @@ public sealed class ExchangeAccountService : IExchangeAccountService
             var json = await _signed.GetFuturesAllAlgoOrdersAsync(apiKey, apiSecret, symbol, cancellationToken);
             foreach (var row in ParseAlgoOrders(json))
             {
+                ExternalBook.Note(outsideMarks, symbol, row.ClientOrderId, row.Type, row.Status, row.CreatedAt);
                 var qty = row.Quantity > 0m ? row.Quantity : 0m;
                 await UpsertLiveOrderAsync(
                     bot,
@@ -920,6 +942,46 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                 ExchangeTimestamp = createdAt,
                 CorrelationId = "binance-ledger"
             }, cancellationToken);
+        }
+    }
+
+    private async Task ForgetOutsideTripAsync(
+        Bot bot,
+        BinanceClosedFill.ClosedIsolated trip,
+        CancellationToken cancellationToken)
+    {
+        var nearby = await _trading.FindClosedTradesAroundAsync(trip.Symbol, trip.OpenedAt, trip.ClosedAt, cancellationToken);
+        var removed = 0;
+        foreach (var trade in nearby.Where(item => ClosedTripMatch.Same(
+                     item.Symbol,
+                     item.Quantity,
+                     item.OpenedAt,
+                     item.ClosedAt,
+                     trip.Symbol,
+                     trip.Quantity,
+                     trip.OpenedAt,
+                     trip.ClosedAt)))
+        {
+            _trading.RemoveTrade(trade);
+            removed++;
+        }
+
+        var open = await _trading.GetOpenTradeAsync(bot.Id, cancellationToken);
+        if (open is not null
+            && string.Equals(open.Symbol, trip.Symbol, StringComparison.OrdinalIgnoreCase)
+            && (open.OpenedAt - trip.OpenedAt).Duration() <= TimeSpan.FromMinutes(15))
+        {
+            _trading.RemoveTrade(open);
+            removed++;
+        }
+
+        if (removed > 0)
+        {
+            _logger.LogInformation(
+                "Removed {Count} {Symbol} rows from bot {BotId}. That round trip belongs to news or pump shorts.",
+                removed,
+                trip.Symbol,
+                bot.Id);
         }
     }
 

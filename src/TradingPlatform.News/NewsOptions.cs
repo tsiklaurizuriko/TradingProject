@@ -264,11 +264,20 @@ public sealed class UnexplainedPumpOptions
 
     public int PollMinutes { get; set; } = 5;
 
-    /// <summary>Close once price has fallen this far from the pump high. 30 means 30%.</summary>
-    public decimal DumpPercent { get; set; } = 30m;
+    /// <summary>Follow stop sits this far above the lowest mark while the drop is still shallow. 30 means 30%.</summary>
+    public decimal TrailPercent { get; set; } = 30m;
+
+    /// <summary>Follow stop once the low is <see cref="TightenAfterPercent"/> under the entry. 20 means 20%.</summary>
+    public decimal TightTrailPercent { get; set; } = 20m;
+
+    /// <summary>Tighten the follow stop after the low is this far under the entry. 40 means 40%.</summary>
+    public decimal TightenAfterPercent { get; set; } = 40m;
+
+    /// <summary>A drop this far under the entry retires the hold clock. 15 means 15%.</summary>
+    public decimal DumpStartedPercent { get; set; } = 15m;
 
     public int MaxHoldHours { get; set; } = 48;
 
-    /// <summary>Invalidation sits this far above the pump high. 0.50 means 50%. A new high inside this band does not close the short.</summary>
+    /// <summary>Invalidation sits this far above the pump high. 0.50 means 50%. A new high inside this band does not close the short. The exchange stop is capped separately so a 10x order can be placed.</summary>
     public decimal StopBuffer { get; set; } = 0.50m;
 }

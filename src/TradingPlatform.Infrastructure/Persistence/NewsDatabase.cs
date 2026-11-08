@@ -637,6 +637,11 @@ public sealed class NewsDatabase
         return open.Where(row => row.OrderFilledAtUtc!.Value.AddMinutes(row.ExpectedHorizonMinutes) <= now).ToList();
     }
 
+    public Task<List<NewsTradeExecution>> ListFilledExecutionsAsync(CancellationToken cancellationToken) =>
+        _db.NewsTradeExecutions.AsNoTracking()
+            .Where(row => row.OrderFilledAtUtc != null)
+            .ToListAsync(cancellationToken);
+
     private static bool Richer(StoredNewsEvent existing, NewsEvent item)
     {
         var actionable = item.Direction is EventDirection.Bullish or EventDirection.Bearish;

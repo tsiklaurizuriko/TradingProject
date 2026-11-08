@@ -1035,6 +1035,7 @@ public sealed class DatabaseSeeder
             strategy.RiskProfile.MaxSimultaneousPositions = book.Positions;
             strategy.RiskProfile.MaxDailyLossPercent = 0m;
             strategy.RiskProfile.MaxWeeklyLossPercent = 0m;
+            strategy.RiskProfile.MaxDrawdownPercent = 0m;
             if (StrategyTemplateKeys.Normalize(strategy.TemplateKey) == StrategyTemplateKeys.ImpulseCatch)
             {
                 strategy.RiskProfile.MaxPortfolioRiskPercent = 15m;
