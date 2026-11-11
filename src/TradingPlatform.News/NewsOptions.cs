@@ -248,7 +248,7 @@ public sealed class NewsMarketTimeframes
 
 /// <summary>
 /// A coin up more than <see cref="MinRise"/> in the last 24 hours is checked for a public catalyst.
-/// No catalyst and a stall off the high is a short. Orders still require live entries to be on.
+/// No catalyst, and a closed turn off the high, is a short. The short then follows the drop.
 /// </summary>
 public sealed class UnexplainedPumpOptions
 {
@@ -259,19 +259,22 @@ public sealed class UnexplainedPumpOptions
 
     public decimal MinQuoteVolume { get; set; } = 5_000_000m;
 
-    /// <summary>Last price must be at least this far under the pump high before a short.</summary>
-    public decimal StallPullback { get; set; } = 0.03m;
+    /// <summary>The closed turn must be at least this far under the high. 0.08 means 8%.</summary>
+    public decimal ReversalDrop { get; set; } = 0.08m;
+
+    /// <summary>A price already this far under the high is a drop that has run. 0.25 means 25%.</summary>
+    public decimal MaxDropFromHigh { get; set; } = 0.25m;
 
     public int PollMinutes { get; set; } = 5;
 
-    /// <summary>Follow stop sits this far above the lowest mark while the drop is still shallow. 30 means 30%.</summary>
-    public decimal TrailPercent { get; set; } = 30m;
+    /// <summary>Follow stop sits this far above the lowest mark until the drop is deep. 20 means 20%.</summary>
+    public decimal TrailPercent { get; set; } = 20m;
 
-    /// <summary>Follow stop once the low is <see cref="TightenAfterPercent"/> under the entry. 20 means 20%.</summary>
-    public decimal TightTrailPercent { get; set; } = 20m;
+    /// <summary>Follow stop once the low is <see cref="TightenAfterPercent"/> under the entry. 12 means 12%.</summary>
+    public decimal TightTrailPercent { get; set; } = 12m;
 
-    /// <summary>Tighten the follow stop after the low is this far under the entry. 40 means 40%.</summary>
-    public decimal TightenAfterPercent { get; set; } = 40m;
+    /// <summary>Tighten the follow stop after the low is this far under the entry. 30 means 30%.</summary>
+    public decimal TightenAfterPercent { get; set; } = 30m;
 
     /// <summary>A drop this far under the entry retires the hold clock. 15 means 15%.</summary>
     public decimal DumpStartedPercent { get; set; } = 15m;

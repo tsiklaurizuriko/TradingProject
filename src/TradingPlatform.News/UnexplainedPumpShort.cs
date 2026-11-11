@@ -43,33 +43,54 @@ public sealed record UnexplainedPumpDecision(
     decimal Rise,
     int DaySpan,
     decimal PumpHigh,
-    decimal EntryPrice);
+    decimal EntryPrice,
+    decimal BreakHigh = 0m);
 
 /// <summary>
-/// 150% in the last 24 hours, no public catalyst, and the price has stopped printing the high.
-/// The short then follows the drop. It has no target under the high.
+/// The reversal is confirmed when the high's 15-minute bar has closed and price has settled
+/// between 8% and 25% under that high. The protective buy is the 10x cap, not the break bar.
+/// </summary>
+public readonly record struct DumpBreak(bool Confirmed, decimal BreakHigh, string Reason)
+{
+    public static DumpBreak Ready(decimal breakHigh) => new(true, breakHigh, string.Empty);
+
+    public static DumpBreak Wait(string reason) => new(false, 0m, reason);
+}
+
+/// <summary>
+/// 150% in the last 24 hours and no public catalyst. The short opens once a closed 15-minute bar
+/// has turned 8% to 25% off that high, then follows the low of the last closed 5-minute bar.
+/// Profit is taken when price turns up through that trail. A shallow bounce does not close it. The coin is not shorted again until that
+/// 24-hour rise has fallen back under 150%. A stop in the first 15 minutes, before price has gone
+/// in favor, leaves the high open for one more short.
 /// </summary>
 public static class UnexplainedPumpShort
 {
+    public static bool TryOneDayRise(decimal high24h, decimal lastPrice, decimal priceChangePercent, out decimal rise)
+    {
+        rise = 0m;
+        if (lastPrice <= 0m || high24h <= 0m || priceChangePercent <= -99.9m)
+        {
+            return false;
+        }
+
+        var base24 = lastPrice / (1m + priceChangePercent / 100m);
+        if (base24 <= 0m)
+        {
+            return false;
+        }
+
+        rise = high24h / base24 - 1m;
+        return true;
+    }
+
     public static PumpMove? Measure(
         decimal high24h,
         decimal lastPrice,
         decimal priceChangePercent,
         decimal minRise)
     {
-        if (lastPrice <= 0m || high24h <= 0m || priceChangePercent <= -99.9m || minRise <= 0m)
-        {
-            return null;
-        }
-
-        var base24 = lastPrice / (1m + priceChangePercent / 100m);
-        if (base24 <= 0m)
-        {
-            return null;
-        }
-
-        var oneDay = high24h / base24 - 1m;
-        if (oneDay < minRise)
+        if (minRise <= 0m || !TryOneDayRise(high24h, lastPrice, priceChangePercent, out var oneDay) || oneDay < minRise)
         {
             return null;
         }
@@ -77,37 +98,86 @@ public static class UnexplainedPumpShort
         return new PumpMove(oneDay, 0m, oneDay, 1, high24h);
     }
 
-    public static bool Stalled(
-        decimal lastPrice,
+    /// <summary>The 24-hour rise has printed back under the pump line. A missing price is not a cool-down.</summary>
+    public static bool RiseHasEnded(decimal high24h, decimal lastPrice, decimal priceChangePercent, decimal minRise) =>
+        minRise > 0m && TryOneDayRise(high24h, lastPrice, priceChangePercent, out var rise) && rise < minRise;
+
+    /// <summary>
+    /// The turn has started when the high's 15-minute bar is closed and both the last price and that bar's
+    /// close sit between <paramref name="minDrop"/> and <paramref name="maxDrop"/> under the high.
+    /// Closer than the minimum is still the pump. Farther than the maximum is a drop that already ran.
+    /// </summary>
+    public static DumpBreak Reversal(
         decimal pumpHigh,
-        IReadOnlyList<MarketCandle> closedEntryBars,
-        decimal pullback)
+        decimal lastPrice,
+        IReadOnlyList<MarketCandle> closedBars,
+        decimal minDrop,
+        decimal maxDrop)
     {
-        if (lastPrice <= 0m || pumpHigh <= 0m || pullback < 0m || closedEntryBars.Count == 0)
+        if (pumpHigh <= 0m || lastPrice <= 0m || minDrop <= 0m || maxDrop <= minDrop || closedBars.Count == 0)
         {
-            return false;
+            return DumpBreak.Wait("There is no closed bar to confirm the turn.");
         }
 
-        if (lastPrice > pumpHigh * (1m - pullback))
+        var ordered = closedBars.Where(bar => bar.High > 0m && bar.Close > 0m).OrderBy(bar => bar.OpenTime).ToList();
+        if (ordered.Count == 0)
         {
-            return false;
+            return DumpBreak.Wait("There is no closed bar to confirm the turn.");
         }
 
-        var lastBar = closedEntryBars.OrderBy(candle => candle.OpenTime).Last();
-        return lastBar.High < pumpHigh;
+        var spike = ordered[0];
+        for (var i = 1; i < ordered.Count; i++)
+        {
+            if (ordered[i].High >= spike.High)
+            {
+                spike = ordered[i];
+            }
+        }
+
+        if (pumpHigh > spike.High * 1.0005m)
+        {
+            return DumpBreak.Wait("The high bar is still open.");
+        }
+
+        var drop = (pumpHigh - lastPrice) / pumpHigh;
+        if (drop < minDrop)
+        {
+            return DumpBreak.Wait("Price is still within " + Percent(minDrop) + " of the high.");
+        }
+
+        if (drop > maxDrop)
+        {
+            return DumpBreak.Wait("Price is already " + Percent(drop) + " under the high. The drop has run.");
+        }
+
+        var closedDrop = (pumpHigh - ordered[^1].Close) / pumpHigh;
+        if (closedDrop < minDrop)
+        {
+            return DumpBreak.Wait("The last closed bar has not confirmed the turn.");
+        }
+
+        if (closedDrop > maxDrop)
+        {
+            return DumpBreak.Wait("The last closed bar is already " + Percent(closedDrop) + " under the high.");
+        }
+
+        return DumpBreak.Ready(0m);
     }
 
     /// <summary>
-    /// Where the protective buy sits. <see cref="PumpFollow.Following"/> is true once the drop has pulled
-    /// that price under the original disaster stop. Until then the disaster stop stays, so the first squeeze
-    /// cannot knock the short out.
+    /// Where the protective buy sits. <see cref="PumpFollow.Following"/> is true once the stop has moved
+    /// under the original disaster stop. A shallow dip leaves that disaster stop in place.
     /// </summary>
     public readonly record struct PumpFollow(decimal Stop, bool Following);
 
+    /// <summary>Shown when the trail is hit. The drop gave back a real bounce off its low.</summary>
+    public const string TurnedUp = "The drop turned up. Profit taken.";
+
     /// <summary>
-    /// The short has no target under the pump high. The stop trails the lowest mark and only moves down.
-    /// A drop of <paramref name="tightenAfterPercent"/> or more switches from the wide trail to the tight one,
-    /// so a deep winner cannot be given all the way back. The result never sits above <paramref name="disasterStop"/>.
+    /// The short follows the lowest mark and the stop only moves down. Until the trail sits under the
+    /// disaster stop, that disaster stop stays, so a bounce back toward the entry does not take the profit.
+    /// A drop of <paramref name="tightenAfterPercent"/> or more switches to the tight trail, which is how
+    /// far price may rise off the low before the drop counts as over.
     /// </summary>
     public static PumpFollow Follow(
         decimal entry,
@@ -133,7 +203,7 @@ public static class UnexplainedPumpShort
         return new PumpFollow(line, true);
     }
 
-    /// <summary>The dump has ended when the mark trades up through a live follow stop.</summary>
+    /// <summary>The drop has turned up when the mark trades through a live follow stop.</summary>
     public static string? BounceExit(PumpFollow follow, decimal mark)
     {
         if (!follow.Following || follow.Stop <= 0m || mark < follow.Stop)
@@ -141,7 +211,7 @@ public static class UnexplainedPumpShort
             return null;
         }
 
-        return "The drop stalled. Closed on the bounce.";
+        return TurnedUp;
     }
 
     /// <summary>The hold clock retires once the low is this far under the entry. A working dump is not closed on time.</summary>
@@ -155,21 +225,78 @@ public static class UnexplainedPumpShort
         return bestMark <= entry * (1m - startedPercent / 100m);
     }
 
-    /// <summary>The 15-minute bar that printed <paramref name="lowAt"/> has finished, so the follow stop may move.</summary>
-    public static bool BarHasClosed(DateTimeOffset lowAt, DateTimeOffset now) =>
-        QuarterHour(now) > QuarterHour(lowAt);
+    /// <summary>The follow stop moves on a closed 5-minute bar, so a turn up is locked inside a few minutes.</summary>
+    public static readonly TimeSpan TrailBar = TimeSpan.FromMinutes(5);
 
-    public static DateTimeOffset QuarterHour(DateTimeOffset time)
+    /// <summary>The 5-minute bar that printed <paramref name="lowAt"/> has finished, so the follow stop may move.</summary>
+    public static bool BarHasClosed(DateTimeOffset lowAt, DateTimeOffset now) =>
+        BarOpen(now) > BarOpen(lowAt);
+
+    public static DateTimeOffset BarOpen(DateTimeOffset time)
     {
         var utc = time.ToUniversalTime();
-        var minute = utc.Minute - (utc.Minute % 15);
+        var minute = utc.Minute - (utc.Minute % TrailBar.Minutes);
         return new DateTimeOffset(utc.Year, utc.Month, utc.Day, utc.Hour, minute, 0, TimeSpan.Zero);
+    }
+
+    /// <summary>
+    /// The trail low is the best mark whose 5-minute bar has closed. A lower print in the bar that is still
+    /// open does not replace it, so the stop from the previous bar stays up and can lock the turn.
+    /// </summary>
+    public static bool PromoteClosedLow(decimal bestMark, DateTimeOffset bestAt, decimal closedMark, DateTimeOffset now, out decimal trailMark)
+    {
+        trailMark = closedMark;
+        if (bestMark <= 0m || bestAt == default || !BarHasClosed(bestAt, now))
+        {
+            return false;
+        }
+
+        if (closedMark > 0m && bestMark >= closedMark)
+        {
+            return false;
+        }
+
+        trailMark = bestMark;
+        return true;
+    }
+
+    /// <summary>
+    /// Price is already through the confirmed trail, and the resting stop is still higher.
+    /// The position is closed at the market instead of waiting for that older stop.
+    /// </summary>
+    public static bool TrailOverrun(PumpFollow follow, decimal mark, decimal restingStop)
+    {
+        if (!follow.Following || follow.Stop <= 0m || mark < follow.Stop)
+        {
+            return false;
+        }
+
+        return restingStop <= 0m || follow.Stop < restingStop;
     }
 
     public static UnexplainedPumpDecision Decide(
         string symbol,
         PumpMove? move,
         bool stalled,
+        PumpNewsVerdict news,
+        decimal lastPrice,
+        decimal quoteVolume,
+        UnexplainedPumpOptions options) =>
+        Decide(
+            symbol,
+            move,
+            stalled
+                ? DumpBreak.Ready(0m)
+                : DumpBreak.Wait("The high is still being printed, so there is no short yet."),
+            news,
+            lastPrice,
+            quoteVolume,
+            options);
+
+    public static UnexplainedPumpDecision Decide(
+        string symbol,
+        PumpMove? move,
+        DumpBreak dump,
         PumpNewsVerdict news,
         decimal lastPrice,
         decimal quoteVolume,
@@ -195,20 +322,22 @@ public static class UnexplainedPumpShort
             return None(symbol, news.Reason, move, lastPrice);
         }
 
-        if (!stalled)
+        if (!dump.Confirmed)
         {
-            return None(symbol, news.Reason + " The high is still being printed, so there is no short yet.", move, lastPrice);
+            return None(symbol, news.Reason + " " + dump.Reason, move, lastPrice);
         }
 
         var riseText = (move.Rise * 100m).ToString("0", CultureInfo.InvariantCulture);
+        var broke = "The turn off the high has closed. ";
         return new UnexplainedPumpDecision(
             UnexplainedPumpSignals.Short,
             symbol,
-            riseText + "% in the last 24 hours. " + news.Reason + " Price is off the high. SHORT.",
+            riseText + "% in the last 24 hours. " + news.Reason + " " + broke + "SHORT.",
             move.Rise,
             move.DaySpan,
             move.PumpHigh,
-            lastPrice);
+            lastPrice,
+            dump.BreakHigh);
     }
 
     public static string ClientOrderId(string symbol, DateTimeOffset day, int retry = 0)
@@ -223,13 +352,72 @@ public static class UnexplainedPumpShort
         return "pump-" + Convert.ToHexString(hash)[..20].ToLowerInvariant();
     }
 
+    /// <summary>A later pump is a new trade only when its high clears the last shorted high by this much.</summary>
+    public const decimal NewPumpHighPercent = 10m;
+
+    /// <summary>A stop this soon, with less than this much favorable movement, never started the drop.</summary>
+    public const decimal WickFavorablePercent = 1m;
+
+    public static readonly TimeSpan WickWindow = TimeSpan.FromMinutes(15);
+
     /// <summary>
-    /// One short per coin per day. A single entry that was closed from outside this book may be sent once more.
+    /// The first short on a coin is allowed. The same high, or a high only a little above it, is finished
+    /// after one attempt. An open short blocks a second order.
     /// </summary>
-    public static bool MaySendToday(int openToday, int closedByThisBook, int closedFromOutside, out int retry)
+    public static bool MayShortThisHigh(bool positionOpen, decimal pumpHigh, decimal? previousHigh)
     {
-        retry = closedFromOutside;
-        return openToday == 0 && closedByThisBook == 0 && closedFromOutside <= 1;
+        if (positionOpen || pumpHigh <= 0m)
+        {
+            return false;
+        }
+
+        if (previousHigh is null || previousHigh <= 0m)
+        {
+            return true;
+        }
+
+        return pumpHigh >= previousHigh.Value * (1m + NewPumpHighPercent / 100m);
+    }
+
+    /// <summary>
+    /// True when the short was stopped before the drop started. <paramref name="bestMark"/> of zero means no lower price was seen.
+    /// </summary>
+    public static bool WickStop(decimal entry, decimal bestMark, TimeSpan held)
+    {
+        if (entry <= 0m || held < TimeSpan.Zero || held > WickWindow)
+        {
+            return false;
+        }
+
+        if (bestMark <= 0m)
+        {
+            return true;
+        }
+
+        return (entry - bestMark) / entry * 100m < WickFavorablePercent;
+    }
+
+    /// <summary>
+    /// Null when a new short may open. A finished short blocks the coin until the 24-hour rise has ended,
+    /// and the next high still has to clear it by <see cref="NewPumpHighPercent"/>. A wick leaves
+    /// <paramref name="wickRetryOpen"/> set, and then the rise does not have to cool first.
+    /// <paramref name="consumedHigh"/> is the last high that was actually traded, not the wick.
+    /// </summary>
+    public static string? ReentryBlock(bool positionOpen, decimal pumpHigh, decimal? consumedHigh, bool cooled, bool wickRetryOpen)
+    {
+        if (positionOpen)
+        {
+            return "This coin already has an open pump short.";
+        }
+
+        if (!wickRetryOpen && consumedHigh is > 0m && !cooled)
+        {
+            return "This pump is still running.";
+        }
+
+        return MayShortThisHigh(false, pumpHigh, consumedHigh)
+            ? null
+            : "This pump was already shorted.";
     }
 
     /// <summary>10x Isolated leaves about 9% to liquidation. A wider exchange stop is rejected.</summary>
@@ -256,6 +444,10 @@ public static class UnexplainedPumpShort
         var distance = StopPercent(entry, pumpHigh, buffer);
         return distance <= 0m ? 0m : Math.Min(distance, MaxStopPercent);
     }
+
+    /// <summary>Buy stop 7.5% above the fill. Measured from the fill so a fast print cannot open the short through its stop.</summary>
+    public static decimal DisasterStopPrice(decimal fill) =>
+        fill <= 0m ? 0m : fill * (1m + MaxStopPercent / 100m);
 
     private static UnexplainedPumpDecision None(string symbol, string reason, PumpMove? move = null, decimal entry = 0m) =>
         new(UnexplainedPumpSignals.NoTrade, symbol, reason, move?.Rise ?? 0m, move?.DaySpan ?? 0, move?.PumpHigh ?? 0m, entry);

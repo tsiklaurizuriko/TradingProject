@@ -162,31 +162,46 @@ public sealed class UnexplainedPumpShortTests
     }
 
     [Fact]
-    public void The_first_squeeze_keeps_the_disaster_stop()
-    {
-        var follow = UnexplainedPumpShort.Follow(0.0189002m, 0.016863m, 0.020243m, 30m, 20m, 40m);
-        follow.Following.Should().BeFalse();
-        follow.Stop.Should().Be(0.020243m);
-        UnexplainedPumpShort.BounceExit(follow, 0.019661m).Should().BeNull();
-    }
-
-    [Fact]
-    public void A_dump_trails_thirty_percent_above_the_low()
-    {
-        var follow = UnexplainedPumpShort.Follow(0.0189002m, 0.012388m, 0.020243m, 30m, 20m, 40m);
-        follow.Following.Should().BeTrue();
-        follow.Stop.Should().Be(0.012388m * 1.30m);
-        UnexplainedPumpShort.BounceExit(follow, 0.016027m).Should().BeNull();
-        UnexplainedPumpShort.BounceExit(follow, follow.Stop).Should().Contain("bounce");
-    }
-
-    [Fact]
-    public void A_forty_percent_drop_tightens_the_trail_to_twenty()
+    public void A_bounce_back_toward_the_entry_keeps_the_disaster_stop()
     {
         var entry = 0.0189002m;
-        var follow = UnexplainedPumpShort.Follow(entry, entry * 0.60m, 0.020243m, 30m, 20m, 40m);
+        var follow = UnexplainedPumpShort.Follow(entry, entry * 0.92m, entry * 1.075m, 20m, 12m, 30m);
+        follow.Following.Should().BeFalse();
+        follow.Stop.Should().Be(entry * 1.075m);
+        UnexplainedPumpShort.BounceExit(follow, entry).Should().BeNull();
+    }
+
+    [Fact]
+    public void The_shakeout_on_the_way_down_stays_inside_the_wide_trail()
+    {
+        var entry = 0.2234614m;
+        var low = 0.1651m;
+        var follow = UnexplainedPumpShort.Follow(entry, low, entry * 1.075m, 20m, 12m, 30m);
         follow.Following.Should().BeTrue();
-        follow.Stop.Should().Be(entry * 0.60m * 1.20m);
+        follow.Stop.Should().Be(low * 1.20m);
+        UnexplainedPumpShort.BounceExit(follow, 0.1947m).Should().BeNull();
+    }
+
+    [Fact]
+    public void A_deep_drop_trails_twelve_percent_above_the_low()
+    {
+        var entry = 0.0049151m;
+        var low = 0.00295072m;
+        var follow = UnexplainedPumpShort.Follow(entry, low, entry * 1.075m, 20m, 12m, 30m);
+        follow.Following.Should().BeTrue();
+        follow.Stop.Should().Be(low * 1.12m);
+        UnexplainedPumpShort.BounceExit(follow, follow.Stop).Should().Contain("turned up");
+    }
+
+    [Fact]
+    public void Pump_defaults_turn_between_eight_and_twenty_five_and_tighten_after_thirty()
+    {
+        var options = new UnexplainedPumpOptions();
+        options.ReversalDrop.Should().Be(0.08m);
+        options.MaxDropFromHigh.Should().Be(0.25m);
+        options.TrailPercent.Should().Be(20m);
+        options.TightTrailPercent.Should().Be(12m);
+        options.TightenAfterPercent.Should().Be(30m);
     }
 
     [Fact]
@@ -197,20 +212,35 @@ public sealed class UnexplainedPumpShortTests
     }
 
     [Fact]
-    public void The_follow_stop_waits_for_the_low_bar_to_close()
+    public void The_follow_stop_waits_for_the_five_minute_low_to_close()
     {
         var lowAt = new DateTimeOffset(2026, 11, 3, 3, 47, 0, TimeSpan.Zero);
-        UnexplainedPumpShort.BarHasClosed(lowAt, lowAt.AddMinutes(8)).Should().BeFalse();
-        UnexplainedPumpShort.BarHasClosed(lowAt, new DateTimeOffset(2026, 11, 3, 4, 0, 0, TimeSpan.Zero)).Should().BeTrue();
+        UnexplainedPumpShort.BarHasClosed(lowAt, lowAt.AddMinutes(2)).Should().BeFalse();
+        UnexplainedPumpShort.BarHasClosed(lowAt, new DateTimeOffset(2026, 11, 3, 3, 50, 0, TimeSpan.Zero)).Should().BeTrue();
+    }
+
+    [Fact]
+    public void A_turn_up_through_the_closed_five_minute_low_locks_even_when_an_older_stop_is_higher()
+    {
+        var lowAt = new DateTimeOffset(2026, 11, 11, 14, 3, 0, TimeSpan.Zero);
+        var stillOpen = new DateTimeOffset(2026, 11, 11, 14, 4, 30, TimeSpan.Zero);
+        UnexplainedPumpShort.PromoteClosedLow(0.03802m, lowAt, 0m, stillOpen, out _).Should().BeFalse();
+        UnexplainedPumpShort.PromoteClosedLow(0.03793m, new DateTimeOffset(2026, 11, 11, 14, 6, 19, TimeSpan.Zero), 0.03802m, new DateTimeOffset(2026, 11, 11, 14, 7, 0, TimeSpan.Zero), out _).Should().BeFalse();
+        UnexplainedPumpShort.PromoteClosedLow(0.03802m, lowAt, 0m, new DateTimeOffset(2026, 11, 11, 14, 5, 0, TimeSpan.Zero), out var trail).Should().BeTrue();
+        trail.Should().Be(0.03802m);
+        var follow = UnexplainedPumpShort.Follow(0.0598m, trail, 0.06429m, 20m, 12m, 30m);
+        follow.Following.Should().BeTrue();
+        follow.Stop.Should().BeApproximately(0.03802m * 1.12m, 0.0000001m);
+        UnexplainedPumpShort.TrailOverrun(follow, 0.04451m, 0.06064m).Should().BeTrue();
     }
 
     [Fact]
     public void A_rise_still_printing_the_high_is_not_a_short()
     {
         var move = Move(0.060m, 0.059m, 0.020m);
-        var stalled = UnexplainedPumpShort.Stalled(0.059m, move!.PumpHigh, [Bar(0.058m)], Options.StallPullback);
-        stalled.Should().BeFalse();
-        Decide(move, stalled, PumpNewsVerdict.Clear("none")).Signal.Should().Be(UnexplainedPumpSignals.NoTrade);
+        var turn = UnexplainedPumpShort.Reversal(move!.PumpHigh, 0.059m, [Bar(0.058m)], 0.08m, 0.25m);
+        turn.Confirmed.Should().BeFalse();
+        turn.Reason.Should().Contain("still open");
     }
 
     [Fact]
@@ -302,17 +332,82 @@ public sealed class UnexplainedPumpShortTests
     }
 
     [Fact]
-    public void A_short_closed_from_outside_may_be_sent_once_more_the_same_day()
+    public void A_coin_is_shorted_again_only_after_a_new_pump_high()
     {
-        var day = new DateTimeOffset(2026, 10, 28, 12, 30, 0, TimeSpan.Zero);
-        UnexplainedPumpShort.MaySendToday(0, 0, 1, out var retry).Should().BeTrue();
-        retry.Should().Be(1);
-        var again = UnexplainedPumpShort.ClientOrderId("EVAAUSDT", day, retry);
+        var day = new DateTimeOffset(2026, 11, 6, 15, 13, 0, TimeSpan.Zero);
+        UnexplainedPumpShort.MayShortThisHigh(false, 0.005535m, null).Should().BeTrue();
+        UnexplainedPumpShort.MayShortThisHigh(false, 0.006351m, 0.005535m).Should().BeTrue();
+        UnexplainedPumpShort.MayShortThisHigh(false, 0.006351m, 0.006351m).Should().BeFalse();
+        UnexplainedPumpShort.MayShortThisHigh(false, 0.011895m, 0.011798m).Should().BeFalse();
+        UnexplainedPumpShort.MayShortThisHigh(false, 0.006000m, 0.006351m).Should().BeFalse();
+        UnexplainedPumpShort.MayShortThisHigh(true, 0.007000m, 0.006351m).Should().BeFalse();
+        var again = UnexplainedPumpShort.ClientOrderId("AKEUSDT", day, 1);
         again.Should().StartWith("pump-");
-        again.Should().NotBe(UnexplainedPumpShort.ClientOrderId("EVAAUSDT", day));
-        UnexplainedPumpShort.MaySendToday(1, 0, 0, out _).Should().BeFalse();
-        UnexplainedPumpShort.MaySendToday(0, 1, 0, out _).Should().BeFalse();
-        UnexplainedPumpShort.MaySendToday(0, 0, 2, out _).Should().BeFalse();
+        again.Should().NotBe(UnexplainedPumpShort.ClientOrderId("AKEUSDT", day));
+    }
+
+    [Fact]
+    public void A_higher_high_waits_until_the_rise_falls_back_under_150()
+    {
+        UnexplainedPumpShort.ReentryBlock(false, 0.014888m, 0.011798m, cooled: false, wickRetryOpen: false)
+            .Should().Be("This pump is still running.");
+        UnexplainedPumpShort.ReentryBlock(false, 0.014888m, 0.011798m, cooled: true, wickRetryOpen: false)
+            .Should().BeNull();
+        UnexplainedPumpShort.ReentryBlock(false, 0.012000m, 0.011798m, cooled: true, wickRetryOpen: false)
+            .Should().Be("This pump was already shorted.");
+        UnexplainedPumpShort.RiseHasEnded(180m, 100m, Change(100m, 80m), 1.50m).Should().BeTrue();
+        UnexplainedPumpShort.RiseHasEnded(240m, 100m, Change(100m, 80m), 1.50m).Should().BeFalse();
+        UnexplainedPumpShort.RiseHasEnded(180m, 0m, 10m, 1.50m).Should().BeFalse();
+    }
+
+    [Fact]
+    public void A_stop_in_the_first_fifteen_minutes_with_no_favorable_move_retries_that_high_once()
+    {
+        UnexplainedPumpShort.WickStop(0.004853m, 0.004853m, TimeSpan.FromMinutes(8)).Should().BeTrue();
+        UnexplainedPumpShort.WickStop(0.004853m, 0m, TimeSpan.FromMinutes(8)).Should().BeTrue();
+        UnexplainedPumpShort.WickStop(0.004853m, 0.004853m * 0.995m, TimeSpan.FromMinutes(10)).Should().BeTrue();
+        UnexplainedPumpShort.WickStop(0.005082m, 0.005082m * 0.99m, TimeSpan.FromMinutes(10)).Should().BeFalse();
+        UnexplainedPumpShort.WickStop(0.005082m, 0.005082m * 0.915m, TimeSpan.FromMinutes(10)).Should().BeFalse();
+        UnexplainedPumpShort.WickStop(0.004853m, 0.004853m, TimeSpan.FromMinutes(16)).Should().BeFalse();
+        UnexplainedPumpShort.ReentryBlock(false, 0.006351m, 0.005535m, cooled: false, wickRetryOpen: true)
+            .Should().BeNull();
+        UnexplainedPumpShort.ReentryBlock(false, 0.006351m, 0.006351m, cooled: false, wickRetryOpen: false)
+            .Should().Be("This pump is still running.");
+    }
+
+    [Fact]
+    public void A_closed_bar_eight_to_twenty_five_percent_under_the_high_is_the_turn()
+    {
+        var open = new DateTimeOffset(2026, 11, 6, 18, 0, 0, TimeSpan.Zero);
+        var high = 0.250m;
+        var close = high * 0.88m;
+        var bars = new[] { Candle(open, high, close, close) };
+        var turn = UnexplainedPumpShort.Reversal(high, close, bars, 0.08m, 0.25m);
+        turn.Confirmed.Should().BeTrue();
+    }
+
+    [Fact]
+    public void A_dip_under_eight_percent_is_not_a_turn_yet()
+    {
+        var open = new DateTimeOffset(2026, 11, 6, 18, 0, 0, TimeSpan.Zero);
+        var high = 0.250m;
+        var close = high * 0.96m;
+        var bars = new[] { Candle(open, high, close, close) };
+        var turn = UnexplainedPumpShort.Reversal(high, close, bars, 0.08m, 0.25m);
+        turn.Confirmed.Should().BeFalse();
+        turn.Reason.Should().Contain("within");
+    }
+
+    [Fact]
+    public void A_drop_past_twenty_five_percent_has_already_run()
+    {
+        var open = new DateTimeOffset(2026, 11, 8, 23, 45, 0, TimeSpan.Zero);
+        var high = 0.021344m;
+        var close = high * 0.55m;
+        var bars = new[] { Candle(open, high, close, close) };
+        var turn = UnexplainedPumpShort.Reversal(high, close, bars, 0.08m, 0.25m);
+        turn.Confirmed.Should().BeFalse();
+        turn.Reason.Should().Contain("already");
     }
 
     private static UnexplainedPumpDecision Decide(PumpMove? move, bool stalled, PumpNewsVerdict news) =>
@@ -323,6 +418,19 @@ public sealed class UnexplainedPumpShortTests
 
     private static decimal Change(decimal last, decimal basePrice) =>
         (last / basePrice - 1m) * 100m;
+
+    private static MarketCandle Candle(DateTimeOffset open, decimal high, decimal low, decimal close) =>
+        new()
+        {
+            OpenTime = open,
+            CloseTime = open.AddMinutes(15),
+            Open = close,
+            High = high,
+            Low = low,
+            Close = close,
+            IsClosed = true,
+            Timeframe = Timeframe.FifteenMinutes
+        };
 
     private static MarketCandle Bar(decimal high) =>
         new()

@@ -19,7 +19,8 @@ namespace TradingPlatform.Api.Hosting;
 
 /// <summary>
 /// Scans USD-M perps for a 150% rise in the last 24 hours. The headline batch goes to the model once.
-/// No real cause, after the price stops printing the high, is a short. Live orders use the same risk gate as the rest of the book.
+/// No real cause, and a closed turn off that high, is a short. The short follows the low and closes when the drop turns up.
+/// The coin waits until that rise falls back under 150%. A stop in the first 15 minutes, with no move in favor, leaves the high open for one more short.
 /// </summary>
 public sealed class UnexplainedPumpWorker : BackgroundService
 {
@@ -112,13 +113,6 @@ public sealed class UnexplainedPumpWorker : BackgroundService
         var scanner = scope.ServiceProvider.GetRequiredService<IMarketScanner>();
         var market = scope.ServiceProvider.GetRequiredService<IPublicMarketDataClient>();
         var rows = await scanner.ScanAsync(cancellationToken);
-        var candidates = rows
-            .Where(row => row.QuoteVolume24h >= pump.MinQuoteVolume && row.LastPrice > 0m && row.High24h > 0m)
-            .Where(row => row.PriceChangePercent >= 40m || (row.Low24h > 0m && row.High24h / row.Low24h >= 1.8m))
-            .OrderByDescending(row => row.PriceChangePercent)
-            .Take(8)
-            .ToList();
-
         var root = FindRepo(_environment.ContentRootPath);
         var book = await LoadAsync(StatePath(root), cancellationToken);
         book.Asks ??= [];
@@ -140,10 +134,35 @@ public sealed class UnexplainedPumpWorker : BackgroundService
             }
         }
 
+        var candidates = rows
+            .Where(row => row.QuoteVolume24h >= pump.MinQuoteVolume && row.LastPrice > 0m && row.High24h > 0m)
+            .Where(row => row.PriceChangePercent >= 40m || (row.Low24h > 0m && row.High24h / row.Low24h >= 1.8m))
+            .OrderByDescending(row => row.PriceChangePercent)
+            .Take(8)
+            .ToList();
+        foreach (var symbol in NoteCooling(book, rows, pump.MinRise))
+        {
+            _logger.LogInformation("UnexplainedPump {Symbol} rise fell back under the pump line. A new pump can be shorted.", symbol);
+        }
+
+        var seen = new HashSet<string>(candidates.Select(row => row.Contract.Symbol), StringComparer.OrdinalIgnoreCase);
+        var retrying = book.Tickets
+            .Where(ticket => ticket.Closed && ticket.WickRetry)
+            .Select(ticket => ticket.Symbol)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in rows)
+        {
+            if (retrying.Contains(row.Contract.Symbol) && seen.Add(row.Contract.Symbol))
+            {
+                candidates.Add(row);
+            }
+        }
+
         var checks = new List<UnexplainedPumpCheckRow>();
         if (candidates.Count == 0)
         {
             _logger.LogInformation("Unexplained-pump scan found no coin up enough to check. No order.");
+            await SaveAsync(StatePath(root), book, cancellationToken);
             await PublishAsync(root, book, account, checks, pump.Enabled, now, cancellationToken);
             return book.Tickets.Any(ticket => !ticket.Closed);
         }
@@ -243,10 +262,10 @@ public sealed class UnexplainedPumpWorker : BackgroundService
             return;
         }
 
-        var bars = await market.GetClosedKlinesAsync(symbol, Timeframe.FifteenMinutes, 8, cancellationToken);
-        var stalled = UnexplainedPumpShort.Stalled(row.LastPrice, move.PumpHigh, bars, pump.StallPullback);
+        var bars = await market.GetClosedKlinesAsync(symbol, Timeframe.FifteenMinutes, 97, cancellationToken);
+        var dump = UnexplainedPumpShort.Reversal(move.PumpHigh, row.LastPrice, bars, pump.ReversalDrop, pump.MaxDropFromHigh);
         var news = await NewsAsync(http, symbol, row.Contract.BaseAsset, events, move, book, now, cancellationToken);
-        var decision = UnexplainedPumpShort.Decide(symbol, move, stalled, news, row.LastPrice, row.QuoteVolume24h, pump);
+        var decision = UnexplainedPumpShort.Decide(symbol, move, dump, news, row.LastPrice, row.QuoteVolume24h, pump);
         var check = new UnexplainedPumpCheckRow
         {
             At = now,
@@ -267,10 +286,10 @@ public sealed class UnexplainedPumpWorker : BackgroundService
         }
 
         var day = now.UtcDateTime.ToString("yyyy-MM-dd");
-        if (!MaySendToday(book, symbol, day, out _))
+        if (!MaySend(book, symbol, decision.PumpHigh, out var block))
         {
             check.OrderState = "Filled";
-            check.Reason = "Already entered this coin today.";
+            check.Reason = block;
             return;
         }
 
@@ -289,23 +308,81 @@ public sealed class UnexplainedPumpWorker : BackgroundService
             return;
         }
 
-        await SubmitAsync(services, connector, account, trading, filters, book, decision, check, pump, now, day, cancellationToken);
+        await SubmitAsync(services, connector, account, trading, filters, book, decision, check, now, day, cancellationToken);
     }
 
-    /// <summary>Closed by something other than this book's own exit. One such close may be sent again the same day.</summary>
-    private const string ClosedFromOutside = "The short is no longer open.";
-
-    private static bool MaySendToday(PumpBook book, string symbol, string day, out int retry)
+    private static bool MaySend(PumpBook book, string symbol, decimal pumpHigh, out string block)
     {
-        var todays = book.Tickets.Where(ticket => ticket.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase) && ticket.Day == day).ToList();
-        var open = todays.Count(ticket => !ticket.Closed);
-        var outside = todays.Count(ticket => ticket.Closed && string.Equals(ticket.CloseReason, ClosedFromOutside, StringComparison.Ordinal));
-        var byBook = todays.Count(ticket => ticket.Closed) - outside;
-        return UnexplainedPumpShort.MaySendToday(open, byBook, outside, out retry);
+        var mine = book.Tickets
+            .Where(ticket => ticket.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(ticket => ticket.EnteredAt)
+            .ToList();
+        var open = mine.Any(ticket => !ticket.Closed);
+        var latest = mine.LastOrDefault();
+        var wick = latest is { Closed: true, WickRetry: true };
+        var consumed = wick
+            ? mine.LastOrDefault(ticket => ticket.Closed && !ticket.WickRetry)
+            : latest is { Closed: true } ? latest : null;
+        var reason = UnexplainedPumpShort.ReentryBlock(open, pumpHigh, consumed?.PumpHigh, consumed?.Cooled == true, wick);
+        block = reason ?? string.Empty;
+        return reason is null;
     }
 
-    private static int RetryToday(PumpBook book, string symbol, DateTimeOffset now) =>
-        MaySendToday(book, symbol, now.UtcDateTime.ToString("yyyy-MM-dd"), out var retry) ? retry : 0;
+    /// <summary>Marks a closed short. A wick leaves the high open for one retry and does not count as cooled.</summary>
+    private static bool Finish(PumpTicket ticket, DateTimeOffset now, string reason)
+    {
+        ticket.Closed = true;
+        ticket.ClosedAt ??= now;
+        ticket.CloseReason ??= reason;
+        if (!ticket.FollowsWick && UnexplainedPumpShort.WickStop(ticket.Entry, ticket.BestMark, now - ticket.EnteredAt))
+        {
+            ticket.WickRetry = true;
+        }
+
+        return ticket.WickRetry;
+    }
+
+    /// <summary>A coin whose last finished short is still hot cools when its 24-hour rise prints under the pump line.</summary>
+    private static List<string> NoteCooling(PumpBook book, IReadOnlyList<MarketScanRow> rows, decimal minRise)
+    {
+        var bySymbol = new Dictionary<string, MarketScanRow>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in rows)
+        {
+            bySymbol.TryAdd(row.Contract.Symbol, row);
+        }
+
+        var cooled = new List<string>();
+        foreach (var ticket in book.Tickets)
+        {
+            if (!ticket.Closed || ticket.Cooled || ticket.WickRetry || string.IsNullOrWhiteSpace(ticket.Symbol))
+            {
+                continue;
+            }
+
+            if (!bySymbol.TryGetValue(ticket.Symbol, out var row))
+            {
+                continue;
+            }
+
+            if (!UnexplainedPumpShort.RiseHasEnded(row.High24h, row.LastPrice, row.PriceChangePercent, minRise))
+            {
+                continue;
+            }
+
+            ticket.Cooled = true;
+            if (!cooled.Contains(ticket.Symbol, StringComparer.OrdinalIgnoreCase))
+            {
+                cooled.Add(ticket.Symbol);
+            }
+        }
+
+        return cooled;
+    }
+
+    private static int SameDayOrders(PumpBook book, string symbol, DateTimeOffset now) =>
+        book.Tickets.Count(ticket =>
+            ticket.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase)
+            && ticket.Day == now.UtcDateTime.ToString("yyyy-MM-dd"));
 
     private async Task SubmitAsync(
         IServiceProvider services,
@@ -316,14 +393,13 @@ public sealed class UnexplainedPumpWorker : BackgroundService
         PumpBook book,
         UnexplainedPumpDecision decision,
         UnexplainedPumpCheckRow check,
-        UnexplainedPumpOptions pump,
         DateTimeOffset now,
         string day,
         CancellationToken cancellationToken)
     {
         var store = services.GetRequiredService<ITradingStore>();
         var source = await store.GetNewsRiskAsync(cancellationToken);
-        var stopPercent = UnexplainedPumpShort.OrderStopPercent(decision.EntryPrice, decision.PumpHigh, pump.StopBuffer);
+        var stopPercent = UnexplainedPumpShort.MaxStopPercent;
         if (stopPercent <= 0m)
         {
             check.OrderState = "Rejected";
@@ -408,7 +484,7 @@ public sealed class UnexplainedPumpWorker : BackgroundService
             now,
             true,
             true,
-            UnexplainedPumpShort.ClientOrderId(decision.Symbol, now, RetryToday(book, decision.Symbol, now)));
+            UnexplainedPumpShort.ClientOrderId(decision.Symbol, now, SameDayOrders(book, decision.Symbol, now)));
         if (handoff.RiskDecision == "Approved")
         {
             var block = RiskLiveGuard.Reject(
@@ -475,10 +551,22 @@ public sealed class UnexplainedPumpWorker : BackgroundService
             return;
         }
 
+        var fillPrice = fill.AverageFillPrice is > 0m ? fill.AverageFillPrice.Value : decision.EntryPrice;
+        var stopPrice = UnexplainedPumpShort.DisasterStopPrice(fillPrice);
+        try
+        {
+            var info = await connector.GetSymbolInformationAsync(decision.Symbol, cancellationToken);
+            stopPrice = LiveProtectivePrices.RoundToTick(stopPrice, info.TickSize, down: false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "UnexplainedPump {Symbol} tick size was not read. The stop uses the raw price.", decision.Symbol);
+        }
+
         var stops = await connector.PlaceClosePositionStopsAsync(
             decision.Symbol,
             OrderSide.Buy,
-            handoff.StopLossPrice,
+            stopPrice,
             handoff.TakeProfitPrice,
             handoff.Request.ClientOrderId + "-sl",
             handoff.Request.ClientOrderId + "-tp",
@@ -493,26 +581,31 @@ public sealed class UnexplainedPumpWorker : BackgroundService
                 decision.Symbol,
                 stops.StopError);
         }
-        check.Entry = fill.AverageFillPrice ?? decision.EntryPrice;
+        check.Entry = fillPrice;
         check.Quantity = fill.FilledQuantity;
-        check.Stop = handoff.StopLossPrice;
+        check.Stop = stopPrice;
+        var followsWick = book.Tickets
+            .Where(ticket => ticket.Symbol.Equals(decision.Symbol, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(ticket => ticket.EnteredAt)
+            .LastOrDefault() is { Closed: true, WickRetry: true };
         book.Tickets.Add(new PumpTicket
         {
             Symbol = decision.Symbol,
             Day = day,
             PumpHigh = decision.PumpHigh,
-            Entry = fill.AverageFillPrice ?? decision.EntryPrice,
+            Entry = fillPrice,
             EnteredAt = now,
             ClientOrderId = handoff.Request.ClientOrderId,
             Quantity = fill.FilledQuantity,
-            DisasterStop = handoff.StopLossPrice,
-            RestingStop = stops.HasWorkingStop ? handoff.StopLossPrice : 0m
+            DisasterStop = stopPrice,
+            RestingStop = stops.HasWorkingStop ? stopPrice : 0m,
+            FollowsWick = followsWick
         });
         _logger.LogInformation(
-            "UnexplainedPump {Symbol} short filled at {Entry}. Stop is above {High}.",
+            "UnexplainedPump {Symbol} short filled at {Entry}. Stop is {Stop}.",
             decision.Symbol,
-            fill.AverageFillPrice ?? decision.EntryPrice,
-            decision.PumpHigh);
+            fillPrice,
+            stopPrice);
     }
 
     private async Task ManageExitsAsync(
@@ -531,12 +624,13 @@ public sealed class UnexplainedPumpWorker : BackgroundService
             {
                 if (account.FuturesBookFresh && now - ticket.EnteredAt > TimeSpan.FromMinutes(2))
                 {
-                    ticket.Closed = true;
-                    ticket.ClosedAt ??= now;
                     var trailed = ticket.RestingStop > 0m && ticket.DisasterStop > ticket.RestingStop;
-                    ticket.CloseReason ??= trailed
-                        ? "The drop stalled. Closed on the bounce."
-                        : "The short is no longer open.";
+                    if (Finish(ticket, now, trailed ? UnexplainedPumpShort.TurnedUp : "The short is no longer open.") && ticket.WickRetry)
+                    {
+                        _logger.LogInformation(
+                            "UnexplainedPump {Symbol} stopped before the drop started. That high stays open for one more short.",
+                            ticket.Symbol);
+                    }
                 }
 
                 continue;
@@ -548,33 +642,36 @@ public sealed class UnexplainedPumpWorker : BackgroundService
                 ticket.BestMarkAt = now;
             }
 
+            if (UnexplainedPumpShort.PromoteClosedLow(ticket.BestMark, ticket.BestMarkAt, ticket.TrailMark, now, out var closedLow))
+            {
+                ticket.TrailMark = closedLow;
+            }
+
             var mark = position.MarkPrice;
             var throughHigh = mark > ticket.PumpHigh * (1m + pump.StopBuffer);
             var started = UnexplainedPumpShort.DumpHasStarted(ticket.Entry, ticket.BestMark, pump.DumpStartedPercent);
             var expired = !started && now - ticket.EnteredAt >= TimeSpan.FromHours(Math.Max(1, pump.MaxHoldHours));
             var follow = UnexplainedPumpShort.Follow(
                 ticket.Entry,
-                ticket.BestMark,
+                ticket.TrailMark,
                 ticket.DisasterStop,
                 pump.TrailPercent,
                 pump.TightTrailPercent,
                 pump.TightenAfterPercent);
-            var live = ticket.BestMarkAt != default && UnexplainedPumpShort.BarHasClosed(ticket.BestMarkAt, now);
-            if (live && follow.Following && follow.Stop > mark && (ticket.RestingStop <= 0m || follow.Stop < ticket.RestingStop))
+            if (follow.Following && follow.Stop > mark && (ticket.RestingStop <= 0m || follow.Stop < ticket.RestingStop))
             {
                 await RestFollowStopAsync(connector, ticket, follow.Stop, mark, cancellationToken);
             }
 
-            var trailIsResting = ticket.RestingStop > 0m && (ticket.DisasterStop <= 0m || ticket.RestingStop < ticket.DisasterStop);
-            var bounce = live && follow.Following && mark >= follow.Stop && !trailIsResting
-                ? UnexplainedPumpShort.BounceExit(follow, mark)
+            var bounce = UnexplainedPumpShort.TrailOverrun(follow, mark, ticket.RestingStop)
+                ? UnexplainedPumpShort.TurnedUp
                 : null;
             if (ticket.StopExposed && mark > 0m)
             {
                 var guard = follow.Following && follow.Stop > 0m ? follow.Stop : ticket.DisasterStop;
                 if (guard > 0m && mark >= guard)
                 {
-                    bounce ??= follow.Following ? "The drop stalled. Closed on the bounce." : "The exchange stop was missing. Closed on the mark.";
+                    bounce ??= follow.Following ? UnexplainedPumpShort.TurnedUp : "The exchange stop was missing. Closed on the mark.";
                 }
             }
 
@@ -583,13 +680,30 @@ public sealed class UnexplainedPumpWorker : BackgroundService
                 continue;
             }
 
+            if (bounce is not null)
+            {
+                try
+                {
+                    await connector.CancelAllOrdersAsync(ticket.Symbol, cancellationToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex, "UnexplainedPump {Symbol} old stop was left up while the drop is closed at the market.", ticket.Symbol);
+                }
+            }
+
             var clientId = ticket.ClientOrderId + (bounce is not null ? "-bn" : throughHigh ? "-hi" : "-tm");
             await connector.PlaceOrderAsync(
                 new PlaceOrderRequest(clientId, ticket.Symbol, OrderSide.Buy, OrderType.Market, position.Quantity, null, TimeSpan.FromSeconds(5), ReduceOnly: true),
                 cancellationToken);
-            ticket.Closed = true;
-            ticket.ClosedAt ??= now;
-            ticket.CloseReason = bounce ?? (throughHigh ? "Price went through the band above the pump." : "Hold time elapsed.");
+            var closeReason = bounce ?? (throughHigh ? "Price went through the band above the pump." : "Hold time elapsed.");
+            if (Finish(ticket, now, closeReason) && ticket.WickRetry)
+            {
+                _logger.LogInformation(
+                    "UnexplainedPump {Symbol} stopped before the drop started. That high stays open for one more short.",
+                    ticket.Symbol);
+            }
+
             _logger.LogInformation(
                 "UnexplainedPump {Symbol} short closed. {Reason}",
                 ticket.Symbol,
@@ -859,6 +973,9 @@ public sealed class UnexplainedPumpWorker : BackgroundService
         public decimal Quantity { get; set; }
         public decimal BestMark { get; set; }
         public DateTimeOffset BestMarkAt { get; set; }
+
+        /// <summary>Lowest mark whose 5-minute bar has closed. The follow stop is measured from this, not from a low that is still printing.</summary>
+        public decimal TrailMark { get; set; }
         public decimal DisasterStop { get; set; }
         public decimal RestingStop { get; set; }
         public int StopRevision { get; set; }
@@ -867,6 +984,15 @@ public sealed class UnexplainedPumpWorker : BackgroundService
         public bool Closed { get; set; }
         public DateTimeOffset? ClosedAt { get; set; }
         public string? CloseReason { get; set; }
+
+        /// <summary>The 24-hour rise has printed back under 150% since this short finished.</summary>
+        public bool Cooled { get; set; }
+
+        /// <summary>The stop hit before the drop started, so this high is still open for one more short.</summary>
+        public bool WickRetry { get; set; }
+
+        /// <summary>This short is that one retry. A second wick closes the high.</summary>
+        public bool FollowsWick { get; set; }
     }
 
     private async Task RememberPnlAsync(IExchangeConnector connector, PumpBook book, DateTimeOffset now, CancellationToken cancellationToken)
@@ -897,7 +1023,7 @@ public sealed class UnexplainedPumpWorker : BackgroundService
                     continue;
                 }
 
-                var from = ticket.EnteredAt.AddMinutes(-1);
+                var from = ticket.EnteredAt;
                 if (ticket.Quantity <= 0m)
                 {
                     var quantity = PumpRealizedPnl.EntryQuantity(fills, from);
