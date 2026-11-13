@@ -254,33 +254,43 @@ public sealed class UnexplainedPumpOptions
 {
     public bool Enabled { get; set; } = true;
 
-    /// <summary>1.50 means a 150% rise.</summary>
-    public decimal MinRise { get; set; } = 1.50m;
+    /// <summary>1.25 means a 125% rise.</summary>
+    public decimal MinRise { get; set; } = 1.25m;
 
     public decimal MinQuoteVolume { get; set; } = 5_000_000m;
 
-    /// <summary>The closed turn must be at least this far under the high. 0.08 means 8%.</summary>
-    public decimal ReversalDrop { get; set; } = 0.08m;
+    /// <summary>
+    /// The short waits until price and the last closed bar are at least this far under the high. 0.30 means 30%.
+    /// Closer than that, most pumps print a new high and stop the short.
+    /// </summary>
+    public decimal ReversalDrop { get; set; } = 0.30m;
 
-    /// <summary>A price already this far under the high is a drop that has run. 0.25 means 25%.</summary>
-    public decimal MaxDropFromHigh { get; set; } = 0.25m;
+    /// <summary>A price already this far under the high is a drop that has run. 0.60 means 60%.</summary>
+    public decimal MaxDropFromHigh { get; set; } = 0.60m;
 
     public int PollMinutes { get; set; } = 5;
 
-    /// <summary>Follow stop sits this far above the lowest mark until the drop is deep. 20 means 20%.</summary>
-    public decimal TrailPercent { get; set; } = 20m;
+    /// <summary>Follow stop sits this far above the lowest mark until the drop is deep. 40 means 40%.</summary>
+    public decimal TrailPercent { get; set; } = 40m;
 
-    /// <summary>Follow stop once the low is <see cref="TightenAfterPercent"/> under the entry. 12 means 12%.</summary>
-    public decimal TightTrailPercent { get; set; } = 12m;
+    /// <summary>Follow stop once the low is <see cref="TightenAfterPercent"/> under the entry. 25 means 25%.</summary>
+    public decimal TightTrailPercent { get; set; } = 25m;
 
-    /// <summary>Tighten the follow stop after the low is this far under the entry. 30 means 30%.</summary>
-    public decimal TightenAfterPercent { get; set; } = 30m;
+    /// <summary>Tighten the follow stop after the low is this far under the entry. 40 means 40%.</summary>
+    public decimal TightenAfterPercent { get; set; } = 40m;
 
-    /// <summary>A drop this far under the entry retires the hold clock. 15 means 15%.</summary>
+    /// <summary>
+    /// The follow stop waits for a closed 15-minute bar until the low is this far under the entry,
+    /// then for a closed 5-minute bar. 20 means 20%.
+    /// </summary>
+    public decimal FastTrailAfterPercent { get; set; } = 20m;
+
+    /// <summary>A drop this far under the entry counts as started. 15 means 15%.</summary>
     public decimal DumpStartedPercent { get; set; } = 15m;
 
+    /// <summary>The short is closed at the market this long after entry, wherever price is.</summary>
     public int MaxHoldHours { get; set; } = 48;
 
-    /// <summary>Invalidation sits this far above the pump high. 0.50 means 50%. A new high inside this band does not close the short. The exchange stop is capped separately so a 10x order can be placed.</summary>
+    /// <summary>Invalidation sits this far above the pump high. 0.50 means 50%. A new high inside this band does not close the short. The exchange stop is capped separately so the order fits Isolated margin.</summary>
     public decimal StopBuffer { get; set; } = 0.50m;
 }

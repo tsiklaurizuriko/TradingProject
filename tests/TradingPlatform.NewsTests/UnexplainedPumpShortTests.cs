@@ -156,9 +156,10 @@ public sealed class UnexplainedPumpShortTests
     public void A_wide_pump_stop_is_capped_so_ten_times_leverage_can_enter()
     {
         UnexplainedPumpShort.StopPercent(1.2818m, 1.43m, 0.50m).Should().Be(67.34m);
-        UnexplainedPumpShort.OrderStopPercent(1.2818m, 1.43m, 0.50m).Should().Be(7.5m);
+        UnexplainedPumpShort.OrderStopPercent(1.2818m, 1.43m, 0.50m).Should().Be(7m);
         UnexplainedPumpShort.OrderLeverage.Should().Be(10m);
         UnexplainedPumpShort.MaxEntryMarginUsdt.Should().Be(20m);
+        UnexplainedPumpShort.DisasterStopPrice(0.0100m).Should().Be(0.0107m);
     }
 
     [Fact]
@@ -194,14 +195,16 @@ public sealed class UnexplainedPumpShortTests
     }
 
     [Fact]
-    public void Pump_defaults_turn_between_eight_and_twenty_five_and_tighten_after_thirty()
+    public void Pump_defaults_short_one_hundred_twenty_five_percent_pumps_thirty_to_sixty_percent_off_the_high()
     {
         var options = new UnexplainedPumpOptions();
-        options.ReversalDrop.Should().Be(0.08m);
-        options.MaxDropFromHigh.Should().Be(0.25m);
-        options.TrailPercent.Should().Be(20m);
-        options.TightTrailPercent.Should().Be(12m);
-        options.TightenAfterPercent.Should().Be(30m);
+        options.MinRise.Should().Be(1.25m);
+        options.ReversalDrop.Should().Be(0.30m);
+        options.MaxDropFromHigh.Should().Be(0.60m);
+        options.TrailPercent.Should().Be(40m);
+        options.TightTrailPercent.Should().Be(25m);
+        options.TightenAfterPercent.Should().Be(40m);
+        options.FastTrailAfterPercent.Should().Be(20m);
     }
 
     [Fact]
@@ -215,18 +218,32 @@ public sealed class UnexplainedPumpShortTests
     public void The_follow_stop_waits_for_the_five_minute_low_to_close()
     {
         var lowAt = new DateTimeOffset(2026, 11, 3, 3, 47, 0, TimeSpan.Zero);
-        UnexplainedPumpShort.BarHasClosed(lowAt, lowAt.AddMinutes(2)).Should().BeFalse();
-        UnexplainedPumpShort.BarHasClosed(lowAt, new DateTimeOffset(2026, 11, 3, 3, 50, 0, TimeSpan.Zero)).Should().BeTrue();
+        UnexplainedPumpShort.BarHasClosed(lowAt, lowAt.AddMinutes(2), UnexplainedPumpShort.TrailBar).Should().BeFalse();
+        UnexplainedPumpShort.BarHasClosed(lowAt, new DateTimeOffset(2026, 11, 3, 3, 50, 0, TimeSpan.Zero), UnexplainedPumpShort.TrailBar).Should().BeTrue();
+    }
+
+    [Fact]
+    public void A_shallow_dip_keeps_the_fifteen_minute_clock()
+    {
+        var entry = 0.01890m;
+        var low = 0.01675m;
+        var lowAt = new DateTimeOffset(2026, 11, 2, 3, 47, 0, TimeSpan.Zero);
+        UnexplainedPumpShort.TrailBarFor(entry, low, 20m).Should().Be(UnexplainedPumpShort.SlowTrailBar);
+        UnexplainedPumpShort.PromoteClosedLow(entry, low, lowAt, 0m, new DateTimeOffset(2026, 11, 2, 3, 50, 0, TimeSpan.Zero), 20m, out _).Should().BeFalse();
+        UnexplainedPumpShort.PromoteClosedLow(entry, low, lowAt, 0m, new DateTimeOffset(2026, 11, 2, 4, 0, 0, TimeSpan.Zero), 20m, out var trail).Should().BeTrue();
+        trail.Should().Be(low);
     }
 
     [Fact]
     public void A_turn_up_through_the_closed_five_minute_low_locks_even_when_an_older_stop_is_higher()
     {
+        var entry = 0.0598m;
         var lowAt = new DateTimeOffset(2026, 11, 11, 14, 3, 0, TimeSpan.Zero);
         var stillOpen = new DateTimeOffset(2026, 11, 11, 14, 4, 30, TimeSpan.Zero);
-        UnexplainedPumpShort.PromoteClosedLow(0.03802m, lowAt, 0m, stillOpen, out _).Should().BeFalse();
-        UnexplainedPumpShort.PromoteClosedLow(0.03793m, new DateTimeOffset(2026, 11, 11, 14, 6, 19, TimeSpan.Zero), 0.03802m, new DateTimeOffset(2026, 11, 11, 14, 7, 0, TimeSpan.Zero), out _).Should().BeFalse();
-        UnexplainedPumpShort.PromoteClosedLow(0.03802m, lowAt, 0m, new DateTimeOffset(2026, 11, 11, 14, 5, 0, TimeSpan.Zero), out var trail).Should().BeTrue();
+        UnexplainedPumpShort.TrailBarFor(entry, 0.03802m, 20m).Should().Be(UnexplainedPumpShort.TrailBar);
+        UnexplainedPumpShort.PromoteClosedLow(entry, 0.03802m, lowAt, 0m, stillOpen, 20m, out _).Should().BeFalse();
+        UnexplainedPumpShort.PromoteClosedLow(entry, 0.03793m, new DateTimeOffset(2026, 11, 11, 14, 6, 19, TimeSpan.Zero), 0.03802m, new DateTimeOffset(2026, 11, 11, 14, 7, 0, TimeSpan.Zero), 20m, out _).Should().BeFalse();
+        UnexplainedPumpShort.PromoteClosedLow(entry, 0.03802m, lowAt, 0m, new DateTimeOffset(2026, 11, 11, 14, 5, 0, TimeSpan.Zero), 20m, out var trail).Should().BeTrue();
         trail.Should().Be(0.03802m);
         var follow = UnexplainedPumpShort.Follow(0.0598m, trail, 0.06429m, 20m, 12m, 30m);
         follow.Following.Should().BeTrue();
@@ -347,7 +364,7 @@ public sealed class UnexplainedPumpShortTests
     }
 
     [Fact]
-    public void A_higher_high_waits_until_the_rise_falls_back_under_150()
+    public void After_a_win_a_higher_high_waits_until_the_rise_falls_back_under_the_line()
     {
         UnexplainedPumpShort.ReentryBlock(false, 0.014888m, 0.011798m, cooled: false, wickRetryOpen: false)
             .Should().Be("This pump is still running.");
@@ -373,6 +390,22 @@ public sealed class UnexplainedPumpShortTests
             .Should().BeNull();
         UnexplainedPumpShort.ReentryBlock(false, 0.006351m, 0.006351m, cooled: false, wickRetryOpen: false)
             .Should().Be("This pump is still running.");
+    }
+
+    [Fact]
+    public void A_loss_is_shorted_again_in_the_same_pump_twice()
+    {
+        UnexplainedPumpShort.LossReentry(cooled: false, wickRetryOpen: false, lost: true, lossReentries: 0).Should().BeTrue();
+        UnexplainedPumpShort.ReentryBlock(false, 0.00745m, 0.00745m, cooled: false, wickRetryOpen: false, lost: true, lossReentries: 0)
+            .Should().BeNull();
+        UnexplainedPumpShort.ReentryBlock(false, 0.012255m, 0.00745m, cooled: false, wickRetryOpen: false, lost: true, lossReentries: 1)
+            .Should().BeNull();
+        UnexplainedPumpShort.ReentryBlock(false, 0.012255m, 0.00745m, cooled: false, wickRetryOpen: false, lost: true, lossReentries: 2)
+            .Should().Be("This pump already lost 3 shorts. It waits for the rise to cool.");
+        UnexplainedPumpShort.ReentryBlock(false, 0.014888m, 0.011798m, cooled: false, wickRetryOpen: false, lost: false, lossReentries: 0)
+            .Should().Be("This pump is still running.");
+        UnexplainedPumpShort.ReentryBlock(true, 0.012255m, 0.00745m, cooled: false, wickRetryOpen: false, lost: true, lossReentries: 0)
+            .Should().Be("This coin already has an open pump short.");
     }
 
     [Fact]

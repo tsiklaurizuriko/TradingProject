@@ -1,4 +1,5 @@
 using System.Globalization;
+using TradingPlatform.Application.Trading;
 
 namespace TradingPlatform.Trading;
 
@@ -16,6 +17,6 @@ public static class CandleIdempotency
         }
 
         var suffix = candleKey.Length <= 10 ? candleKey : candleKey[^10..];
-        return $"L{botId:N}"[..12] + suffix;
+        return ExternalBook.BotOrderPrefix(botId) + suffix;
     }
 }

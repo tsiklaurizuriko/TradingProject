@@ -48,7 +48,7 @@ public sealed record UnexplainedPumpDecision(
 
 /// <summary>
 /// The reversal is confirmed when the high's 15-minute bar has closed and price has settled
-/// between 8% and 25% under that high. The protective buy is the 10x cap, not the break bar.
+/// between 30% and 60% under that high. The protective buy is 7% above the fill, not the break bar.
 /// </summary>
 public readonly record struct DumpBreak(bool Confirmed, decimal BreakHigh, string Reason)
 {
@@ -58,11 +58,13 @@ public readonly record struct DumpBreak(bool Confirmed, decimal BreakHigh, strin
 }
 
 /// <summary>
-/// 150% in the last 24 hours and no public catalyst. The short opens once a closed 15-minute bar
-/// has turned 8% to 25% off that high, then follows the low of the last closed 5-minute bar.
-/// Profit is taken when price turns up through that trail. A shallow bounce does not close it. The coin is not shorted again until that
-/// 24-hour rise has fallen back under 150%. A stop in the first 15 minutes, before price has gone
-/// in favor, leaves the high open for one more short.
+/// 125% in the last 24 hours and no public catalyst. The short opens once price and a closed 15-minute bar
+/// are 30% to 60% off that high; nearer the high most pumps print a new high first. The follow stop then uses the low
+/// of the last closed 15-minute bar until the drop is 20% under the entry, and the last closed 5-minute bar after that.
+/// Profit is taken when price turns up through that trail, and the short is closed after 48 hours either way.
+/// After a win the coin waits until that 24-hour rise falls back under the pump line. After a loss the same pump may be
+/// shorted again <see cref="MaxLossReentries"/> more times, as soon as the setup is back. A stop in the first 15 minutes,
+/// before price has gone in favor, leaves the high open for one more short.
 /// </summary>
 public static class UnexplainedPumpShort
 {
@@ -225,28 +227,60 @@ public static class UnexplainedPumpShort
         return bestMark <= entry * (1m - startedPercent / 100m);
     }
 
-    /// <summary>The follow stop moves on a closed 5-minute bar, so a turn up is locked inside a few minutes.</summary>
+    /// <summary>Fast follow clock, used once the drop from entry has reached <see cref="UnexplainedPumpOptions.FastTrailAfterPercent"/>.</summary>
     public static readonly TimeSpan TrailBar = TimeSpan.FromMinutes(5);
 
-    /// <summary>The 5-minute bar that printed <paramref name="lowAt"/> has finished, so the follow stop may move.</summary>
-    public static bool BarHasClosed(DateTimeOffset lowAt, DateTimeOffset now) =>
-        BarOpen(now) > BarOpen(lowAt);
+    /// <summary>Slow follow clock. A shallow dip keeps the disaster stop until this bar closes.</summary>
+    public static readonly TimeSpan SlowTrailBar = TimeSpan.FromMinutes(15);
 
-    public static DateTimeOffset BarOpen(DateTimeOffset time)
+    /// <summary>
+    /// A dip that is still under <paramref name="fastAfterPercent"/> is confirmed on the 15-minute bar.
+    /// A deeper drop is confirmed on the 5-minute bar, so the turn up is locked inside a few minutes.
+    /// </summary>
+    public static TimeSpan TrailBarFor(decimal entry, decimal bestMark, decimal fastAfterPercent)
+    {
+        if (entry <= 0m || bestMark <= 0m || bestMark >= entry || fastAfterPercent <= 0m)
+        {
+            return SlowTrailBar;
+        }
+
+        var drop = (entry - bestMark) / entry * 100m;
+        return drop >= fastAfterPercent ? TrailBar : SlowTrailBar;
+    }
+
+    /// <summary>The bar that printed <paramref name="lowAt"/> has finished, so the follow stop may move.</summary>
+    public static bool BarHasClosed(DateTimeOffset lowAt, DateTimeOffset now, TimeSpan bar) =>
+        BarOpen(now, bar) > BarOpen(lowAt, bar);
+
+    public static DateTimeOffset BarOpen(DateTimeOffset time, TimeSpan bar)
     {
         var utc = time.ToUniversalTime();
-        var minute = utc.Minute - (utc.Minute % TrailBar.Minutes);
+        var minutes = (int)bar.TotalMinutes;
+        if (minutes <= 0)
+        {
+            minutes = TrailBar.Minutes;
+        }
+
+        var minute = utc.Minute - (utc.Minute % minutes);
         return new DateTimeOffset(utc.Year, utc.Month, utc.Day, utc.Hour, minute, 0, TimeSpan.Zero);
     }
 
     /// <summary>
-    /// The trail low is the best mark whose 5-minute bar has closed. A lower print in the bar that is still
-    /// open does not replace it, so the stop from the previous bar stays up and can lock the turn.
+    /// The trail low is the best mark whose bar has closed. A shallow low waits for the 15-minute bar.
+    /// Once the drop is deep enough, it waits for the 5-minute bar. A lower print in the bar that is
+    /// still open does not replace it, so the stop from the previous bar stays up and can lock the turn.
     /// </summary>
-    public static bool PromoteClosedLow(decimal bestMark, DateTimeOffset bestAt, decimal closedMark, DateTimeOffset now, out decimal trailMark)
+    public static bool PromoteClosedLow(
+        decimal entry,
+        decimal bestMark,
+        DateTimeOffset bestAt,
+        decimal closedMark,
+        DateTimeOffset now,
+        decimal fastAfterPercent,
+        out decimal trailMark)
     {
         trailMark = closedMark;
-        if (bestMark <= 0m || bestAt == default || !BarHasClosed(bestAt, now))
+        if (bestMark <= 0m || bestAt == default || !BarHasClosed(bestAt, now, TrailBarFor(entry, bestMark, fastAfterPercent)))
         {
             return false;
         }
@@ -355,6 +389,12 @@ public static class UnexplainedPumpShort
     /// <summary>A later pump is a new trade only when its high clears the last shorted high by this much.</summary>
     public const decimal NewPumpHighPercent = 10m;
 
+    /// <summary>
+    /// After a loss, the same pump may be shorted this many more times before the 24-hour rise cools.
+    /// Shorting again after a win lost money, so a win still waits for the cool-down.
+    /// </summary>
+    public const int MaxLossReentries = 2;
+
     /// <summary>A stop this soon, with less than this much favorable movement, never started the drop.</summary>
     public const decimal WickFavorablePercent = 1m;
 
@@ -398,21 +438,49 @@ public static class UnexplainedPumpShort
     }
 
     /// <summary>
-    /// Null when a new short may open. A finished short blocks the coin until the 24-hour rise has ended,
-    /// and the next high still has to clear it by <see cref="NewPumpHighPercent"/>. A wick leaves
-    /// <paramref name="wickRetryOpen"/> set, and then the rise does not have to cool first.
-    /// <paramref name="consumedHigh"/> is the last high that was actually traded, not the wick.
+    /// A losing short may be followed in the same pump, before the rise cools, until
+    /// <see cref="MaxLossReentries"/> such shorts have been taken.
     /// </summary>
-    public static string? ReentryBlock(bool positionOpen, decimal pumpHigh, decimal? consumedHigh, bool cooled, bool wickRetryOpen)
+    public static bool LossReentry(bool cooled, bool wickRetryOpen, bool lost, int lossReentries) =>
+        !wickRetryOpen && !cooled && lost && lossReentries < MaxLossReentries;
+
+    /// <summary>
+    /// Null when a new short may open. A won short blocks the coin until the 24-hour rise has ended,
+    /// and the next high then has to clear it by <see cref="NewPumpHighPercent"/>. After a loss the pump can be
+    /// shorted again right away, <see cref="MaxLossReentries"/> times. A wick leaves
+    /// <paramref name="wickRetryOpen"/> set, and that high is tried once more.
+    /// <paramref name="consumedHigh"/> is the last high that was actually traded, not the wick.
+    /// <paramref name="lossReentries"/> counts the shorts already taken after a loss in this pump.
+    /// </summary>
+    public static string? ReentryBlock(
+        bool positionOpen,
+        decimal pumpHigh,
+        decimal? consumedHigh,
+        bool cooled,
+        bool wickRetryOpen,
+        bool lost = false,
+        int lossReentries = 0)
     {
         if (positionOpen)
         {
             return "This coin already has an open pump short.";
         }
 
-        if (!wickRetryOpen && consumedHigh is > 0m && !cooled)
+        if (wickRetryOpen || consumedHigh is not > 0m)
         {
-            return "This pump is still running.";
+            return null;
+        }
+
+        if (!cooled)
+        {
+            if (LossReentry(cooled, wickRetryOpen, lost, lossReentries))
+            {
+                return null;
+            }
+
+            return lost
+                ? "This pump already lost " + (lossReentries + 1).ToString(CultureInfo.InvariantCulture) + " shorts. It waits for the rise to cool."
+                : "This pump is still running.";
         }
 
         return MayShortThisHigh(false, pumpHigh, consumedHigh)
@@ -421,7 +489,7 @@ public static class UnexplainedPumpShort
     }
 
     /// <summary>10x Isolated leaves about 9% to liquidation. A wider exchange stop is rejected.</summary>
-    public const decimal MaxStopPercent = 7.5m;
+    public const decimal MaxStopPercent = 7m;
     public const decimal OrderLeverage = 10m;
     public const decimal MaxEntryMarginUsdt = 20m;
     public const decimal RiskPerTradePercent = 8m;
@@ -445,7 +513,7 @@ public static class UnexplainedPumpShort
         return distance <= 0m ? 0m : Math.Min(distance, MaxStopPercent);
     }
 
-    /// <summary>Buy stop 7.5% above the fill. Measured from the fill so a fast print cannot open the short through its stop.</summary>
+    /// <summary>Buy stop 7% above the fill. Measured from the fill so a fast print cannot open the short through its stop.</summary>
     public static decimal DisasterStopPrice(decimal fill) =>
         fill <= 0m ? 0m : fill * (1m + MaxStopPercent / 100m);
 

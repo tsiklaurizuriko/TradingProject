@@ -468,12 +468,19 @@ public sealed class ExchangeAccountService : IExchangeAccountService
         });
     }
 
-    private async Task<Dictionary<string, Bot>> LoadLiveBotsBySymbolAsync(CancellationToken cancellationToken)
+    private async Task<List<Bot>> LoadLiveBotsAsync(CancellationToken cancellationToken)
     {
         var user = await _trading.GetFirstAdminAsync(cancellationToken);
-        var bots = (await _trading.ListWorkspaceBotsAsync(user.Id, TradingMode.Live, cancellationToken))
+        return (await _trading.ListWorkspaceBotsAsync(user.Id, TradingMode.Live, cancellationToken))
             .Where(bot => bot.StrategyVersion is not null)
             .ToList();
+    }
+
+    private async Task<Dictionary<string, Bot>> LoadLiveBotsBySymbolAsync(
+        CancellationToken cancellationToken,
+        List<Bot>? loaded = null)
+    {
+        var bots = loaded ?? await LoadLiveBotsAsync(cancellationToken);
         var book = await _trading.GetOpenPositionsForModeAsync(TradingMode.Live, cancellationToken);
         return bots
             .GroupBy(bot => bot.Symbol, StringComparer.OrdinalIgnoreCase)
@@ -554,7 +561,8 @@ public sealed class ExchangeAccountService : IExchangeAccountService
         IReadOnlyList<LiveOpenPosition> openPositions,
         CancellationToken cancellationToken)
     {
-        var bots = await LoadLiveBotsBySymbolAsync(cancellationToken);
+        var liveBots = await LoadLiveBotsAsync(cancellationToken);
+        var bots = await LoadLiveBotsBySymbolAsync(cancellationToken, liveBots);
         Bot? BotFor(string symbol)
         {
             var key = symbol.Trim().ToUpperInvariant();
@@ -666,11 +674,11 @@ public sealed class ExchangeAccountService : IExchangeAccountService
             }
         }
 
-        if (fillsBySymbol.Count > 0)
+        if (symbols.Count > 0)
         {
             var stored = await _trading.GetOutsideBookMarksAsync(
-                fillsBySymbol.Keys.ToList(),
-                DateTimeOffset.UtcNow.AddDays(-21),
+                symbols.ToList(),
+                DateTimeOffset.UtcNow.AddDays(-60),
                 cancellationToken);
             outsideMarks.AddRange(stored);
         }
@@ -702,7 +710,17 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                     continue;
                 }
 
-                await UpsertClosedTradeAsync(bot, trip, funding, cancellationToken);
+                var owner = await TripOwnerAsync(
+                    ExternalBook.EntryOrderId(trip.OpenedAt, trip.EntrySide.ToString(), marks),
+                    symbol,
+                    liveBots,
+                    cancellationToken);
+                if (owner is null)
+                {
+                    continue;
+                }
+
+                await UpsertClosedTradeAsync(owner, trip, funding, cancellationToken);
             }
         }
 
@@ -741,7 +759,17 @@ public sealed class ExchangeAccountService : IExchangeAccountService
                 continue;
             }
 
-            await UpsertClosedTradeAsync(bot, trip, null, cancellationToken);
+            var owner = await TripOwnerAsync(
+                ExternalBook.LatestBotOrderId(opened, marks),
+                row.Symbol,
+                liveBots,
+                cancellationToken);
+            if (owner is null)
+            {
+                continue;
+            }
+
+            await UpsertClosedTradeAsync(owner, trip, null, cancellationToken);
         }
 
         await _trading.SaveChangesAsync(cancellationToken);
@@ -761,7 +789,7 @@ public sealed class ExchangeAccountService : IExchangeAccountService
             var json = await _signed.GetFuturesAllOrdersAsync(apiKey, apiSecret, symbol, cancellationToken);
             foreach (var row in ParseOrders(json, "Futures"))
             {
-                ExternalBook.Note(outsideMarks, symbol, row.ClientOrderId, row.Type, row.Status, row.CreatedAt);
+                ExternalBook.Note(outsideMarks, symbol, row.ClientOrderId, row.Type, row.Status, row.CreatedAt, row.Side);
                 await UpsertLiveOrderAsync(
                     bot,
                     symbol,
@@ -788,7 +816,7 @@ public sealed class ExchangeAccountService : IExchangeAccountService
             var json = await _signed.GetFuturesAllAlgoOrdersAsync(apiKey, apiSecret, symbol, cancellationToken);
             foreach (var row in ParseAlgoOrders(json))
             {
-                ExternalBook.Note(outsideMarks, symbol, row.ClientOrderId, row.Type, row.Status, row.CreatedAt);
+                ExternalBook.Note(outsideMarks, symbol, row.ClientOrderId, row.Type, row.Status, row.CreatedAt, row.Side);
                 var qty = row.Quantity > 0m ? row.Quantity : 0m;
                 await UpsertLiveOrderAsync(
                     bot,
@@ -985,22 +1013,57 @@ public sealed class ExchangeAccountService : IExchangeAccountService
         }
     }
 
+    private sealed record TripOwner(Bot Bot, Guid StrategyId, Guid StrategyVersionId);
+
+    /// <summary>
+    /// The bot named by the entry order id owns the trip. The strategy is the one stamped on that order when the bot sent it,
+    /// so a bot later switched to another strategy does not drag its old trips along.
+    /// </summary>
+    private async Task<TripOwner?> TripOwnerAsync(
+        string? entryOrderId,
+        string symbol,
+        IReadOnlyList<Bot> bots,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(entryOrderId))
+        {
+            return null;
+        }
+
+        var bot = bots.FirstOrDefault(item =>
+            string.Equals(item.Symbol, symbol, StringComparison.OrdinalIgnoreCase)
+            && ExternalBook.IsOrderOfBot(entryOrderId, item.Id));
+        if (bot?.StrategyVersion is null)
+        {
+            return null;
+        }
+
+        var order = await _trading.GetOrderByClientOrderIdAsync(entryOrderId, cancellationToken);
+        if (order is not null
+            && order.BotId == bot.Id
+            && order.StrategyVersionId != Guid.Empty
+            && !(order.CorrelationId ?? "").StartsWith("binance-", StringComparison.OrdinalIgnoreCase))
+        {
+            return new TripOwner(bot, order.StrategyId, order.StrategyVersionId);
+        }
+
+        return new TripOwner(bot, bot.StrategyVersion.StrategyId, bot.StrategyVersionId);
+    }
+
     private async Task UpsertClosedTradeAsync(
-        Bot bot,
+        TripOwner owner,
         BinanceClosedFill.ClosedIsolated trip,
         FundingLedger? funding,
         CancellationToken cancellationToken)
     {
+        var bot = owner.Bot;
         var tripFunding = funding?.For(trip.Symbol, trip.OpenedAt, trip.ClosedAt);
         if (trip.RealizedPnl == 0m && trip.Quantity <= 0m)
         {
             return;
         }
 
-        // A bot cannot own a fill that closed before it existed. Flow Zone on every
-        // coin was adopting the account's older round-trips and relabeling them.
-        var born = bot.StartedAt ?? bot.CreatedAt;
-        if (trip.ClosedAt < born)
+        if (trip.ClosedAt < bot.CreatedAt)
         {
             return;
         }
@@ -1053,16 +1116,9 @@ public sealed class ExchangeAccountService : IExchangeAccountService
 
         void Apply(Trade trade)
         {
-            if (trade.BotId == Guid.Empty || trade.BotId == bot.Id)
-            {
-                trade.BotId = bot.Id;
-                if (bot.StrategyVersion is not null)
-                {
-                    trade.StrategyId = bot.StrategyVersion.StrategyId;
-                    trade.StrategyVersionId = bot.StrategyVersionId;
-                }
-            }
-
+            trade.BotId = bot.Id;
+            trade.StrategyId = owner.StrategyId;
+            trade.StrategyVersionId = owner.StrategyVersionId;
             trade.Side = trip.EntrySide;
             trade.Quantity = trip.Quantity > 0m ? trip.Quantity : trade.Quantity;
             trade.ExitPrice = trip.ExitPrice > 0m ? trip.ExitPrice : trade.ExitPrice;
@@ -1100,16 +1156,11 @@ public sealed class ExchangeAccountService : IExchangeAccountService
             return;
         }
 
-        if (bot.StrategyVersion is null)
-        {
-            return;
-        }
-
         var added = new Trade
         {
             BotId = bot.Id,
-            StrategyId = bot.StrategyVersion.StrategyId,
-            StrategyVersionId = bot.StrategyVersionId,
+            StrategyId = owner.StrategyId,
+            StrategyVersionId = owner.StrategyVersionId,
             ExitOrderId = exitOrder?.Id,
             Symbol = trip.Symbol.ToUpperInvariant(),
             Side = trip.EntrySide,

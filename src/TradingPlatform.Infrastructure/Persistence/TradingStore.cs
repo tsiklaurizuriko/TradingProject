@@ -146,16 +146,30 @@ public sealed class TradingStore : ITradingStore
                 && symbols.Contains(order.Symbol)
                 && (order.ClientOrderId.StartsWith("news-")
                     || order.ClientOrderId.StartsWith("pump-")
+                    || (order.Status == OrderStatus.Filled
+                        && (order.Type == OrderType.Market || order.Type == OrderType.Limit)
+                        && (order.ClientOrderId.StartsWith("ios_")
+                            || order.ClientOrderId.StartsWith("android_")
+                            || order.ClientOrderId.StartsWith("web_")
+                            || order.ClientOrderId.StartsWith("electron_")))
                     || (order.Type == OrderType.Market
                         && order.Status == OrderStatus.Filled
                         && order.ClientOrderId.StartsWith("L"))))
-            .Select(order => new { order.Symbol, order.ClientOrderId, order.CreatedAt })
+            .Select(order => new { order.Symbol, order.ClientOrderId, order.CreatedAt, order.Side })
             .ToListAsync(cancellationToken);
         return rows
-            .Select(order => new ExternalBook.OutsideMark(
-                order.Symbol,
-                order.CreatedAt,
-                !ExternalBook.IsNewsOrPump(order.ClientOrderId)))
+            .Select(order =>
+            {
+                var outside = ExternalBook.IsNewsOrPump(order.ClientOrderId);
+                var manual = ExternalBook.IsManual(order.ClientOrderId);
+                return new ExternalBook.OutsideMark(
+                    order.Symbol,
+                    order.CreatedAt,
+                    !outside && !manual,
+                    order.ClientOrderId,
+                    order.Side.ToString(),
+                    manual);
+            })
             .ToList();
     }
 
